@@ -25,7 +25,7 @@
 # commands are looked up on PATH.
 set -euo pipefail
 
-: "${REPOSITORY:?}" "${BRANCH:?}" "${FLAKE_ATTR:?}" "${HEALTH_URL:?}" "${STATE_DIR:?}"
+STATE_DIR=${STATE_DIR:-/var/lib/beadsmith-auto-update}
 HEALTH_TIMEOUT=${HEALTH_TIMEOUT:-120}
 HEALTH_INTERVAL=${HEALTH_INTERVAL:-5}
 REQUIRED_UNITS=${REQUIRED_UNITS:-}
@@ -92,6 +92,7 @@ fail_revision() {
 }
 
 run() {
+	: "${REPOSITORY:?}" "${BRANCH:?}" "${FLAKE_ATTR:?}" "${HEALTH_URL:?}"
 	mkdir -p "$STATE_DIR"
 	exec 9>"$STATE_DIR/lock"
 	flock -n 9 || { log "another poll is running"; return 0; }
