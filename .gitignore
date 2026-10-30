@@ -1,0 +1,52 @@
+node_modules
+/build
+/.svelte-kit
+/Beads
+/Beads.app
+/drizzle
+.env
+.env.*
+!.env.example
+*.log
+
+# compose.yaml runtime state and credential files
+/data/
+/secrets/
+.DS_Store
+package-lock.json
+
+*.xcuserstate
+
+# Local Codex/agent run artifacts
+.codex-runs/
+
+# bd --profile / --trace leftovers
+bd-profile-*.prof
+bd-trace-*.out
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+.vitest/
+
+# Xcode-generated workspace
+ios/**/project.xcworkspace/
+
+# The maintainer's Beads workspace: which Dolt server holds this repo's own
+# issues is personal configuration (scripts/bd-setup.sh installs it).
+/.beads/
+
+# devenv (devenv.lock is committed)
+.devenv/
+.devenv.flake.nix
+.pre-commit-config.yaml
+
+# The maintainer's local agent setup for their Beads tracker
+# (scripts/bd-setup.sh installs it per checkout).
+CLAUDE.local.md
+/.codex/
+/.claude/settings.local.json
+/.claude/settings.json
+/.agents/skills/beads/

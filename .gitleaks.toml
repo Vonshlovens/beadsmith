@@ -1,0 +1,20 @@
+# gitleaks configuration: the default rule set plus allowlists for known test
+# fixtures. Run `gitleaks dir .` (tree) or `gitleaks git .` (history).
+title = "Beadsmith"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Throwaway age key for the beads-vm boot test; decrypts only dummy values"
+paths = ['''^fleet/secrets/vm-test\.agekey$''']
+
+[[allowlists]]
+description = "Test fixtures that look like keys but are not secrets"
+regexTarget = "line"
+regexes = [
+	"idempotency_key: 'idem-[a-z0-9-]+'",
+	"TEST_AUTH_SECRET = 'test-secret-that-is-at-least-32-characters-long'",
+	# Synthetic Cloudflare Access service-token Client ID.
+	"0123456789abcdef0123456789abcdef",
+]

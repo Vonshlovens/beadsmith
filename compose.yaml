@@ -1,0 +1,62 @@
+# Beadsmith. One file for a laptop and a server. Dolt is never in this stack;
+# point BEADS_DOLT_SERVER_HOST at an existing Dolt sql-server.
+#
+#   cp .env.example .env            # then edit it
+#   mkdir -p data secrets
+#   printf '%s' "$DOLT_PASSWORD" > secrets/dolt-password && chmod 600 secrets/dolt-password
+#   (umask 077; openssl rand -base64 32 > secrets/better-auth-secret)   # accounts
+#   docker compose up -d            # pulls BEADSMITH_IMAGE, or: up -d --build
+#
+# Upgrade: set BEADSMITH_IMAGE to a new tag in .env, then
+#   docker compose pull && docker compose up -d
+#
+# Two network modes, both chosen in .env (see .env.example):
+#   bridge (default)  publishes 127.0.0.1:${BEADSMITH_PORT}; the process binds
+#                     0.0.0.0 inside the container, so accounts
+#                     (BETTER_AUTH_SECRET_FILE) are required and browsers sign
+#                     in at /auth; the first admin uses data/setup-token.
+#   host              BEADSMITH_NETWORK=host and BEADSMITH_BIND=127.0.0.1; the
+#                     process binds host loopback on BEADSMITH_PORT, for a
+#                     reverse proxy or tunnel on the same machine.
+name: beadsmith
+
+services:
+  beadsmith:
+    image: ${BEADSMITH_IMAGE:-ghcr.io/vonshlovens/beadsmith:latest}
+    build: .
+    restart: unless-stopped
+    network_mode: ${BEADSMITH_NETWORK:-bridge}
+    # Ignored in host mode. Never publish beyond loopback; put a proxy in front.
+    ports:
+      - '127.0.0.1:${BEADSMITH_PORT:-4321}:${BEADSMITH_PORT:-4321}'
+    # Must own data/ and secrets/ (id -u / id -g on the host).
+    user: '${BEADSMITH_UID:?set BEADSMITH_UID in .env}:${BEADSMITH_GID:?set BEADSMITH_GID in .env}'
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      HOST: ${BEADSMITH_BIND:-0.0.0.0}
+      PORT: ${BEADSMITH_PORT:-4321}
+      BDX_STATE_DIR: /state
+      HOME: /state
+      BEADS_DOLT_PASSWORD_FILE: /run/secrets/dolt-password
+    volumes:
+      # Service-local SQLite (settings, dispatch records). Never issue rows.
+      - ./data:/state
+      # Credential files. Optional ones are opted into by *_FILE in .env.
+      - ./secrets:/run/secrets:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          'fetch(`http://127.0.0.1:$${process.env.PORT}/healthz`).then((r) => process.exit(r.status === 204 ? 0 : 1), () => process.exit(1))'
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s

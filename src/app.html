@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en" data-theme="%bdui.theme%">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="color-scheme" content="light dark" />
+		<meta name="text-scale" content="scale" />
+		<title>Beadsmith</title>
+		<!--
+			Resolve the stored preference (injected by hooks.server.ts) before first
+			paint: `.dark` drives every rule in app.css and `color-scheme` drives the
+			native controls. Mirrors resolveTheme() in $lib/client/theme.ts.
+		-->
+		<script nonce="%sveltekit.nonce%">
+			try {
+				var root = document.documentElement;
+				var pref = root.dataset.theme;
+				if (pref !== 'light' && pref !== 'dark') {
+					pref = 'system';
+					root.dataset.theme = pref;
+				}
+				var dark =
+					pref === 'system'
+						? window.matchMedia('(prefers-color-scheme: dark)').matches
+						: pref === 'dark';
+				root.classList.toggle('dark', dark);
+				root.style.colorScheme = dark ? 'dark' : 'light';
+			} catch (error) {
+				/* no matchMedia or no dataset — the server-rendered default stands */
+			}
+		</script>
+		%sveltekit.head%
+	</head>
+	<body data-sveltekit-preload-data="hover">
+		<div style="display: contents">%sveltekit.body%</div>
+	</body>
+</html>

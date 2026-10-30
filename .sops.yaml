@@ -1,0 +1,25 @@
+# Public age recipients only. Private keys live outside this repo:
+#   admin       ~/.config/sops/age/keys.txt       (owner; move to a password manager)
+#   host_beads  ~/.config/sops/age/beads-host.agekey  (goes to /var/lib/sops-nix/key.txt
+#                                           on the host at install, docs/operations/install.md)
+#   vm_test     fleet/secrets/vm-test.agekey     (throwaway, committed, VM only)
+keys:
+  - &admin age13s9vz6h59ndryte7xcvxwgkygmeecn5s8c2s3pu7k66djkw7edgsjkzwnq
+  - &host_beads age1clsa03scxcxupj8a9cv4p86uzmmz9snnmkvxs6e33h6y9jvtqe8sdt298n
+  - &vm_test age18z0daa066kqeewew2krjknx9kzej3mffefluzn4m236fre8rzs6q3sj2ry
+creation_rules:
+  - path_regex: fleet/secrets/beads\.yaml$
+    key_groups:
+      - age:
+          - *admin
+          - *host_beads
+  # Addresses and identifiers kept out of the public tree (overalls ADR-0233).
+  - path_regex: fleet/secrets/(fleet-addresses|beads-backup)\.yaml$
+    key_groups:
+      - age:
+          - *admin
+          - *host_beads
+  - path_regex: fleet/secrets/vm-test\.yaml$
+    key_groups:
+      - age:
+          - *vm_test

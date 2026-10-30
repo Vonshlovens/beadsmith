@@ -1,0 +1,11 @@
+# devenv shell inputs. nixpkgs is the exact revision flake.lock pins, so the
+# shell, the flake checks, the image and the host build from one package set;
+# bump both together (`nix flake update nixpkgs`, then copy the rev here).
+inputs:
+  nixpkgs:
+    url: github:NixOS/nixpkgs/08d3a97586f6b6343b3b5e799980773629432610
+  git-hooks:
+    url: github:cachix/git-hooks.nix
+    inputs:
+      nixpkgs:
+        follows: nixpkgs

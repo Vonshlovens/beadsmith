@@ -1,0 +1,50 @@
+name: nix
+description: >-
+  Install Nix with flakes and, when the repository variable CACHIX_CACHE names
+  a Cachix cache, use it as a binary cache (ghuntley/overalls'
+  publish-cache approach). Pushes need the CACHIX_AUTH_TOKEN secret, so pull
+  requests from forks only pull.
+
+inputs:
+  cachix-cache:
+    description: Cachix cache name (vars.CACHIX_CACHE); empty disables Cachix.
+    required: false
+    default: ''
+  cachix-auth-token:
+    description: Token for pushing to the cache (secrets.CACHIX_AUTH_TOKEN).
+    required: false
+    default: ''
+  kvm:
+    description: Give the runner user /dev/kvm and Nix the kvm/nixos-test features.
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    # GitHub's Linux runners expose /dev/kvm, but only to root.
+    - name: Enable KVM
+      if: inputs.kvm == 'true'
+      shell: bash
+      run: |
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+          | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+        ls -l /dev/kvm
+
+    - uses: cachix/install-nix-action@v31
+      with:
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+          system-features = nixos-test benchmark big-parallel${{ inputs.kvm == 'true' && ' kvm' || '' }}
+          max-jobs = auto
+          cores = 0
+
+    # Push in the post-job step, not through the daemon (as overalls does).
+    - uses: cachix/cachix-action@v16
+      if: inputs.cachix-cache != ''
+      with:
+        name: ${{ inputs.cachix-cache }}
+        authToken: ${{ inputs.cachix-auth-token }}
+        useDaemon: false

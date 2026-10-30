@@ -1,0 +1,218 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      # Reads the pnpm version from package.json `packageManager`.
+      - uses: pnpm/action-setup@v4
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run check
+      - run: pnpm run test
+      - run: pnpm run notices --check
+      # Fails on any high or critical advisory in the installed tree.
+      - run: pnpm run audit
+
+  bd-compat:
+    # Read plane vs. databases created by released bd versions.
+    # Keep the matrix in step with TESTED_BD_MINORS in src/lib/server/dolt/schema.ts.
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        bd: ['1.1.2', '1.2.2', '1.3.1']
+    services:
+      dolt:
+        image: dolthub/dolt-sql-server:2.5.0
+        env:
+          DOLT_ROOT_PASSWORD: ci-only-password
+          DOLT_ROOT_HOST: '%'
+        ports:
+          - 3306:3306
+    env:
+      BEADS_DOLT_SERVER_HOST: 127.0.0.1
+      BEADS_DOLT_SERVER_PORT: '3306'
+      BEADS_DOLT_SERVER_USER: root
+      BEADS_DOLT_PASSWORD: ci-only-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      # Reads the pnpm version from package.json `packageManager`.
+      - uses: pnpm/action-setup@v4
+      - run: pnpm install --frozen-lockfile
+      - name: Install bd ${{ matrix.bd }} (checksum verified)
+        run: |
+          base=https://github.com/gastownhall/beads/releases/download/v${{ matrix.bd }}
+          file=beads_${{ matrix.bd }}_linux_amd64.tar.gz
+          curl -fsSL -o "$file" "$base/$file"
+          curl -fsSL -o checksums.txt "$base/checksums.txt"
+          grep " $file\$" checksums.txt | sha256sum -c -
+          mkdir -p bd-bin && tar -xzf "$file" -C bd-bin
+          echo "$PWD/$(dirname "$(find bd-bin -type f -name bd | head -1)")" >> "$GITHUB_PATH"
+      - name: Wait for Dolt
+        run: |
+          for attempt in $(seq 1 60); do
+            (echo > /dev/tcp/127.0.0.1/3306) 2>/dev/null && exit 0
+            sleep 1
+          done
+          exit 1
+      - name: Seed a project with bd ${{ matrix.bd }}
+        run: |
+          db=compat_$(echo '${{ matrix.bd }}' | tr . _)
+          bd version
+          scripts/ci/seed-beads-db.sh "$(command -v bd)" "$db"
+          echo "BDX_COMPAT_DATABASES=$db" >> "$GITHUB_ENV"
+      # tsconfig.json extends .svelte-kit/tsconfig.json, which only sync writes.
+      - run: pnpm exec svelte-kit sync
+      - run: pnpm exec vp test src/lib/server/dolt/compat.test.ts
+
+  quickstart:
+    # The README quickstart from a clean checkout.
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/ci/quickstart-smoke.sh
+
+  # The flake's gates (ghuntley's pattern): the toolchain check, `pnpm run
+  # check` and `pnpm run test` inside the Nix sandbox, every output on every
+  # system evaluates, and the production host's whole closure builds.
+  nix:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/nix
+        with:
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - run: nix flake check --no-build --all-systems
+      - run: >-
+          nix build -L --no-link --keep-going
+          .#checks.x86_64-linux.toolchain
+          .#checks.x86_64-linux.check
+          .#checks.x86_64-linux.test
+          .#checks.x86_64-linux.beads-toplevel
+
+  # NixOS VM test (nix/tests/beadsmith.nix) under KVM: Beadsmith and Dolt
+  # boot, /healthz answers, bd can init, create and list ready work.
+  vm:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/nix
+        with:
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          kvm: 'true'
+      - run: nix build -L --no-link .#checks.x86_64-linux.vm
+
+  # The published image is the flake's `image` (nix/image.nix), not the
+  # Dockerfile; the Dockerfile stays for `docker compose ... --build` without
+  # Nix (quickstart job). Every run smokes it; a green push to main publishes
+  # it with skopeo as ghcr.io/<owner>/<repo>:<sha> and :latest, the name
+  # compose.yaml pulls.
+  image:
+    needs: [test, nix, vm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/nix
+        with:
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - run: nix build -L .#packages.x86_64-linux.image
+      - run: docker load < result
+      - name: Smoke offline boot and loopback /healthz
+        # No network at all: the image must start from its own node_modules
+        # and never fetch from a registry.
+        run: |
+          docker run -d --name beadsmith-smoke --network none --read-only --tmpfs /tmp \
+            -e HOST=127.0.0.1 -e PORT=4321 \
+            -e BEADS_DOLT_SERVER_HOST=127.0.0.1 \
+            -e BDX_STATE_DIR=/tmp/state -e HOME=/tmp \
+            beadsmith:nix
+          code=
+          for attempt in $(seq 1 30); do
+            code=$(docker exec beadsmith-smoke node -e \
+              'fetch("http://127.0.0.1:4321/healthz").then((r) => r.status, () => 0).then(console.log)' \
+              2>/dev/null || true)
+            if [ "$code" = 204 ]; then
+              break
+            fi
+            sleep 1
+          done
+          docker logs beadsmith-smoke
+          docker rm -f beadsmith-smoke
+          test "$code" = 204
+      - name: Smoke the accounts recovery task
+        # Offline and read-only, as in compose.yaml. With no state.db the task
+        # must still load and say so; a file nix/app.nix forgot to copy fails
+        # here instead.
+        run: |
+          out=$(docker run --rm --network none --read-only --tmpfs /tmp \
+            -e BDX_STATE_DIR=/tmp/state -e HOME=/tmp \
+            beadsmith:nix node scripts/accounts.ts list 2>&1 || true)
+          echo "$out"
+          grep -q 'No state.db in /tmp/state' <<<"$out"
+      - name: Publish to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # GHCR names must be lowercase; forks publish to their own namespace.
+          image=ghcr.io/${GITHUB_REPOSITORY,,}
+          skopeo() { nix run --inputs-from . nixpkgs#skopeo -- "$@"; }
+          printf '%s' "$GHCR_TOKEN" | skopeo login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          skopeo copy docker-archive:result "docker://$image:$GITHUB_SHA"
+          skopeo copy "docker://$image:$GITHUB_SHA" "docker://$image:latest"
+
+  # Push-to-deploy (ADR-0014): the `deploy` branch only ever points at a main
+  # revision that passed everything above; host beads follows it
+  # (fleet/hosts/beads/auto-update.nix). A plain push is a fast-forward, so an
+  # older run can never move it backwards.
+  deploy-branch:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, bd-compat, quickstart, nix, vm, image]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-branch
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fast-forward deploy to this revision
+        run: |
+          if git ls-remote --exit-code origin refs/heads/deploy >/dev/null; then
+            git fetch origin deploy
+            if ! git merge-base --is-ancestor origin/deploy "$GITHUB_SHA"; then
+              echo "deploy is ahead of or diverged from $GITHUB_SHA; leaving it"
+              exit 0
+            fi
+          fi
+          git push origin "$GITHUB_SHA:refs/heads/deploy"

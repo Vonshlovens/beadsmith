@@ -1,0 +1,17 @@
+# pnpm reads its settings from this file (ADR-0008). Node runs the server and
+# scripts; there are no workspace packages besides the root.
+
+# Only resolve package versions published at least 3 days ago (in minutes), so
+# a compromised release has time to be noticed and pulled before we pick it up.
+minimumReleaseAge: 4320
+
+# Provenance for each override: docs/dependency-audit.md.
+overrides:
+  cookie: ^0.7.2
+  esbuild: 0.28.1
+  vite: npm:@voidzero-dev/vite-plus-core@1.4.0
+
+# Dependency install scripts run only when listed here. esbuild's checks that
+# its platform binary matches (drizzle-kit and tsx use it at dev time).
+allowBuilds:
+  esbuild: true

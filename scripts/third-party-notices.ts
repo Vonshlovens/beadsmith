@@ -1,0 +1,193 @@
+/**
+ * Writes THIRD_PARTY_NOTICES.md from the installed node_modules tree.
+ *
+ * Covers what ships: the runtime `dependencies` closure, the adapter whose
+ * server code is copied into `build/`, and the devDependencies Vite bundles
+ * into client and server output. Packages under MIT, ISC, or 0BSD are listed; every
+ * other license gets its full text (and any NOTICE file) inlined.
+ *
+ *   pnpm run notices          # rewrite the file
+ *   pnpm run notices --check  # exit 1 when the file is stale
+ */
+import { dirname, join } from 'node:path';
+import { existsSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+
+const ROOT = new URL('..', import.meta.url).pathname;
+const OUTPUT = join(ROOT, 'THIRD_PARTY_NOTICES.md');
+/** Shipped although declared as devDependencies (bundled or imported at start). */
+const SHIPPED_DEV = ['@sveltejs/adapter-node', '@sveltejs/kit', 'svelte'];
+/** Shipped, but their own dependencies are build tools (Rollup), not shipped. */
+const NOT_FOLLOWED = new Set(['@sveltejs/adapter-node']);
+const LISTED_ONLY = new Set(['MIT', 'ISC', '0BSD']);
+
+interface PackageJson {
+	name: string;
+	version: string;
+	license?: string | { type?: string };
+	licenses?: Array<{ type?: string }>;
+	dependencies?: Record<string, string>;
+	optionalDependencies?: Record<string, string>;
+	os?: string[];
+	cpu?: string[];
+}
+
+interface Entry {
+	name: string;
+	version: string;
+	license: string;
+	dir: string;
+}
+
+function readJson(path: string): PackageJson {
+	return JSON.parse(readFileSync(path, 'utf8')) as PackageJson;
+}
+
+/**
+ * Matching files in name order. readdir order is filesystem-dependent (ext4
+ * hashes it per filesystem), so sorting keeps the output identical on every
+ * machine; dompurify, for one, ships both LICENSE and LICENSE-MPL.
+ */
+function findFiles(dir: string, pattern: RegExp): string[] {
+	return readdirSync(dir)
+		.filter((name) => pattern.test(name))
+		.sort()
+		.map((name) => join(dir, name));
+}
+
+function findFile(dir: string, pattern: RegExp): string | undefined {
+	return findFiles(dir, pattern)[0];
+}
+
+function licenseOf(pkg: PackageJson, dir: string): string {
+	if (typeof pkg.license === 'string') return pkg.license;
+	if (pkg.license?.type !== undefined) return pkg.license.type;
+	if (pkg.licenses !== undefined) return pkg.licenses.map((l) => l.type ?? '?').join(' OR ');
+	// Some packages only ship a LICENSE file; read its first line.
+	const file = findFile(dir, /^licen[cs]e/i);
+	const first = file === undefined ? '' : readFileSync(file, 'utf8').trim().split('\n')[0];
+	return /^MIT\b/.test(first) ? 'MIT' : 'UNKNOWN';
+}
+
+/** Node resolution from `from_dir` upward; returns the real package directory. */
+function resolve(name: string, from_dir: string): string | undefined {
+	let dir = from_dir;
+	for (;;) {
+		const candidate = join(dir, 'node_modules', name);
+		if (existsSync(join(candidate, 'package.json'))) return realpathSync(candidate);
+		const parent = dirname(dir);
+		if (parent === dir) return undefined;
+		dir = parent;
+	}
+}
+
+function collect(): Entry[] {
+	const top = readJson(join(ROOT, 'package.json'));
+	const seen = new Map<string, Entry>();
+
+	function walk(dir: string, follow = true): void {
+		const pkg = readJson(join(dir, 'package.json'));
+		const key = `${pkg.name}@${pkg.version}`;
+		if (seen.has(key)) return;
+		// Per-platform native binaries (one os or cpu, e.g. @libsql/linux-x64-gnu)
+		// differ by build machine; leaving them out keeps this file identical on
+		// every platform. They carry their own license file in the package.
+		if (pkg.os?.length === 1 || pkg.cpu?.length === 1) return;
+		seen.set(key, { name: pkg.name, version: pkg.version, license: licenseOf(pkg, dir), dir });
+		if (!follow) return;
+		// Peers are supplied by the consumer (and would drag in Vite's toolchain
+		// through @sveltejs/kit), so only follow what a package installs itself.
+		const deps = [
+			...Object.keys(pkg.dependencies ?? {}),
+			...Object.keys(pkg.optionalDependencies ?? {})
+		];
+		for (const dep of deps) {
+			// Node resolution: a nested copy in the package first, then hoisted ones.
+			const found = resolve(dep, dir);
+			// Optional platform binaries for other platforms are simply absent.
+			if (found !== undefined) walk(found);
+		}
+	}
+
+	for (const name of [...Object.keys(top.dependencies ?? {}), ...SHIPPED_DEV]) {
+		const found = resolve(name, ROOT);
+		if (found === undefined) throw new Error(`${name} is not installed; run pnpm install`);
+		walk(found, !NOT_FOLLOWED.has(name));
+	}
+	return [...seen.values()].sort(
+		// Code-unit order, not localeCompare, so no machine's locale changes the file.
+		(a, b) =>
+			a.name < b.name
+				? -1
+				: a.name > b.name
+					? 1
+					: a.version < b.version
+						? -1
+						: a.version > b.version
+							? 1
+							: 0
+	);
+}
+
+function render(entries: Entry[]): string {
+	const lines = [
+		'# Third-party notices',
+		'',
+		'<!-- Generated by `pnpm run notices`. Do not edit by hand. -->',
+		'',
+		'Beadsmith is MIT licensed (see `LICENSE`). Its container image and built',
+		'output include the open-source packages below. Packages under MIT, ISC, or',
+		'0BSD are listed here; their license texts ship inside each package in the',
+		'image. Every other license is reproduced in full after the table.',
+		'',
+		'Per-platform native binaries (packages restricted to one OS or CPU, such as',
+		'`@libsql/<platform>`) differ by build machine and are omitted; each ships its',
+		'own license file inside the package.',
+		'',
+		'| Package | Version | License |',
+		'| --- | --- | --- |',
+		...entries.map((e) => `| ${e.name} | ${e.version} | ${e.license} |`)
+	];
+	for (const e of entries.filter((entry) => !LISTED_ONLY.has(entry.license))) {
+		lines.push('', `## ${e.name}@${e.version} (${e.license})`);
+		// Every license and notice file: dual-licensed packages ship one per license.
+		for (const pattern of [/^licen[cs]e/i, /^notice/i]) {
+			for (const file of findFiles(e.dir, pattern)) {
+				lines.push('', '```text', readFileSync(file, 'utf8').trimEnd(), '```');
+			}
+		}
+	}
+	return `${lines.join('\n')}\n`;
+}
+
+const entries = collect();
+const unknown = entries.filter((e) => e.license === 'UNKNOWN');
+if (unknown.length > 0) {
+	console.error(`Unknown license: ${unknown.map((e) => `${e.name}@${e.version}`).join(', ')}`);
+	process.exit(1);
+}
+const next = render(entries);
+if (process.argv.includes('--check')) {
+	const current = existsSync(OUTPUT) ? readFileSync(OUTPUT, 'utf8') : '';
+	if (current !== next) {
+		console.error('THIRD_PARTY_NOTICES.md is stale; run pnpm run notices');
+		// Show what differs so a CI-only mismatch is diagnosable from the log.
+		const have = new Set(current.split('\n'));
+		const want = new Set(next.split('\n'));
+		for (const line of next
+			.split('\n')
+			.filter((l) => !have.has(l))
+			.slice(0, 10)) {
+			console.error(`+ ${line}`);
+		}
+		for (const line of current
+			.split('\n')
+			.filter((l) => !want.has(l))
+			.slice(0, 10)) {
+			console.error(`- ${line}`);
+		}
+		process.exit(1);
+	}
+} else {
+	writeFileSync(OUTPUT, next);
+	console.log(`Wrote ${entries.length} packages to THIRD_PARTY_NOTICES.md`);
+}
