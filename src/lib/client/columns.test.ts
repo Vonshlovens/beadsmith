@@ -228,7 +228,7 @@ describe('tableMinWidth', () => {
 			0
 		);
 		expect(tableMinWidth(widths, painted, 1440)).toBe(fixed + MIN_TITLE_WIDTH);
-		expect(tableMinWidth(widths, painted, 1440)).toBe(1150);
+		expect(tableMinWidth(widths, painted, 1440)).toBe(1164);
 	});
 
 	it('uses the phone title floor and only the columns still painted', () => {
@@ -253,7 +253,7 @@ describe('tableMinWidth', () => {
 
 	it('honours a dragged width', () => {
 		const dragged = resolveWidths({ id: 200 });
-		expect(tableMinWidth(dragged, painted, 1440)).toBe(1150 - DEFAULT_WIDTHS.id + 200);
+		expect(tableMinWidth(dragged, painted, 1440)).toBe(1164 - DEFAULT_WIDTHS.id + 200);
 	});
 });
 

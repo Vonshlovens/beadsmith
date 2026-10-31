@@ -10,6 +10,7 @@
 	import { page } from '$app/state';
 	import brandMarkDark from '$lib/assets/beadsmith-mark.png';
 	import brandMarkLight from '$lib/assets/beadsmith-mark-light.png';
+	import touchIcon from '$lib/assets/beadsmith-touch-icon.png';
 	import AppSidebar from '$lib/components/app-sidebar.svelte';
 	import FirstMate from '$lib/components/first-mate.svelte';
 	import TopBar from '$lib/components/top-bar.svelte';
@@ -50,7 +51,8 @@
 		type="image/png"
 		href={app_state.resolved_theme === 'dark' ? brandMarkDark : brandMarkLight}
 	/>
-	<link rel="apple-touch-icon" href={brandMarkLight} />
+	<!-- Opaque: iOS fills a transparent icon's background with black. -->
+	<link rel="apple-touch-icon" href={touchIcon} />
 </svelte:head>
 
 <svelte:window onkeydown={onKeydown} />

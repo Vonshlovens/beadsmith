@@ -490,7 +490,7 @@
 		min-height: 0;
 		max-height: 100%;
 		background: var(--s1);
-		border: 1px solid var(--line);
+		border: 1px solid var(--line-2);
 		border-radius: var(--r-2);
 	}
 
@@ -508,8 +508,8 @@
 		display: flex;
 		align-items: stretch;
 		flex: none;
-		border-bottom: 1px solid var(--line);
-		background: var(--s1);
+		border-bottom: 1px solid var(--line-2);
+		background: var(--s2);
 		border-radius: var(--r-2) var(--r-2) 0 0;
 	}
 
@@ -534,7 +534,7 @@
 		border-radius: inherit;
 	}
 	.board-col-toggle:hover {
-		background: var(--s2);
+		background: var(--s3);
 	}
 	.board-col-toggle:focus-visible {
 		outline: 2px solid var(--em-400);
@@ -552,15 +552,16 @@
 	.board-col.is-collapsed .name {
 		writing-mode: vertical-rl;
 		transform: rotate(180deg);
-		letter-spacing: 0.12em;
 	}
 
+	/* Column names are section headings: the website's h2 style. */
 	.board-col-hd .name {
 		display: inline-flex;
 		align-items: center;
 		gap: 8px;
 		font-size: var(--t-xs);
-		letter-spacing: 0.08em;
+		font-weight: 600;
+		letter-spacing: 0.07em;
 		text-transform: uppercase;
 		color: var(--tx-hi);
 		min-width: 0;
@@ -578,16 +579,14 @@
 		flex: none;
 		margin: 6px 8px 6px 0;
 		padding: 0;
-		width: 24px;
-		height: 24px;
-		border: 1px solid var(--line);
+		width: 26px;
+		height: 26px;
+		border: 1px solid var(--line-2);
 		border-radius: var(--r-1);
-		background: var(--s2);
+		background: var(--bg);
 		color: var(--tx);
 		font: inherit;
 		font-size: var(--t-xs);
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
 		cursor: pointer;
 	}
 	.board-col-new:hover {
@@ -607,7 +606,7 @@
 		flex: none;
 		width: 14px;
 		height: 14px;
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 		transition: transform 0.12s ease;
 	}
 	.board-col.is-collapsed .board-col-toggle :global(.caret) {
@@ -632,6 +631,6 @@
 	.board-empty {
 		margin: var(--s-3) var(--s-2);
 		font-size: var(--t-xs);
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 </style>

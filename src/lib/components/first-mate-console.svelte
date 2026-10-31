@@ -493,7 +493,7 @@
 	.hint-inline {
 		margin-left: auto;
 		font-size: var(--t-xs);
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 	.search-row {
 		padding: var(--s-3) var(--s-5) 0;
@@ -547,10 +547,8 @@
 		padding: var(--s-3) 0 var(--s-4);
 	}
 	.group-lbl {
-		font-size: var(--t-micro);
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: var(--tx-faint);
+		font-size: var(--t-xs);
+		color: var(--tx-dim);
 		padding: var(--s-2) 8px 4px;
 	}
 	.row {

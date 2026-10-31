@@ -465,7 +465,7 @@
 		color: var(--tx-hi);
 	}
 	.threads-hd .n {
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 		margin-left: 4px;
 		font-variant-numeric: tabular-nums;
 	}
@@ -518,7 +518,7 @@
 	}
 	.th-when {
 		grid-area: when;
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 	.th-ti {
 		grid-area: ti;

@@ -379,9 +379,7 @@
 		display: flex;
 		align-items: baseline;
 		gap: var(--s-2);
-		font-size: var(--t-micro);
-		letter-spacing: 0.1em;
-		text-transform: uppercase;
+		font-size: var(--t-xs);
 		color: var(--tx-dim);
 		margin-bottom: 3px;
 	}
@@ -389,7 +387,7 @@
 		margin-left: auto;
 		letter-spacing: 0;
 		text-transform: none;
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 	.who .st {
 		color: var(--amber-tx);
@@ -408,7 +406,7 @@
 		color: var(--tx-dim);
 	}
 	.turn :global(.turn-prose) {
-		font-size: 13px;
+		font-size: var(--t-sm);
 		max-width: none;
 	}
 	.live {

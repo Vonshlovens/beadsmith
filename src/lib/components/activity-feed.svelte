@@ -73,9 +73,9 @@
 				abbreviate={!show_project}
 			/>
 			<span class="ti">
-				{#if show_project}<span class="proj"
-						>{event.project_name} ·
-					</span>{/if}{event.issue_title ?? ''}
+				<!-- The separator is an expression so Svelte keeps its trailing space. -->
+				{#if show_project}<span class="proj">{event.project_name}{' · '}</span
+					>{/if}{event.issue_title ?? ''}
 			</span>
 		</li>
 	{/each}
@@ -126,10 +126,10 @@
 	}
 	.tm {
 		float: right;
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 		margin-left: 8px;
 	}
 	.proj {
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 </style>

@@ -955,36 +955,36 @@
 		padding: 0 0 var(--s-3);
 	}
 	.proj {
-		font-size: var(--t-md);
-		font-weight: 700;
+		font-size: var(--t-lg);
+		font-weight: 650;
 		letter-spacing: -0.01em;
 		color: var(--tx-hi);
-		margin: 0;
+		margin: 0 0 0 2px;
 	}
 	.meta {
-		font-size: var(--t-xs);
+		font-size: var(--t-sm);
 		color: var(--tx-dim);
 		font-variant-numeric: tabular-nums;
 		margin-right: var(--s-2);
 	}
 	.view-seg {
 		display: inline-flex;
-		height: 28px;
-		border: 1px solid var(--line);
+		height: 30px;
+		border: 1px solid var(--line-2);
 		border-radius: var(--r-1);
 		overflow: hidden;
-		background: var(--s2);
+		background: var(--bg);
 	}
 	.view-opt {
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
-		padding: 0 10px;
+		padding: 0 11px;
 		border: 0;
-		border-right: 1px solid var(--line);
+		border-right: 1px solid var(--line-2);
 		background: transparent;
-		color: var(--tx-dim);
-		font-size: var(--t-xs);
+		color: var(--tx-mid);
+		font-size: var(--t-sm);
 		cursor: pointer;
 	}
 	.view-opt:last-child {
@@ -994,28 +994,30 @@
 		background: var(--s3);
 		color: var(--tx-hi);
 	}
+	/* The chosen view is set in ink, like the website's code blocks. */
 	.view-opt.is-on {
-		background: var(--em-wash);
-		color: var(--em-300);
+		background: var(--tx-hi);
+		color: var(--bg);
+		font-weight: 600;
 	}
 	.filt {
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
-		height: 28px;
-		min-width: 28px;
+		height: 30px;
+		min-width: 30px;
 		justify-content: center;
-		padding: 0 7px;
-		background: var(--s2);
-		border: 1px solid var(--line);
+		padding: 0 8px;
+		background: var(--bg);
+		border: 1px solid var(--line-2);
 		border-radius: var(--r-1);
-		font-size: var(--t-xs);
+		font-size: var(--t-sm);
 		cursor: pointer;
 		white-space: nowrap;
 	}
 	.filt:hover {
-		border-color: var(--line-2);
-		background: var(--s3);
+		border-color: var(--line-3);
+		background: var(--s2);
 	}
 	.filt .v {
 		display: inline-flex;
@@ -1024,21 +1026,21 @@
 		color: var(--tx-hi);
 	}
 	.filt :global(svg) {
-		color: var(--tx-dim);
+		color: var(--tx-mid);
 		flex: none;
 	}
 	.filt.is-on :global(svg) {
 		color: var(--em-300);
 	}
 	.filt-search {
-		flex: 0 1 220px;
-		height: 28px;
+		flex: 0 1 240px;
+		height: 30px;
 		min-width: 110px;
 		max-width: 260px;
 	}
 	.filt .caret {
-		font-size: 8px;
-		color: var(--tx-faint);
+		font-size: 10px;
+		color: var(--tx-dim);
 	}
 	.filt.is-on {
 		border-color: var(--em-700);
@@ -1048,17 +1050,17 @@
 		color: var(--em-300);
 	}
 	.filt.is-off .v {
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 	.filt-clear {
 		display: inline-flex;
 		align-items: center;
 		gap: 4px;
-		height: 28px;
+		height: 30px;
 		background: none;
 		border: 0;
-		color: var(--tx-dim);
-		font-size: var(--t-xs);
+		color: var(--tx-mid);
+		font-size: var(--t-sm);
 		cursor: pointer;
 		padding: 0 4px;
 	}
@@ -1083,10 +1085,8 @@
 	/* The menu's "this is checked but the window is too narrow" aside. */
 	.hint {
 		margin-left: auto;
-		font-size: var(--t-micro);
-		letter-spacing: 0.1em;
-		text-transform: uppercase;
-		color: var(--tx-faint);
+		font-size: var(--t-xs);
+		color: var(--tx-dim);
 	}
 
 	/*

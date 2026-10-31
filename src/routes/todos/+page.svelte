@@ -718,15 +718,15 @@
 		justify-content: space-between;
 		margin: 0 0 var(--s-3);
 		padding-bottom: var(--s-2);
-		border-bottom: 1px solid var(--line);
+		border-bottom: 2px solid var(--rule);
 		font-size: var(--t-xs);
 		font-weight: 600;
-		letter-spacing: 0.06em;
+		letter-spacing: 0.07em;
 		text-transform: uppercase;
-		color: var(--tx-mid);
+		color: var(--tx-hi);
 	}
 	.col-n {
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 	.col-body,
 	.done-grid {

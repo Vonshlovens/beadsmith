@@ -3,8 +3,7 @@
 	 * Sign-in, open sign-up, and first-admin setup (ADR-0011). Rendered without
 	 * the app shell: nothing behind it loads until there is a session.
 	 */
-	import brandMarkDark from '$lib/assets/beadsmith-mark.png';
-	import brandMarkLight from '$lib/assets/beadsmith-mark-light.png';
+	import BrandMark from '$lib/components/brand-mark.svelte';
 	import { auth, authErrorMessage } from '$lib/client/auth';
 	import { PRODUCT_NAME } from '$lib/product';
 	import type { PageProps } from './$types';
@@ -68,10 +67,7 @@
 <main class="auth" id="main">
 	<div class="auth-card panel card-pad">
 		<div class="auth-brand">
-			<span class="brand-mark" aria-hidden="true">
-				<img class="brand-mark-image brand-mark-image-light" src={brandMarkLight} alt="" />
-				<img class="brand-mark-image brand-mark-image-dark" src={brandMarkDark} alt="" />
-			</span>
+			<BrandMark size={44} />
 			<span class="lbl">{PRODUCT_NAME}</span>
 		</div>
 

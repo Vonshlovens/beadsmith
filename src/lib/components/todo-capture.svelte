@@ -319,7 +319,7 @@
 		border-radius: var(--r-1);
 		background: var(--s2);
 		color: var(--tx-mid);
-		font-size: var(--t-micro);
+		font-size: var(--t-xs);
 		letter-spacing: 0.04em;
 	}
 	.cap-priority {
@@ -332,7 +332,7 @@
 		border-color: var(--cyan-line);
 	}
 	.cap-iso {
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 	.cap-refine {
 		overflow: hidden;
@@ -363,7 +363,7 @@
 		background: var(--s2);
 		color: var(--tx-mid);
 		font: inherit;
-		font-size: var(--t-micro);
+		font-size: var(--t-xs);
 		cursor: pointer;
 	}
 	.cap-sug:hover {
@@ -377,7 +377,7 @@
 	}
 	.cap-sug kbd {
 		font: inherit;
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 	.cap-step {
 		display: inline-flex;
@@ -402,13 +402,13 @@
 	}
 	.cap-refine-hint {
 		margin-left: auto;
-		color: var(--tx-faint);
-		font-size: var(--t-micro);
+		color: var(--tx-dim);
+		font-size: var(--t-xs);
 	}
 	.cap-hint {
 		margin: var(--s-2) var(--s-1) 0;
-		color: var(--tx-faint);
-		font-size: var(--t-micro);
+		color: var(--tx-dim);
+		font-size: var(--t-xs);
 		line-height: 1.6;
 	}
 	@media (max-width: 600px) {

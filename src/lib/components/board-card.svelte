@@ -155,8 +155,8 @@
 		position: relative;
 		display: flex;
 		flex-direction: column;
-		background: var(--s2);
-		border: 1px solid var(--line);
+		background: var(--bg);
+		border: 1px solid var(--line-2);
 		border-radius: var(--r-1);
 		min-width: 0;
 	}
@@ -165,8 +165,7 @@
 	}
 	.board-card-shell:hover,
 	.board-card-shell:focus-within {
-		border-color: var(--line-2);
-		background: var(--s3);
+		border-color: var(--line-3);
 	}
 
 	.board-card {
@@ -211,12 +210,12 @@
 		border: 1px solid transparent;
 		border-radius: var(--r-1);
 		background: transparent;
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 		cursor: pointer;
 	}
 	.board-card-shell:hover .board-card-send {
-		color: var(--tx-dim);
-		border-color: var(--line);
+		color: var(--tx-mid);
+		border-color: var(--line-2);
 	}
 	.menu-kbd {
 		margin-left: auto;
@@ -246,15 +245,16 @@
 	.when {
 		margin-left: auto;
 		flex: none;
-		font-size: var(--t-micro);
+		font-size: var(--t-xs);
 		color: var(--tx-dim);
 		font-variant-numeric: tabular-nums;
 	}
 
 	.card-title {
 		font-size: var(--t-sm);
+		font-weight: 500;
 		color: var(--tx-hi);
-		line-height: 1.35;
+		line-height: 1.4;
 		display: -webkit-box;
 		-webkit-line-clamp: 3;
 		line-clamp: 3;
@@ -277,7 +277,7 @@
 		min-height: 18px;
 		padding-right: 26px;
 		font-size: var(--t-xs);
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 		font-variant-numeric: tabular-nums;
 	}
 	.deps b {

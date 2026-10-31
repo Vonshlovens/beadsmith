@@ -486,7 +486,7 @@
 		border-radius: var(--r-1);
 	}
 	.tc-due {
-		font-size: var(--t-micro);
+		font-size: var(--t-xs);
 		letter-spacing: 0.04em;
 		color: var(--tx-mid);
 	}
@@ -499,7 +499,7 @@
 		font-weight: 600;
 	}
 	.tc-tag {
-		font-size: var(--t-micro);
+		font-size: var(--t-xs);
 		color: var(--cyan-tx);
 	}
 	.tc-routed {
@@ -508,7 +508,7 @@
 		align-items: center;
 		gap: var(--s-2);
 		margin-top: var(--s-2);
-		font-size: var(--t-micro);
+		font-size: var(--t-xs);
 	}
 	.tc-route-project,
 	.tc-route-issue {
@@ -547,7 +547,7 @@
 	.tc-comment {
 		gap: 4px;
 		padding: 0 7px;
-		font-size: var(--t-micro);
+		font-size: var(--t-xs);
 	}
 	.tc-panel {
 		border-top: 1px solid var(--line);
@@ -592,7 +592,7 @@
 		border: 0;
 		border-radius: var(--r-1);
 		background: none;
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 		cursor: pointer;
 		opacity: 0;
 		transition:
@@ -613,8 +613,8 @@
 	}
 	.tc-quiet {
 		margin: 0;
-		font-size: var(--t-micro);
-		color: var(--tx-faint);
+		font-size: var(--t-xs);
+		color: var(--tx-dim);
 	}
 	.tc-compose {
 		display: flex;

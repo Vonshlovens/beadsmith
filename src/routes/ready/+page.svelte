@@ -209,7 +209,7 @@
 	}
 	.rd-when {
 		font-size: var(--t-xs);
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 		text-align: right;
 	}
 	/* Phone: id, project and priority on one line, the title under them. */

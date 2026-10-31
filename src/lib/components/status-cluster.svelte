@@ -148,7 +148,7 @@
 	}
 	.note {
 		margin-top: 6px;
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 		display: block;
 	}
 

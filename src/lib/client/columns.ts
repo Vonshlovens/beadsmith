@@ -74,9 +74,9 @@ export const DEFAULT_WIDTHS: Record<FixedColumn, number> = {
 	type: 92,
 	priority: 64,
 	assignee: 132,
-	labels: 150,
+	labels: 160,
 	deps: 80,
-	updated: 88
+	updated: 92
 };
 
 /** Below this a column is narrower than its own header, and stops being a column. */
