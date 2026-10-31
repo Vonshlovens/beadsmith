@@ -18,7 +18,6 @@
 	import { app_state } from '$lib/client/stores.svelte';
 
 	const on_auth = $derived(page.url.pathname === '/auth');
-	const on_page = $derived(page.url.pathname === FIRST_MATE_PATH);
 
 	let mate_query = $state('');
 	let mate_view = $state<FirstMateView | null>(null);
@@ -71,7 +70,7 @@
 	}
 
 	function onWindowKeydown(event: KeyboardEvent) {
-		if (on_page || on_auth) {
+		if (on_auth) {
 			return;
 		}
 		if (!isFirstMateHotkey(event)) {
@@ -110,7 +109,7 @@
 
 {#snippet title(heading: string)}
 	<Dialog.Title class="lbl">{heading}</Dialog.Title>
-	<a class="open-page" href={open_href} onclick={openPage}>Open page</a>
+	<a class="open-page" href={open_href} onclick={openPage}>Ask in chat</a>
 {/snippet}
 
 {#if file_project_id}

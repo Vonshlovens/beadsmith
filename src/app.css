@@ -340,6 +340,12 @@
 		box-sizing: border-box;
 	}
 
+	/* Native checks take the mark, not the browser's blue. */
+	input[type='checkbox'],
+	input[type='radio'] {
+		accent-color: var(--em-500);
+	}
+
 	html,
 	body {
 		margin: 0;
@@ -1179,6 +1185,10 @@
 	.fm-open svg {
 		flex: none;
 	}
+	.fm-open[aria-current='page'] {
+		color: var(--tx-hi);
+		border-color: var(--tx-hi);
+	}
 	.kbd {
 		font-size: var(--t-micro);
 		line-height: 1;
@@ -1918,6 +1928,99 @@
 	.mb-7 {
 		margin-bottom: var(--s-7);
 	}
+	/* ---- CHAT ---------------------------------------------------------------
+	   First Mate chats and agent threads, after Overalls' threads: a role line
+	   in mono, the body in the prose face, your own messages on a tint, and
+	   system events as quiet dotted lines. */
+	.chat-log {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: var(--s-5);
+	}
+	.chat-msg {
+		min-width: 0;
+	}
+	.chat-msg.is-you {
+		padding: var(--s-3) var(--s-4);
+		background: var(--s2);
+		border-radius: var(--r-2);
+	}
+	.chat-role {
+		display: flex;
+		align-items: baseline;
+		gap: var(--s-2);
+		margin-bottom: 6px;
+		font-size: var(--t-xs);
+		font-weight: 600;
+		color: var(--tx-hi);
+	}
+	.chat-msg.is-you .chat-role {
+		font-weight: 500;
+		color: var(--tx-dim);
+	}
+	.chat-role .st {
+		font-weight: 500;
+		color: var(--amber-tx);
+	}
+	.chat-msg.is-failed .chat-role .st {
+		color: var(--danger-tx);
+	}
+	.chat-role time,
+	.chat-role .when {
+		margin-left: auto;
+		font-weight: 400;
+		color: var(--tx-dim);
+	}
+	.chat-body {
+		margin: 0;
+		font-family: var(--font-prose);
+		font-size: 15px;
+		line-height: 1.6;
+		color: var(--tx-hi);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+	.chat-body.is-dim {
+		color: var(--tx-dim);
+	}
+	.chat-msg .prose {
+		max-width: none;
+	}
+	.chat-msg .prose > :last-child {
+		margin-bottom: 0;
+	}
+	.chat-event {
+		margin: 0;
+		padding-left: var(--s-4);
+		font-size: var(--t-sm);
+		color: var(--tx-dim);
+	}
+	.chat-event::before {
+		content: '· ';
+	}
+	.chat-dots {
+		display: inline-flex;
+		gap: 4px;
+		margin-right: 8px;
+		vertical-align: middle;
+	}
+	.chat-dots i {
+		width: 5px;
+		height: 5px;
+		border-radius: 99px;
+		background: var(--tx-dim);
+		animation: bdui-pulse 1.2s ease-in-out infinite;
+	}
+	.chat-dots i:nth-child(2) {
+		animation-delay: 0.2s;
+	}
+	.chat-dots i:nth-child(3) {
+		animation-delay: 0.4s;
+	}
+
 	/* Visually hidden but announced. */
 	.sr-only {
 		position: absolute;
@@ -1994,7 +2097,6 @@
 		}
 	}
 	@media (max-width: 1100px) {
-		.fm-kbd,
 		.keys-open {
 			display: none;
 		}

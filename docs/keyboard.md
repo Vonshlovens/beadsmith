@@ -24,7 +24,7 @@ with `useHotkeys` (`src/lib/client/hotkeys.svelte.ts`), and
 | `g i` | Issues in the current (or last visited) project  |
 | `g b` | Board                                            |
 | `g r` | Ready                                            |
-| `g f` | First Mate                                       |
+| `g f` | First Mate (the chat)                            |
 | `g m` | Missions                                         |
 | `g a` | Activity log                                     |
 | `g c` | Console                                          |
@@ -173,5 +173,21 @@ here, and `S` / `f s` save a search: a deliberate difference.
 | `e` / `2` | Elaborate: rewrite description and criteria |
 | `c` / `3` | Close it with a reason                      |
 | `t` / `4` | Tackle: claim, do the work, open a PR       |
-| `⌘Enter`  | Launch, or send a reply in a thread         |
+| `⌘Enter`  | Launch                                      |
+| `Enter`   | Send a reply in a thread (`⇧Enter`: line)   |
 | `n`       | New request (from a thread)                 |
+
+## First Mate
+
+`/first-mate` is a chat: a rail of chats (and agent threads, when an agent
+runner is configured) beside one conversation. No model is connected yet, so
+replies are placeholders and chats stay in the browser's local storage. The
+commands stay on `⌘K`, and every composer has a **Commands** button.
+
+| Keys      | Does                           |
+| --------- | ------------------------------ |
+| `Enter`   | Send (`⌘Enter` too)            |
+| `⇧Enter`  | New line                       |
+| `n`       | New chat                       |
+| `j` / `k` | Next / previous chat or thread |
+| `Esc`     | Close the chat or thread       |

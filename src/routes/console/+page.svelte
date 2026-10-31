@@ -372,7 +372,7 @@
 												{project.tackle.source === 'env' ? 'Env' : 'Mapped'}
 											</span>
 										{:else}
-											<span class="badge badge-blocked">Unmapped</span>
+											<span class="unmapped">Unmapped</span>
 										{/if}
 									</td>
 									<td>
@@ -507,6 +507,11 @@
 		margin-left: auto;
 		display: flex;
 		gap: var(--s-2);
+	}
+	.unmapped {
+		font-size: var(--t-xs);
+		font-weight: 500;
+		color: var(--danger-tx);
 	}
 	.health-kv {
 		grid-template-columns: 88px 1fr;

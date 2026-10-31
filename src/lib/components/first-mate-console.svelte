@@ -1,6 +1,7 @@
 <script lang="ts">
 	/**
-	 * Shared First Mate console: the palette body and the /first-mate page.
+	 * First Mate's command console: the ⌘K palette body. The `page` variant is
+	 * the same console laid out inline, for a host page that wants one.
 	 * File and Tackle dialogs stay with the host, because the palette dialog
 	 * unmounts this component when it closes.
 	 */
@@ -181,7 +182,7 @@
 		if (view === 'file-project') {
 			return 'File';
 		}
-		return 'First Mate';
+		return 'Commands';
 	});
 	const placeholder = $derived.by(() => {
 		if (view === 'ready') {
