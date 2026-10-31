@@ -31,8 +31,6 @@ systemd credentials, never by reading `/run/secrets` itself.
 | ------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | `beads-dolt-root-password`            | Dolt `root@localhost`, read by the Dolt entrypoint                   | Change in Dolt, then here; restart `docker-beads-dolt`                                     |
 | `beads-web-dolt-password`             | Beadsmith's SELECT-only SQL user                                     | Change in Dolt, then here                                                                  |
-| `beads-bd-writer-password`            | The writer account the operator's machines use for `bd`              | Change in Dolt, here, and in each machine's `~/.config/beads/credentials`                  |
-| `beads-dolt-agent-password`           | Spare SQL account password kept with the others; no service uses it  | Drop once the account is gone                                                              |
 | `beads-dolt-backup-sql-password`      | The restic checkpoint's SQL user                                     | Change in Dolt, then here                                                                  |
 | `beads-dolt-backup-b2-key-id`, `-app-key` | Backblaze B2 application key for restic                          | New key in Backblaze, then here; delete the old key                                        |
 | `beads-dolt-backup-restic-password`   | The restic repository password                                       | `restic key add` / `key remove`, then here                                                 |
@@ -41,6 +39,12 @@ systemd credentials, never by reading `/run/secrets` itself.
 | `beads-web-better-auth-secret`        | Signs Beadsmith sessions                                             | New value signs everyone out; `fill-secrets.sh generate` only fills placeholders           |
 | `beads-web-master-key`                | Encrypts credentials Beadsmith stores (backup bucket keys)           | A new key makes stored credentials unreadable: re-enter them after rotating               |
 | `beads-web-cf-access-issuer`, `-audience`, `-allowed-emails` | Cloudflare Access settings for Beadsmith    | Change in Cloudflare, then here                                                            |
+
+The `beads_bd_writer` password is deliberately not here: it lives only on the
+operator's machines and in their password manager
+([ADR-0013](../../specs/decisions/0013-owner-account-and-global-readers.md)).
+To rotate it, change it in Dolt as root, then in each machine's
+`~/.config/beads/credentials` and keychain.
 
 ## `fleet-addresses.yaml`
 

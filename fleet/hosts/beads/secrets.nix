@@ -52,11 +52,6 @@ in
       beads-dolt-backup-databases = root // {
         sopsFile = ../../secrets/beads-backup.yaml;
       };
-      # Not used by any service on this host; kept so /run/secrets mirrors
-      # the old credstore and the values live in one encrypted place.
-      beads-bd-writer-password = root;
-      beads-dolt-agent-password = root;
-
       # --- new with NixOS ---------------------------------------------------
       # Tailscale auth key (reusable: no; tags: tag:beads-sql). Only used
       # on first login; later boots reuse /var/lib/tailscale.
