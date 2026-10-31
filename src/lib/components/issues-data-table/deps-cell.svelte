@@ -16,9 +16,8 @@
 <style>
 	.deps {
 		font-size: var(--t-xs);
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 		font-variant-numeric: tabular-nums;
-		letter-spacing: 0.04em;
 	}
 	.deps b {
 		color: var(--tx-mid);

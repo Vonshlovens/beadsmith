@@ -362,9 +362,9 @@
 		flex: 1;
 		min-height: 0;
 		overflow: hidden;
-		border: 1px solid var(--line);
+		border: 1px solid var(--line-2);
 		border-radius: var(--r-2);
-		background: var(--s2);
+		background: var(--bg);
 	}
 	.tbl-scroll {
 		flex: 1;
@@ -386,7 +386,7 @@
 		white-space: nowrap;
 	}
 	.tbl-wrap :global(thead th) {
-		background: var(--s1);
+		background: var(--s2);
 		padding: 0;
 		position: sticky;
 		top: 0;
@@ -395,12 +395,12 @@
 	}
 	.tbl-wrap :global(thead th.is-pin) {
 		z-index: 6;
-		background: var(--s1);
+		background: var(--s2);
 	}
 	.tbl-wrap :global(tbody td.is-pin) {
 		position: sticky;
 		z-index: 2;
-		background: var(--s2);
+		background: var(--bg);
 	}
 	.tbl-wrap :global(tbody tr:hover td.is-pin) {
 		background: var(--s2);
@@ -446,6 +446,11 @@
 	.tbl-wrap :global(.c-dp),
 	.tbl-wrap :global(.c-up) {
 		white-space: nowrap;
+	}
+	/* Two long labels must not run into the next column. */
+	.tbl-wrap :global(tbody td.c-lb) {
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	.tbl-wrap :global(.c-as) {
 		color: var(--tx-mid);

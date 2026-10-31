@@ -232,7 +232,7 @@
 					{:else}
 						{#if ups.length > 0}
 							<div class="rail-hd">
-								<span class="lbl">Upstream</span><span class="n">{ups.length}</span>
+								<span class="lbl caps">Upstream</span><span class="n">{ups.length}</span>
 							</div>
 							<ul class="rel">
 								{#each ups as ref (ref.id)}{@render relation(ref, 'up')}{/each}
@@ -240,7 +240,7 @@
 						{/if}
 						{#if downs.length > 0}
 							<div class="rail-hd">
-								<span class="lbl">Downstream</span><span class="n">{downs.length}</span>
+								<span class="lbl caps">Downstream</span><span class="n">{downs.length}</span>
 							</div>
 							<ul class="rel">
 								{#each downs as ref (ref.id)}{@render relation(ref, 'down')}{/each}
@@ -252,7 +252,7 @@
 
 			{#if toc.length >= TOC_MIN_ENTRIES}
 				<nav class="rail-sec toc" aria-label="Description sections">
-					<div class="rail-hd"><span class="lbl">Contents</span></div>
+					<div class="rail-hd"><span class="lbl caps">Contents</span></div>
 					{#each toc as entry (entry.id)}
 						<a href="#{entry.id}" style="padding-left:{(entry.depth - 1) * 10}px">{entry.text}</a>
 					{/each}
@@ -272,19 +272,19 @@
 
 				{#if issue.acceptance_criteria}
 					<section class="blk">
-						<div class="blk-hd"><span class="lbl">Acceptance criteria</span></div>
+						<div class="blk-hd"><span class="lbl caps">Acceptance criteria</span></div>
 						<MarkdownBody source={issue.acceptance_criteria} />
 					</section>
 				{/if}
 				{#if issue.design}
 					<section class="blk">
-						<div class="blk-hd"><span class="lbl">Design</span></div>
+						<div class="blk-hd"><span class="lbl caps">Design</span></div>
 						<MarkdownBody source={issue.design} />
 					</section>
 				{/if}
 				{#if issue.notes}
 					<section class="blk">
-						<div class="blk-hd"><span class="lbl">Notes</span></div>
+						<div class="blk-hd"><span class="lbl caps">Notes</span></div>
 						<MarkdownBody source={issue.notes} />
 					</section>
 				{/if}
@@ -293,13 +293,13 @@
 					{#await missions then state}
 						{#if state.error}
 							<section class="blk">
-								<div class="blk-hd"><span class="lbl">Agent threads</span></div>
+								<div class="blk-hd"><span class="lbl caps">Agent threads</span></div>
 								<p class="hint">{state.error}</p>
 							</section>
 						{:else if state.missions.length > 0}
 							<section class="blk">
 								<div class="blk-hd">
-									<span class="lbl">Agent threads</span><span class="n"
+									<span class="lbl caps">Agent threads</span><span class="n"
 										>{state.missions.length}</span
 									>
 								</div>
@@ -312,7 +312,7 @@
 				{#if issue.comments.length > 0 || comment_enabled}
 					<section class="blk">
 						<div class="blk-hd">
-							<span class="lbl">Comments</span><span class="n">{issue.comments.length}</span>
+							<span class="lbl caps">Comments</span><span class="n">{issue.comments.length}</span>
 						</div>
 						{#each issue.comments as comment (comment.id)}
 							<div class="cmt">
@@ -441,43 +441,41 @@
 	}
 
 	.blk {
-		margin-top: var(--s-5);
+		margin-top: var(--s-6);
 	}
 	.blk-hd,
 	.rail-hd {
 		display: flex;
 		align-items: baseline;
 		gap: var(--s-2);
-		padding-bottom: 4px;
-		margin-bottom: var(--s-2);
-		border-bottom: 1px solid var(--line);
+		padding-bottom: 6px;
+		margin-bottom: var(--s-3);
+		border-bottom: 2px solid var(--rule);
 	}
 	.n {
 		font-size: var(--t-xs);
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 		font-variant-numeric: tabular-nums;
 	}
 
 	/* Facts: a tight two-column definition list. */
 	.facts {
 		display: grid;
-		grid-template-columns: 68px minmax(0, 1fr);
-		gap: 5px var(--s-3);
+		grid-template-columns: 80px minmax(0, 1fr);
+		gap: 6px var(--s-3);
 		margin: 0;
-		font-size: var(--t-xs);
+		font-size: var(--t-sm);
 	}
 	.facts dt {
-		font-size: var(--t-micro);
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-		color: var(--tx-faint);
-		line-height: 18px;
+		font-size: var(--t-xs);
+		color: var(--tx-dim);
+		line-height: 20px;
 	}
 	.facts dd {
 		margin: 0;
 		color: var(--tx-hi);
 		min-width: 0;
-		line-height: 18px;
+		line-height: 20px;
 		overflow-wrap: anywhere;
 	}
 	.facts dd .dot {
@@ -501,18 +499,16 @@
 	.rel-item {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		padding: 3px 0;
-		font-size: var(--t-xs);
+		gap: 8px;
+		padding: 4px 0;
+		font-size: var(--t-sm);
 		min-width: 0;
 	}
 	.rel-item .kind {
 		flex: none;
-		width: 62px;
-		font-size: 9px;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: var(--tx-faint);
+		width: 72px;
+		font-size: var(--t-xs);
+		color: var(--tx-dim);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -523,7 +519,7 @@
 	.rel-item .ti {
 		flex: 1;
 		min-width: 0;
-		color: var(--tx-mid);
+		color: var(--tx);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -543,8 +539,8 @@
 		}
 	}
 	.toc a {
-		font-size: var(--t-xs);
-		color: var(--tx-dim);
+		font-size: var(--t-sm);
+		color: var(--tx-mid);
 		padding: 2px 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -559,29 +555,28 @@
 	.cmt {
 		display: flex;
 		gap: var(--s-3);
-		padding: var(--s-3) 0;
+		padding: var(--s-4) 0;
 		border-bottom: 1px solid var(--line);
 	}
 	.cmt:last-of-type {
 		border-bottom: 0;
 	}
 	.av {
-		width: 22px;
-		height: 22px;
+		width: 26px;
+		height: 26px;
 		flex: none;
 		border-radius: var(--r-1);
 		background: var(--s3);
-		border: 1px solid var(--line-2);
 		display: grid;
 		place-items: center;
-		font-size: 9px;
+		font-size: var(--t-micro);
 		color: var(--tx-mid);
 		font-weight: 600;
 	}
 	.av-agent {
-		border-color: var(--em-700);
-		color: var(--em-300);
-		background: var(--em-wash);
+		color: var(--cyan-tx);
+		background: var(--s3);
+		box-shadow: inset 0 0 0 1px var(--cyan-line);
 	}
 	.cmt-bd {
 		flex: 1;
@@ -591,17 +586,18 @@
 		display: flex;
 		align-items: baseline;
 		gap: var(--s-2);
-		margin-bottom: 2px;
-		font-size: var(--t-xs);
+		margin-bottom: 4px;
+		font-size: var(--t-sm);
 	}
 	.cmt-hd b {
 		color: var(--tx-hi);
 		font-weight: 600;
 	}
 	.cmt-hd .t {
-		color: var(--tx-faint);
+		color: var(--tx-dim);
+		font-size: var(--t-xs);
 	}
 	.cmt :global(.cmt-prose) {
-		font-size: 13px;
+		font-size: 14.5px;
 	}
 </style>

@@ -8,6 +8,7 @@
 	import { auth, authErrorMessage } from '$lib/client/auth';
 	import { currentProject, currentViewer } from '$lib/client/projects.svelte';
 	import { toast } from 'svelte-sonner';
+	import ThemeToggle from '$lib/components/theme-toggle.svelte';
 	import { app_state } from '$lib/client/stores.svelte';
 	import {
 		boardNavActive,
@@ -15,7 +16,6 @@
 		parseIssueView,
 		projectIssuesHref
 	} from '$lib/client/issue-view';
-	import { PRODUCT_NAME } from '$lib/product';
 
 	const current = $derived(currentProject());
 	const path = $derived(page.url.pathname);
@@ -149,37 +149,63 @@
 		{/if}
 	</div>
 
+	<!-- Who you are, where, and the two rarely used controls (theme, keys). -->
 	<div class="sidebar-foot">
-		<span>{PRODUCT_NAME}</span>
-		<span>read-only</span>
-		<span>{host}</span>
 		{#if viewer?.email}
-			<a class="sidebar-account" href="/account" title="Account">{viewer.email}</a>
-			<span>{viewer.role}</span>
-			<button class="sidebar-account" type="button" disabled={signing_out} onclick={signOut}>
-				{signing_out ? 'Signing out…' : 'Sign out'}
-			</button>
+			<a class="foot-account" href="/account" title="Account">{viewer.email}</a>
+			<span>
+				{viewer.role} ·
+				<button class="foot-ctl" type="button" disabled={signing_out} onclick={signOut}>
+					{signing_out ? 'signing out…' : 'sign out'}
+				</button>
+			</span>
 		{/if}
+		<span class="foot-faint" title="Beadsmith only reads; agents change Beads with bd">{host}</span>
+		<span class="foot-ctls">
+			<ThemeToggle />
+			<button
+				class="foot-ctl keys-open"
+				type="button"
+				aria-label="Keyboard shortcuts"
+				title="Keyboard shortcuts (?)"
+				onclick={() => (app_state.shortcuts_open = true)}>[? keys]</button
+			>
+		</span>
 	</div>
 </aside>
 
 <style>
-	.sidebar-account {
+	.foot-account {
+		color: var(--tx-hi);
+		overflow-wrap: anywhere;
+	}
+	.foot-account:hover {
+		text-decoration: underline;
+		text-decoration-color: var(--em-500);
+	}
+	.foot-faint {
+		color: var(--tx-dim);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.foot-ctls {
+		display: flex;
+		gap: var(--s-2);
+		margin-top: var(--s-1);
+	}
+	/* The theme toggle's button is the same control. */
+	.sidebar-foot :global(.foot-ctl) {
 		background: none;
 		border: 0;
 		padding: 0;
 		font: inherit;
-		letter-spacing: inherit;
-		color: inherit;
-		text-align: left;
+		color: var(--tx-mid);
 		cursor: pointer;
-		overflow-wrap: anywhere;
 	}
-	.sidebar-account:hover {
-		color: var(--tx);
+	.sidebar-foot :global(.foot-ctl:hover) {
+		color: var(--tx-hi);
 		text-decoration: underline;
-	}
-	:global(.sidebar.is-collapsed) .sidebar-account {
-		display: none;
+		text-decoration-color: var(--em-500);
 	}
 </style>

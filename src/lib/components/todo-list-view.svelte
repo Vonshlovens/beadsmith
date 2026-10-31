@@ -1117,11 +1117,9 @@
 	}
 	.sh {
 		margin: 0 0 var(--s-1);
-		font-size: var(--t-micro);
+		font-size: var(--t-xs);
 		font-weight: 600;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 	.si-row {
 		display: flex;
@@ -1156,19 +1154,19 @@
 		white-space: nowrap;
 	}
 	.sc {
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 	.si-x {
 		padding: 0 4px;
 		background: none;
 		border: 0;
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 		cursor: pointer;
 		font: inherit;
 	}
 	.sd {
 		margin: 0;
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 	.pane {
 		flex: 1 1 0;
@@ -1195,14 +1193,14 @@
 		padding: 3px var(--s-3);
 		background: var(--s2);
 		border-bottom: 1px solid var(--line);
-		font-size: var(--t-micro);
+		font-size: var(--t-xs);
 		font-weight: 600;
-		letter-spacing: 0.08em;
+		letter-spacing: 0.07em;
 		text-transform: uppercase;
-		color: var(--tx-mid);
+		color: var(--tx-hi);
 	}
 	.gn {
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 	.trow {
 		display: flex;
@@ -1231,12 +1229,12 @@
 	}
 	.trow.is-done .ttl {
 		text-decoration: line-through;
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 	.ln {
 		width: 3ch;
 		text-align: right;
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 	.cur {
 		width: 1ch;
@@ -1263,7 +1261,7 @@
 	}
 	.p3 .pr,
 	.p4 .pr {
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 	.ttl {
 		flex: 1 1 auto;
@@ -1290,7 +1288,7 @@
 	}
 	.rt,
 	.cm {
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 	.pal {
 		margin: 0;
@@ -1358,7 +1356,7 @@
 		flex: 1;
 	}
 	.faint {
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 	.pl {
 		flex: 1;
@@ -1367,7 +1365,7 @@
 		gap: var(--s-2);
 	}
 	.pk {
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 	.pin {
 		flex: 1;
@@ -1394,7 +1392,7 @@
 		margin: 0 0 var(--s-3);
 	}
 	.meta dt {
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 	.meta dd {
 		margin: 0;

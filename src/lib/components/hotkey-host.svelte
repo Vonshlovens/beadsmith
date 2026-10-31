@@ -342,6 +342,6 @@
 	}
 	kbd.kbd {
 		font-family: var(--font);
-		font-size: 10px;
+		font-size: var(--t-micro);
 	}
 </style>

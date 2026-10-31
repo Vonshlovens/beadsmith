@@ -21,7 +21,7 @@
 
 <style>
 	.more {
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 	.more::before {
 		content: none;

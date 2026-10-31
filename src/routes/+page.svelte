@@ -203,15 +203,13 @@
 		gap: var(--s-3);
 	}
 	.pcard {
-		background: var(--s2);
-		border: 1px solid var(--line);
-		border-left-width: 2px;
-		border-left-color: var(--line);
+		background: var(--bg);
+		border: 1px solid var(--line-2);
 		border-radius: var(--r-2);
-		padding: var(--s-3) var(--s-4);
+		padding: var(--s-4);
 		display: flex;
 		flex-direction: column;
-		gap: 10px;
+		gap: 12px;
 		color: inherit;
 		transition:
 			border-color 0.12s ease,
@@ -219,22 +217,17 @@
 	}
 	a.pcard:hover {
 		text-decoration: none;
-		background: var(--s3);
-		border-color: var(--line-2);
-		border-left-color: var(--line-2);
+		background: var(--s2);
+		border-color: var(--line-3);
 	}
 	.pcard-hd {
 		display: flex;
 		align-items: flex-start;
 		gap: var(--s-3);
 	}
-	.pcard-hd :global(.h3) {
-		letter-spacing: -0.015em;
-	}
 	.dbline {
-		font-size: var(--t-micro);
-		color: var(--tx-faint);
-		letter-spacing: 0.06em;
+		font-size: var(--t-xs);
+		color: var(--tx-dim);
 		margin-top: 3px;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -248,8 +241,8 @@
 
 	.meter {
 		display: flex;
-		height: 3px;
-		border-radius: 2px;
+		height: 4px;
+		border-radius: 1px;
 		overflow: hidden;
 		background: var(--s4);
 		gap: 1px;
@@ -261,7 +254,7 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: var(--s-3);
-		font-size: var(--t-xs);
+		font-size: var(--t-sm);
 		color: var(--tx-mid);
 	}
 	.ct {
@@ -279,8 +272,8 @@
 	}
 	.ct-when {
 		margin-left: auto;
-		color: var(--tx-faint);
-		font-size: var(--t-micro);
+		color: var(--tx-dim);
+		font-size: var(--t-xs);
 	}
 	/* Narrow cards keep the beads and numbers; the words live in the title. */
 	@container (max-width: 300px) {

@@ -72,12 +72,12 @@
 	.db {
 		margin-left: auto;
 		padding-left: var(--s-3);
-		font-size: var(--t-micro);
-		color: var(--tx-faint);
+		font-size: var(--t-xs);
+		color: var(--tx-dim);
 		white-space: nowrap;
 	}
 	.empty-row {
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 		cursor: default;
 	}
 </style>

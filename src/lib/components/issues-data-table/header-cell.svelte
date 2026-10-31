@@ -98,8 +98,8 @@
 	}
 	.sort-hd .arrow {
 		flex: none;
-		font-size: 7px;
-		color: var(--tx-faint);
+		font-size: 9px;
+		color: var(--tx-dim);
 		opacity: 0;
 	}
 	.sort-hd:hover .arrow,

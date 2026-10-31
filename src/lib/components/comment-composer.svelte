@@ -193,7 +193,7 @@
 		opacity: 0.72;
 	}
 	.pending-text {
-		font-size: 13px;
+		font-size: var(--t-sm);
 		white-space: pre-wrap;
 		margin: 0;
 		color: var(--tx);
@@ -207,7 +207,7 @@
 		border: 1px solid var(--line-2);
 		display: grid;
 		place-items: center;
-		font-size: var(--t-micro);
+		font-size: var(--t-xs);
 		color: var(--tx-mid);
 		font-weight: 600;
 	}
@@ -227,6 +227,6 @@
 		font-weight: 600;
 	}
 	.cmt-hd .t {
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 	}
 </style>

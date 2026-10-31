@@ -207,7 +207,7 @@
 	}
 	.f-dur,
 	.f-when {
-		color: var(--tx-faint);
+		color: var(--tx-dim);
 		text-align: right;
 	}
 	.f-links {

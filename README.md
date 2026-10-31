@@ -214,6 +214,9 @@ Architecture: [`specs/README.md`](specs/README.md), with numbered decisions in
 [`specs/decisions/`](specs/decisions/) and the product and security contract
 in [`docs/contract.md`](docs/contract.md).
 
+The project website (a landing page plus this README and `docs/` as pages)
+is a static site in [`site/`](site/README.md).
+
 ## Security
 
 Please report vulnerabilities through a

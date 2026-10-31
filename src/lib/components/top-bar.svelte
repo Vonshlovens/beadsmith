@@ -3,21 +3,20 @@
 	 * The top bar (specs/00 §5, §7–9). The rail toggle is the first control
 	 * after the skip link so keyboard users reach navigation immediately.
 	 * Below 640px the brand keeps only its mark, search becomes an icon, and
-	 * First Mate drops its label, so the bar fits a 375px phone.
+	 * First Mate drops its label, so the bar fits a 375px phone. The theme and
+	 * keyboard-shortcut controls live in the sidebar footer: both are rarely
+	 * used, and both keep their keys (`?` for shortcuts).
 	 */
 	import { tick } from 'svelte';
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import KeyboardIcon from '@lucide/svelte/icons/keyboard';
 	import PanelLeftIcon from '@lucide/svelte/icons/panel-left';
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import SparklesIcon from '@lucide/svelte/icons/sparkles';
 	import ProjectSwitcher from '$lib/components/project-switcher.svelte';
 	import StatusCluster from '$lib/components/status-cluster.svelte';
-	import ThemeToggle from '$lib/components/theme-toggle.svelte';
-	import brandMarkDark from '$lib/assets/beadsmith-mark.png';
-	import brandMarkLight from '$lib/assets/beadsmith-mark-light.png';
+	import BrandMark from '$lib/components/brand-mark.svelte';
 	import { currentProject, projectList } from '$lib/client/projects.svelte';
 	import { app_state } from '$lib/client/stores.svelte';
 	import { FIRST_MATE_PATH } from '$lib/client/first-mate';
@@ -89,10 +88,7 @@
 	</button>
 
 	<a class="brand" href="/" aria-label="{PRODUCT_NAME}, projects" title={PRODUCT_NAME}>
-		<span class="brand-mark" aria-hidden="true">
-			<img class="brand-mark-image brand-mark-image-light" src={brandMarkLight} alt="" />
-			<img class="brand-mark-image brand-mark-image-dark" src={brandMarkDark} alt="" />
-		</span>
+		<BrandMark size={30} />
 		<span class="brand-tx">{PRODUCT_NAME}</span>
 	</a>
 
@@ -135,18 +131,6 @@
 		<span class="fm-tx">First Mate</span>
 		<span class="kbd fm-kbd" aria-hidden="true">{hotkey_label}</span>
 	</button>
-
-	<button
-		class="rail-toggle keys-open"
-		type="button"
-		aria-label="Keyboard shortcuts"
-		title="Keyboard shortcuts (?)"
-		onclick={() => (app_state.shortcuts_open = true)}
-	>
-		<KeyboardIcon size={15} strokeWidth={1.2} />
-	</button>
-
-	<ThemeToggle />
 
 	<StatusCluster />
 </header>
