@@ -1,0 +1,12 @@
+# The website is its own pnpm project, separate from the app at the repository
+# root: its dependencies never reach the app's lockfile, image or Nix hashes.
+# Same supply-chain settings as the root (../pnpm-workspace.yaml).
+
+# Only resolve package versions published at least 3 days ago (in minutes).
+minimumReleaseAge: 4320
+
+overrides:
+  vite: npm:@voidzero-dev/vite-plus-core@1.4.0
+
+allowBuilds:
+  esbuild: true

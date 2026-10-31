@@ -1,0 +1,99 @@
+# Beadsmith quickstart: a Dolt server with three sample Beads projects, and
+# Beadsmith built from this checkout. Nothing is published beyond this
+# machine, and every secret is generated on first start.
+#
+#   docker compose -f quickstart/compose.yaml up -d --build --wait
+#   docker compose -f quickstart/compose.yaml exec beadsmith cat /state/setup-token
+#
+# Then open http://localhost:4321 and create the admin account with that token.
+# Stop with `down`; `down -v` also deletes the sample data and the account.
+# Another port: BEADSMITH_PORT=8080 docker compose -f quickstart/compose.yaml up -d --build --wait
+name: beadsmith-quickstart
+
+services:
+  # One-shot: writes this install's Dolt password and Better Auth secret.
+  secrets:
+    image: dolthub/dolt-sql-server:2.5.0
+    entrypoint: ['bash', '-c']
+    command:
+      - |
+        set -eu
+        umask 077
+        new() { tr -dc A-Za-z0-9 < /dev/urandom | head -c 40; }
+        [ -s /secrets/dolt-password ] || new > /secrets/dolt-password
+        [ -s /secrets/better-auth-secret ] || new > /secrets/better-auth-secret
+        # The Beadsmith image runs as node (1000).
+        chown 1000:1000 /secrets/dolt-password /secrets/better-auth-secret /state
+    volumes:
+      - secrets:/secrets
+      - state:/state
+    restart: 'no'
+
+  dolt:
+    image: dolthub/dolt-sql-server:2.5.0
+    depends_on:
+      secrets:
+        condition: service_completed_successfully
+    volumes:
+      - dolt:/var/lib/dolt
+      # First start only: the sample projects, then the read-only user.
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+      - secrets:/run/quickstart:ro
+    healthcheck:
+      # Both: on first start the port opens before the samples load (the file
+      # marks the end); on a restart the file is already on the volume.
+      test:
+        [
+          'CMD',
+          'bash',
+          '-c',
+          'test -f /var/lib/dolt/.init_completed && (echo > /dev/tcp/127.0.0.1/3306) 2>/dev/null'
+        ]
+      interval: 2s
+      timeout: 2s
+      retries: 90
+    restart: unless-stopped
+
+  beadsmith:
+    build: ..
+    image: beadsmith:quickstart
+    pull_policy: build
+    depends_on:
+      dolt:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:${BEADSMITH_PORT:-4321}:4321'
+    environment:
+      BEADS_DOLT_SERVER_HOST: dolt
+      BEADS_DOLT_SERVER_PORT: '3306'
+      BEADS_DOLT_SERVER_USER: beadsmith
+      BEADS_DOLT_PASSWORD_FILE: /run/secrets/dolt-password
+      # Accounts are required because the process binds 0.0.0.0 in the container.
+      BETTER_AUTH_SECRET_FILE: /run/secrets/better-auth-secret
+      BDX_DISPATCH_PROVIDER: none
+      BDX_STATE_DIR: /state
+      HOME: /state
+    volumes:
+      - state:/state
+      - secrets:/run/secrets:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          'fetch("http://127.0.0.1:4321/healthz").then((r) => process.exit(r.status === 204 ? 0 : 1), () => process.exit(1))'
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  secrets:
+  state:
+  dolt:

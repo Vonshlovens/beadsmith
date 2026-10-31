@@ -1,0 +1,395 @@
+@import '@fontsource-variable/jetbrains-mono/wght.css';
+
+/* =========================================================================
+   The Beadsmith site: the app's palette (warm paper / onyx and ember, see
+   ../src/app.css) laid out as a monospace document (one 80ch column, 2px
+   rules, bordered tables, bracket controls). JetBrains Mono throughout.
+
+   Only the palette flips between themes; `.dark` on <html> is set before
+   first paint by the script in app.html.
+   ========================================================================= */
+
+:root {
+	--paper: #ebe4d8;
+	--paper-2: #e2dacc;
+	--paper-3: #d6ccbb;
+	--ink: #1f1a15;
+	--ink-muted: #5c5650;
+	--ink-faint: #8a8174;
+	--rule: #1f1a15;
+	--rule-faint: #c8bead;
+	--mark: #b81a2f;
+	--on-mark: #f6efe3;
+	--pre-bg: #1f1a15;
+	--pre-ink: #ebe4d8;
+
+	/* Bead colours, as in the app's status dots. */
+	--bead-rolling: #b58900;
+	--bead-lined-up: #16a34a;
+	--bead-stalled: #b81a2f;
+	--glow: none;
+
+	--font: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+	--lh: 1.5rem;
+	--border: 2px;
+	--wide: min(72rem, calc(100vw - 4ch));
+
+	color-scheme: light;
+}
+
+:root.dark {
+	--paper: #111113;
+	--paper-2: #18181b;
+	--paper-3: #212125;
+	--ink: #ede7dc;
+	--ink-muted: #9a958d;
+	--ink-faint: #67635d;
+	--rule: #4a4743;
+	--rule-faint: #2a2a2e;
+	--mark: #fa2d41;
+	--on-mark: #ffffff;
+	--pre-bg: #18181b;
+	--pre-ink: #ede7dc;
+
+	--bead-rolling: #d9a13a;
+	--bead-lined-up: #2fc98f;
+	--bead-stalled: #fa2d41;
+	--glow: 0 0 6px rgba(250, 45, 65, 0.55);
+
+	color-scheme: dark;
+}
+
+/* ---------------------------------------------------------------- base */
+
+html {
+	font-size: 16px;
+	background: var(--paper);
+	color: var(--ink);
+}
+
+@media (max-width: 480px) {
+	html {
+		font-size: 15px;
+	}
+}
+
+body {
+	margin: 0;
+	min-height: 100dvh;
+	overflow-x: clip;
+	font-family: var(--font);
+	font-variant-numeric: tabular-nums lining-nums;
+	line-height: var(--lh);
+	background: var(--paper);
+	color: var(--ink);
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+	background: var(--mark);
+	color: var(--on-mark);
+}
+
+:focus-visible {
+	outline: var(--border) solid var(--mark);
+	outline-offset: 2px;
+}
+
+h1,
+h2,
+h3,
+h4 {
+	font-size: 1rem;
+	font-weight: 700;
+	line-height: var(--lh);
+	margin: calc(var(--lh) * 2) 0 var(--lh);
+}
+
+h1 {
+	font-size: 2rem;
+	line-height: calc(var(--lh) * 2);
+	margin: 0 0 var(--lh);
+	text-transform: uppercase;
+	text-wrap: balance;
+}
+
+h2 {
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+}
+
+/* A muted count after a section label, as the app does with "ROLLING 3". */
+h2 .count {
+	margin-left: 1ch;
+	font-weight: 400;
+	color: var(--ink-faint);
+}
+
+p {
+	margin: 0 0 var(--lh);
+	overflow-wrap: break-word;
+}
+
+a {
+	color: var(--ink);
+	text-decoration: underline;
+	text-decoration-color: var(--mark);
+	text-decoration-thickness: var(--border);
+	text-underline-offset: 0.2em;
+}
+
+a:hover {
+	color: var(--mark);
+}
+
+code,
+kbd,
+pre {
+	font-family: inherit;
+	font-size: inherit;
+}
+
+:not(pre) > code,
+kbd {
+	padding: 0 0.4ch;
+	background: var(--paper-2);
+	box-shadow: inset 0 0 0 1px var(--rule-faint);
+}
+
+pre {
+	margin: 0 0 var(--lh);
+	padding: var(--lh) 2ch;
+	overflow-x: auto;
+	background: var(--pre-bg);
+	color: var(--pre-ink);
+	border: var(--border) solid var(--pre-bg);
+	line-height: var(--lh);
+}
+
+:root.dark pre {
+	border-color: var(--rule-faint);
+}
+
+ul,
+ol {
+	margin: 0 0 var(--lh);
+	padding: 0 0 0 2ch;
+}
+
+ul {
+	list-style-type: square;
+}
+
+li::marker {
+	color: var(--ink-faint);
+}
+
+img {
+	max-width: 100%;
+	height: auto;
+}
+
+table {
+	width: 100%;
+	border-collapse: collapse;
+	margin: 0 0 var(--lh);
+}
+
+th,
+td {
+	border: var(--border) solid var(--rule);
+	padding: calc(var(--lh) / 2 - var(--border)) calc(1ch - var(--border) / 2);
+	vertical-align: top;
+	text-align: left;
+}
+
+th {
+	font-weight: 500;
+}
+
+/* A double rule across the column. */
+hr {
+	height: 0;
+	margin: calc(var(--lh) * 2) 0;
+	border: none;
+	border-top: calc(var(--border) * 3) double var(--rule);
+}
+
+.muted {
+	color: var(--ink-muted);
+}
+
+.visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
+/* A status bead: the app's dot, with its dark-theme glow. */
+.bead {
+	display: inline-block;
+	width: 0.55em;
+	height: 0.55em;
+	border-radius: 50%;
+	vertical-align: 0.08em;
+	background: var(--bead-lined-up);
+}
+
+.bead.rolling {
+	background: var(--bead-rolling);
+}
+
+.bead.stalled {
+	background: var(--bead-stalled);
+	box-shadow: var(--glow);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		transition-duration: 0.01ms !important;
+		animation-duration: 0.01ms !important;
+	}
+}
+
+/* -------------------------------------------------------------- layout */
+
+.page {
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	max-width: min(80ch, round(down, 100%, 1ch));
+	min-height: 100dvh;
+	margin: 0 auto;
+	padding: calc(var(--lh) * 2) 2ch;
+}
+
+.page > main {
+	flex: 1 1 auto;
+	/* Without this a wide <pre> stretches the column past a phone's edge. */
+	min-width: 0;
+}
+
+/* Breaks out of the 80ch column to show screenshots at a useful size. */
+.wide {
+	position: relative;
+	left: 50%;
+	width: var(--wide);
+	max-width: none;
+	transform: translateX(-50%);
+}
+
+.lede {
+	font-size: 1.0625rem;
+}
+
+/* A two-column fact sheet under the lede. */
+.facts th {
+	width: 0;
+	white-space: nowrap;
+	color: var(--ink-muted);
+}
+
+/* Numbered entries: 01, 02, … in a gutter, the app's id column. */
+.index-list {
+	list-style: none;
+	padding: 0;
+}
+
+.index-list > li {
+	display: grid;
+	grid-template-columns: 4ch minmax(0, 1fr);
+	column-gap: 2ch;
+}
+
+.index-list > li + li {
+	margin-top: var(--lh);
+	padding-top: var(--lh);
+	border-top: var(--border) solid var(--rule-faint);
+}
+
+.index-list .n {
+	color: var(--ink-faint);
+}
+
+.index-list .title {
+	display: block;
+	font-weight: 700;
+}
+
+.index-list .body {
+	display: block;
+	margin-top: calc(var(--lh) / 4);
+	color: var(--ink-muted);
+}
+
+.index-list a.title {
+	text-decoration: none;
+}
+
+.index-list a.title:hover {
+	text-decoration: underline;
+	text-decoration-color: var(--mark);
+	text-decoration-thickness: var(--border);
+}
+
+/* ------------------------------------------------------------- docs prose */
+
+.prose > :first-child {
+	margin-top: 0;
+}
+
+.prose h2 {
+	padding-top: var(--lh);
+	border-top: var(--border) solid var(--rule-faint);
+}
+
+.prose h3,
+.prose h4 {
+	margin: calc(var(--lh) * 1.5) 0 calc(var(--lh) / 2);
+}
+
+.prose :is(h2, h3, h4) {
+	scroll-margin-top: var(--lh);
+}
+
+.prose blockquote {
+	margin: 0 0 var(--lh);
+	padding: 0 0 0 2ch;
+	border-left: var(--border) solid var(--mark);
+	color: var(--ink-muted);
+}
+
+.prose blockquote > :last-child {
+	margin-bottom: 0;
+}
+
+.prose li > :is(ul, ol) {
+	margin-bottom: 0;
+}
+
+.prose img {
+	display: block;
+	margin: var(--lh) 0;
+	border: var(--border) solid var(--rule);
+}
+
+.prose .table-scroll {
+	overflow-x: auto;
+	margin: 0 0 var(--lh);
+}
+
+.prose .table-scroll table {
+	margin: 0;
+}
+
+.prose th {
+	background: var(--paper-2);
+	white-space: nowrap;
+}

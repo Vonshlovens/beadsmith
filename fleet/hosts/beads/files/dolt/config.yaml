@@ -1,0 +1,11 @@
+log_level: info
+behavior:
+  read_only: false
+listener:
+  host: 0.0.0.0
+  port: 3306
+  max_connections: 100
+  read_timeout_millis: 86400000
+  write_timeout_millis: 86400000
+system_variables:
+  secure_file_priv: "/etc/dolt/securefile"

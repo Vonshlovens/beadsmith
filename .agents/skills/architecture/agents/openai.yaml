@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Architecture'
+  short_description: 'Consult specs/ADRs; update them only when architecture changes'
+  default_prompt: 'Use $architecture. Read specs/README.md first. Update or add an ADR only if this work changes system shape; routine bugfixes and UI work do not need an ADR.'
