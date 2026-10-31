@@ -38,6 +38,9 @@ This repository is public. Write for someone who has only the repository.
 - Run `scripts/public-scan.sh` (gitleaks, trufflehog, and a private denylist
   when one is configured) before pushing anything that touches `fleet/`,
   `docs/` or host details.
+- The website in [`site/`](site/README.md) publishes `README.md` and the
+  files listed in `site/src/lib/server/docs.ts` as its docs pages. It is a
+  separate pnpm project: run its commands from `site/`, not the root.
 
 ## Build and test
 

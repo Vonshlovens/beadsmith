@@ -8,6 +8,8 @@ let
     ++ [ "fleet" ".sops.yaml" ]
     # The dev shell: editing it must not rebuild the app either.
     ++ [ "devenv.nix" "devenv.yaml" "devenv.lock" ]
+    # The website, a separate pnpm project (site/README.md).
+    ++ [ "site" ]
     ;
 in
 lib.cleanSourceWith {
