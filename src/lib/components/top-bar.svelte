@@ -8,7 +8,6 @@
 	 * used, and both keep their keys (`?` for shortcuts).
 	 */
 	import { tick } from 'svelte';
-	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import PanelLeftIcon from '@lucide/svelte/icons/panel-left';
@@ -26,17 +25,13 @@
 
 	const rail_expanded = $derived(app_state.rail_open || !app_state.rail_collapsed);
 	const on_first_mate_page = $derived(page.url.pathname === FIRST_MATE_PATH);
-	const hotkey_label = $derived(
-		browser && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K'
-	);
 
-	/** On the First Mate page the same control focuses the input. */
-	function onFirstMate() {
-		if (on_first_mate_page) {
-			app_state.focusFirstMatePage();
-			return;
+	/** Open a new First Mate chat with its question box focused. */
+	async function onFirstMate() {
+		if (!on_first_mate_page || page.url.search !== '') {
+			await goto(FIRST_MATE_PATH);
 		}
-		app_state.openFirstMate();
+		app_state.focusFirstMatePage();
 	}
 
 	function searchTarget() {
@@ -123,13 +118,11 @@
 		type="button"
 		onclick={onFirstMate}
 		aria-label="First Mate"
-		title="First Mate ({hotkey_label})"
-		aria-haspopup={on_first_mate_page ? undefined : 'dialog'}
-		aria-expanded={on_first_mate_page ? undefined : app_state.first_mate_open}
+		title="First Mate (g f)"
+		aria-current={on_first_mate_page ? 'page' : undefined}
 	>
 		<SparklesIcon size={14} strokeWidth={1.3} aria-hidden="true" />
 		<span class="fm-tx">First Mate</span>
-		<span class="kbd fm-kbd" aria-hidden="true">{hotkey_label}</span>
 	</button>
 
 	<StatusCluster />

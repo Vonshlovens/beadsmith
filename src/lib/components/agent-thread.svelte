@@ -10,8 +10,8 @@
 	import { toast } from 'svelte-sonner';
 	import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
 	import GitPullRequestIcon from '@lucide/svelte/icons/git-pull-request';
-	import SendIcon from '@lucide/svelte/icons/send-horizontal';
 	import SquareIcon from '@lucide/svelte/icons/square';
+	import ChatComposer from '$lib/components/chat-composer.svelte';
 	import MarkdownBody from '$lib/components/markdown-body.svelte';
 	import MissionLiveStream from '$lib/components/mission-live-stream.svelte';
 	import MissionStatus from '$lib/components/mission-status.svelte';
@@ -59,7 +59,7 @@
 	let cancelling = $state(false);
 	let now = $state(Date.now());
 	let composer_el = $state<HTMLTextAreaElement | null>(null);
-	let list_el = $state<HTMLOListElement | null>(null);
+	let list_el = $state<HTMLDivElement | null>(null);
 	/** Bumps when a new run starts, so the live stream reconnects. */
 	let run_generation = $state(0);
 
@@ -141,7 +141,7 @@
 		void turns.length;
 		void busy;
 		requestAnimationFrame(() => {
-			list_el?.lastElementChild?.scrollIntoView({ block: 'nearest' });
+			list_el?.scrollTo({ top: list_el.scrollHeight });
 		});
 	});
 
@@ -151,8 +151,7 @@
 		}
 	});
 
-	async function send(event?: SubmitEvent) {
-		event?.preventDefault();
+	async function send() {
 		const message = text.trim();
 		if (!composer.can_send || sending || message.length === 0) {
 			return;
@@ -186,13 +185,6 @@
 			toast.error('Could not stop the run', { description: errorMessage(error) });
 		} finally {
 			cancelling = false;
-		}
-	}
-
-	function onComposerKeydown(event: KeyboardEvent) {
-		if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-			event.preventDefault();
-			void send();
 		}
 	}
 </script>
@@ -237,69 +229,69 @@
 		<p class="err" role="alert">{load_error}</p>
 	{/if}
 
-	<ol class="turns" bind:this={list_el} aria-live="polite">
-		{#each turns as turn (turn.seq)}
-			<li class="turn turn-{turn.role}" class:is-failed={turn.status === 'failed'}>
-				<div class="who">
-					<span>{turn.role === 'operator' ? 'you' : 'agent'}</span>
-					{#if turn.status && turn.status !== 'succeeded'}
-						<span class="st">{turn.status}</span>
+	<div class="turns" bind:this={list_el}>
+		<ol class="chat-log" aria-live="polite">
+			{#each turns as turn (turn.seq)}
+				<li
+					class="chat-msg"
+					class:is-you={turn.role === 'operator'}
+					class:is-failed={turn.status === 'failed'}
+				>
+					<div class="chat-role">
+						<span>{turn.role === 'operator' ? 'You' : 'Agent'}</span>
+						{#if turn.status && turn.status !== 'succeeded'}
+							<span class="st">{turn.status}</span>
+						{/if}
+						<time datetime={turn.created_at} title={absoluteStamp(turn.created_at)}
+							>{relativeShort(turn.created_at)}</time
+						>
+					</div>
+					{#if turn.role === 'agent'}
+						<MarkdownBody source={turn.text} />
+					{:else}
+						<p class="chat-body">{turn.text}</p>
 					{/if}
-					<time datetime={turn.created_at} title={absoluteStamp(turn.created_at)}
-						>{relativeShort(turn.created_at)}</time
-					>
-				</div>
-				{#if turn.role === 'agent'}
-					<MarkdownBody source={turn.text} class="turn-prose" />
-				{:else}
-					<p class="said">{turn.text}</p>
-				{/if}
-			</li>
-		{/each}
-		{#if busy}
-			<li class="turn turn-agent is-working">
-				<div class="who">
-					<span>agent</span>
-					<span class="st">working</span>
-					<span class="mono-num">{formatElapsed(Math.max(0, now - started_at))}</span>
-				</div>
-				{#if live && mission}
-					{#key run_generation}
-						<div class="live">
-							<MissionLiveStream {project_id} request_id={mission.id} />
-						</div>
-					{/key}
-				{:else}
-					<p class="said dim">
-						<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
-						The reply appears here when the run finishes.
-					</p>
-				{/if}
-			</li>
-		{/if}
-		{#if loaded && turns.length === 0 && !busy}
-			<li class="turn"><p class="said dim">No messages yet.</p></li>
-		{/if}
-	</ol>
-
-	<form class="compose" onsubmit={send}>
-		<textarea
-			bind:this={composer_el}
-			bind:value={text}
-			class="compose-in"
-			rows={2}
-			maxlength={4000}
-			aria-label="Message the agent"
-			placeholder={composer.can_send ? 'Reply to the agent…' : ''}
-			disabled={!composer.can_send || sending}
-			onkeydown={onComposerKeydown}></textarea>
-		<div class="compose-ft">
-			{#if !composer.can_send && composer.reason}
-				<span class="why">{composer.reason}</span>
-			{:else}
-				<span class="why faint"><span class="kbd">⌘⏎</span> send</span>
+				</li>
+			{/each}
+			{#if busy}
+				<li class="chat-msg">
+					<div class="chat-role">
+						<span>Agent</span>
+						<span class="st">working</span>
+						<span class="when mono-num">{formatElapsed(Math.max(0, now - started_at))}</span>
+					</div>
+					{#if live && mission}
+						{#key run_generation}
+							<div class="live">
+								<MissionLiveStream {project_id} request_id={mission.id} />
+							</div>
+						{/key}
+					{:else}
+						<p class="chat-body is-dim">
+							<span class="chat-dots" aria-hidden="true"><i></i><i></i><i></i></span>The reply
+							appears here when the run finishes.
+						</p>
+					{/if}
+				</li>
 			{/if}
-			<span class="spacer"></span>
+			{#if loaded && turns.length === 0 && !busy}
+				<li class="chat-event">No messages yet.</li>
+			{/if}
+		</ol>
+	</div>
+
+	<ChatComposer
+		bind:value={text}
+		bind:textarea={composer_el}
+		label="Message the agent"
+		placeholder="Reply to the agent…"
+		rows={2}
+		disabled={!composer.can_send}
+		reason={composer.reason}
+		busy={sending}
+		onsend={() => void send()}
+	>
+		{#snippet actions()}
 			{#if can_cancel}
 				<button
 					class="btn btn-sm btn-danger"
@@ -312,17 +304,8 @@
 					{cancelling ? 'Stopping…' : 'Stop'}
 				</button>
 			{/if}
-			<button
-				class="btn btn-sm btn-primary btn-icon"
-				type="submit"
-				disabled={!composer.can_send || sending || text.trim().length === 0}
-				aria-label="Send"
-				title="Send (⌘⏎)"
-			>
-				<SendIcon size={14} strokeWidth={1.6} />
-			</button>
-		</div>
-	</form>
+		{/snippet}
+	</ChatComposer>
 </section>
 
 <style>
@@ -348,135 +331,17 @@
 		flex: 1;
 	}
 	.turns {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: var(--s-3);
-		overflow-y: auto;
-		min-height: 0;
 		flex: 1;
-	}
-	.turn {
-		border-left: 2px solid var(--line-2);
-		padding: 2px 0 2px var(--s-3);
-		min-width: 0;
-	}
-	.turn-operator {
-		border-left-color: var(--em-700);
-	}
-	.turn-agent {
-		border-left-color: var(--cyan-line);
-	}
-	.turn.is-failed {
-		border-left-color: var(--danger);
-	}
-	.turn.is-working {
-		border-left-style: dashed;
-	}
-	.who {
-		display: flex;
-		align-items: baseline;
-		gap: var(--s-2);
-		font-size: var(--t-xs);
-		color: var(--tx-dim);
-		margin-bottom: 3px;
-	}
-	.who time {
-		margin-left: auto;
-		letter-spacing: 0;
-		text-transform: none;
-		color: var(--tx-dim);
-	}
-	.who .st {
-		color: var(--amber-tx);
-	}
-	.turn.is-failed .who .st {
-		color: var(--danger-tx);
-	}
-	.said {
-		margin: 0;
-		font-size: var(--t-sm);
-		white-space: pre-wrap;
-		overflow-wrap: anywhere;
-		color: var(--tx-hi);
-	}
-	.said.dim {
-		color: var(--tx-dim);
-	}
-	.turn :global(.turn-prose) {
-		font-size: var(--t-sm);
-		max-width: none;
+		min-height: 0;
+		overflow-y: auto;
+		padding-bottom: var(--s-3);
 	}
 	.live {
 		max-height: 320px;
 		overflow-y: auto;
 	}
-	.dots {
-		display: inline-flex;
-		gap: 3px;
-		margin-right: 6px;
-		vertical-align: middle;
-	}
-	.dots i {
-		width: 4px;
-		height: 4px;
-		border-radius: 99px;
-		background: var(--cyan);
-		animation: bdui-pulse 1.2s ease-in-out infinite;
-	}
-	.dots i:nth-child(2) {
-		animation-delay: 0.2s;
-	}
-	.dots i:nth-child(3) {
-		animation-delay: 0.4s;
-	}
-	.compose {
-		flex: none;
-		border: 1px solid var(--line);
-		border-radius: var(--r-2);
-		background: var(--s2);
-		padding: var(--s-2) var(--s-3);
-	}
-	.compose:focus-within {
-		border-color: var(--line-2);
-	}
-	.compose-in {
-		width: 100%;
-		background: none;
-		border: 0;
-		outline: none;
-		resize: vertical;
-		min-height: 40px;
-		font-size: var(--t-sm);
-		line-height: 1.55;
-		color: var(--tx-hi);
-	}
-	.compose-in::placeholder {
-		color: var(--tx-faint);
-	}
-	.compose-in:disabled {
-		cursor: not-allowed;
-	}
-	.compose-ft {
-		display: flex;
-		align-items: center;
-		gap: var(--s-2);
-		margin-top: 4px;
-	}
-	.why {
-		font-size: var(--t-xs);
-		color: var(--tx-dim);
-	}
 	.err {
 		font-size: var(--t-xs);
 		color: var(--danger-tx);
-	}
-	@media (pointer: coarse) {
-		.compose-ft :global(.btn-sm) {
-			height: 32px;
-			min-width: 32px;
-		}
 	}
 </style>

@@ -215,7 +215,7 @@
 					</label>
 					<label class="field">
 						<span class="lbl">Role</span>
-						<select class="input" bind:value={role}>
+						<select class="select" bind:value={role}>
 							<option value="member">member (read)</option>
 							<option value="admin">admin (console, agents)</option>
 						</select>

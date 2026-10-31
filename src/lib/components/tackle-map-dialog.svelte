@@ -98,9 +98,9 @@
 				</button>
 			</div>
 			<div class="modal-bd">
-				<p class="hint">
+				<p class="hi sm">
 					{project.name}
-					<span class="id faint"> · {project.id}</span>
+					<span class="id dim"> · {project.id}</span>
 				</p>
 				{#if env_locked}
 					<p class="hint">

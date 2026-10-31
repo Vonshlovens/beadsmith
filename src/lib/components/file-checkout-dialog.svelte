@@ -92,9 +92,9 @@
 				</button>
 			</div>
 			<div class="modal-bd">
-				<p class="hint">
+				<p class="hi sm">
 					{project.name}
-					<span class="id faint"> · {project.id}</span>
+					<span class="id dim"> · {project.id}</span>
 				</p>
 				<p class="hint">
 					File launches this GitHub checkout with no pull request. Unset uses the service default

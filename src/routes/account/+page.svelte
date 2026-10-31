@@ -108,6 +108,9 @@
 </div>
 
 <style>
+	.page-hd {
+		margin-bottom: var(--s-5);
+	}
 	.pw-form {
 		display: flex;
 		flex-direction: column;
