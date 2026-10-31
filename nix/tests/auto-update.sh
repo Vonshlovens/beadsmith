@@ -70,3 +70,8 @@ ok "a newer revision bypasses the backoff"
 if deploy "$D"; then echo "FAIL: build failure reported success"; exit 1; fi
 expect "$(current)" sys-c current; expect "$(st .failedPhase)" build failedPhase
 ok "a build failure leaves the running system alone"
+
+out=$(env -u REPOSITORY -u BRANCH -u FLAKE_ATTR -u HEALTH_URL bash "$updater" status)
+expect "$(jq -r .failedPhase <<<"$out")" build "status without the unit's settings"
+ok "status works from a plain shell"
+
