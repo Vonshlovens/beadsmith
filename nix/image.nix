@@ -32,6 +32,9 @@ dockerTools.buildLayeredImage {
     WorkingDir = "/app";
     User = "node";
     ExposedPorts."4321/tcp" = { };
+    # GHCR links the package to its source repository from this label. A fork
+    # that publishes its own image should point it at the fork.
+    Labels."org.opencontainers.image.source" = "https://github.com/Vonshlovens/beadsmith";
     Env = [
       "PATH=/bin"
       "NODE_ENV=production"
