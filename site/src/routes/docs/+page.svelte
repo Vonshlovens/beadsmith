@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import Head from '#lib/components/Head.svelte';
 	import { REPO_URL, repoFile } from '#lib/site.js';
 
 	let { data } = $props();
@@ -14,10 +15,7 @@
 	});
 </script>
 
-<svelte:head>
-	<title>Docs · Beadsmith</title>
-	<meta name="description" content="Running, using and understanding Beadsmith." />
-</svelte:head>
+<Head title="Docs · Beadsmith" description="Running, using and understanding Beadsmith." />
 
 <h1>Docs</h1>
 

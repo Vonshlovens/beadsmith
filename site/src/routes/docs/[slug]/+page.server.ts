@@ -16,6 +16,7 @@ export const load: PageServerLoad = ({ params }) => {
 	return {
 		title: doc.title,
 		group: doc.entry.group,
+		summary: doc.entry.summary,
 		html: doc.html,
 		sections: doc.sections,
 		sourceUrl: doc.sourceUrl,

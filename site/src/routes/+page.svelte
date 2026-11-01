@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import Head from '#lib/components/Head.svelte';
 	import Shot from '#lib/components/Shot.svelte';
 	import { parade_shot, view_shots } from '#lib/shots.js';
 	import { BEADS_URL, REPO_URL } from '#lib/site.js';
@@ -54,13 +55,10 @@
 └─────────────┘`;
 </script>
 
-<svelte:head>
-	<title>Beadsmith: a web UI for Beads</title>
-	<meta
-		name="description"
-		content="Beadsmith reads your Beads issue databases from a Dolt SQL server and shows every project, issue, dependency and recent change in one place. Open source, self-hosted."
-	/>
-</svelte:head>
+<Head
+	title="Beadsmith: a web UI for Beads"
+	description="Beadsmith reads your Beads issue databases from a Dolt SQL server and shows every project, issue, dependency and recent change in one place. Open source, self-hosted."
+/>
 
 <h1>A web dashboard for Beads</h1>
 

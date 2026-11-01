@@ -1,0 +1,18 @@
+// Cloudflare Worker that serves build/ as static assets: no Worker code.
+// Deployed by Workers Builds (root directory `site`) or `pnpm dlx wrangler deploy`;
+// see README.md#deploying.
+{
+	"name": "beadsmith-site",
+	"compatibility_date": "2026-10-01",
+	"assets": {
+		"directory": "./build",
+		// /docs/configuration serves docs/configuration.html.
+		"html_handling": "auto-trailing-slash",
+		// Unknown paths get build/404.html with status 404.
+		"not_found_handling": "404-page"
+	},
+	// Served only on the custom domain; Cloudflare creates its DNS record and
+	// certificate on deploy. The zone must be on the same Cloudflare account.
+	"routes": [{ "pattern": "beadsmith.ericevans.dev", "custom_domain": true }],
+	"workers_dev": false
+}

@@ -20,7 +20,9 @@ export default defineConfig({
 				runes: ({ filename }) =>
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
-			adapter: adapter(),
+			// 404.html is the page hosts serve for unknown paths (wrangler.jsonc:
+			// not_found_handling); it renders src/routes/+error.svelte in the browser.
+			adapter: adapter({ fallback: '404.html' }),
 			// Set BASE_PATH=/beadsmith to serve from a project page such as
 			// <owner>.github.io/beadsmith; leave it unset on a domain of its own.
 			paths: {

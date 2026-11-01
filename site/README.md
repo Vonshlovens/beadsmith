@@ -60,7 +60,47 @@ throughout. Tokens are at the top of [`src/app.css`](src/app.css).
 ## Deploying
 
 `build/` is static: any static host works. Pages are written as
-`docs/configuration.html` and linked without the extension, which GitHub
-Pages, Cloudflare Pages and Netlify all resolve. To serve from a subpath (a
-GitHub project page such as `https://<owner>.github.io/beadsmith`), build with
-`BASE_PATH=/beadsmith pnpm run build`.
+`docs/configuration.html` and linked without the extension, and unknown paths
+should get `build/404.html` (the adapter's fallback, which renders
+[`src/routes/+error.svelte`](src/routes/+error.svelte)) with status 404.
+
+The site's own URL is `SITE_URL` in [`src/lib/site.ts`](src/lib/site.ts):
+canonical links, link previews, `sitemap.xml` and `robots.txt` are built from
+it. Change it before deploying anywhere else.
+
+### Cloudflare
+
+The published site is a Cloudflare Worker with static assets and no code,
+configured in [`wrangler.jsonc`](wrangler.jsonc): it serves `build/` on the
+custom domain in `routes`, resolves `/docs/configuration` to the `.html` file,
+and answers unknown paths with `404.html`. [`static/_headers`](static/_headers)
+sets long caching for hashed assets and a few security headers.
+
+Deploys come from Workers Builds, connected to this repository:
+
+| Setting           | Value                               |
+| ----------------- | ----------------------------------- |
+| Root directory    | `site`                              |
+| Build command     | `pnpm run build`                    |
+| Deploy command    | `npx wrangler deploy` (the default) |
+| Production branch | `main`                              |
+
+The build reads `../docs` and `../README.md`, which the full clone provides.
+Dependencies are installed from `pnpm-lock.yaml`; pnpm's version comes from
+`packageManager` in the root `package.json`, and Node's default in the build
+image (24) satisfies `engines`. Set `NODE_VERSION` in the build variables to
+pin it.
+
+To deploy by hand instead, after `pnpm run build`:
+
+```sh
+pnpm dlx wrangler@4 login
+pnpm dlx wrangler@4 deploy
+```
+
+### Elsewhere
+
+GitHub Pages and Netlify resolve the extensionless links too. To serve from a
+subpath (a GitHub project page such as `https://<owner>.github.io/beadsmith`),
+build with `BASE_PATH=/beadsmith pnpm run build` and set `SITE_URL` to the
+origin.

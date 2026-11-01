@@ -1,12 +1,11 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import Head from '#lib/components/Head.svelte';
 
 	let { data } = $props();
 </script>
 
-<svelte:head>
-	<title>{data.title} · Beadsmith docs</title>
-</svelte:head>
+<Head title="{data.title} · Beadsmith docs" description={data.summary} />
 
 <p class="kicker">
 	<a href={resolve('/docs')}>docs</a> <span class="muted">/ {data.group.toLowerCase()}</span>

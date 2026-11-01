@@ -1,3 +1,9 @@
+/**
+ * Where the site is served: origin only, no trailing slash and no BASE_PATH.
+ * Canonical links, Open Graph URLs and the sitemap are built from it.
+ */
+export const SITE_URL = 'https://beadsmith.ericevans.dev';
+
 /** Where the source lives. Links into the repository are built from this. */
 export const REPO_URL = 'https://github.com/Vonshlovens/beadsmith';
 
