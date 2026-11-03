@@ -55,8 +55,10 @@ nix flake check        # plus the NixOS VM test, on Linux with KVM
 
 The toolchain is pinned once, in [`nix/overlay.nix`](nix/overlay.nix); keep
 `.node-version` and `packageManager` in `package.json` in step with it
-(`checks.toolchain` fails otherwise). After a lockfile change, refresh the
-`pnpmDeps` hashes in [`nix/pnpm-deps.nix`](nix/pnpm-deps.nix).
+(`checks.toolchain` fails otherwise). `devenv.yaml` and `devenv.lock` pin the
+nixpkgs revision `flake.lock` pins; bump them together (`checks.toolchain`
+fails otherwise too). After a `pnpm-lock.yaml` change, refresh the `pnpmDeps`
+hashes in [`nix/pnpm-deps.nix`](nix/pnpm-deps.nix).
 
 The app needs a Dolt connection (`BEADS_DOLT_SERVER_HOST`,
 `BEADS_DOLT_SERVER_USER`, `BEADS_DOLT_PASSWORD`) to show data; without one it
