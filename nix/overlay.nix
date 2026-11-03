@@ -8,10 +8,15 @@
 #   beadsmith-pnpm        pnpm, must equal package.json `packageManager`
 #   beadsmith-dolt        Dolt sql-server, the version CI and quickstart run
 #   beadsmith-bd          bd, the newest release in CI's bd-compat matrix
+#   beadsmith-gitleaks    gitleaks, for scripts/public-scan.sh
+#   beadsmith-trufflehog  trufflehog, for scripts/public-scan.sh
 #
 # pnpm, Dolt and bd are taken from their upstream releases because nixpkgs
 # 26.05 lags (pnpm 12.9.0, dolt 1.86.6, beads 1.0.3). Exit: when nixpkgs
 # reaches these versions, point the attribute back at the nixpkgs package.
+# trufflehog is too (nixpkgs 26.05 has 3.95.3), and for a second reason:
+# nixpkgs wraps it with `--no-update`, which public-scan.sh also passes, and
+# trufflehog rejects a repeated flag. Point it back only with that resolved.
 final: prev:
 let
   inherit (final) lib stdenv;
@@ -47,6 +52,11 @@ let
     aarch64-darwin = "darwin-arm64";
   };
   bdTarget = pick "bd" {
+    x86_64-linux = "linux_amd64";
+    aarch64-linux = "linux_arm64";
+    aarch64-darwin = "darwin_arm64";
+  };
+  trufflehogTarget = pick "trufflehog" {
     x86_64-linux = "linux_amd64";
     aarch64-linux = "linux_arm64";
     aarch64-darwin = "darwin_arm64";
@@ -134,4 +144,31 @@ in
     };
     binaries = [ "bd" ];
   };
+
+  # The secret scanners scripts/public-scan.sh runs, locally and in CI's
+  # public-scan job. nixpkgs' gitleaks is the upstream release.
+  beadsmith-gitleaks = final.gitleaks;
+
+  # Hashes from upstream's trufflehog_<version>_checksums.txt. Its Linux
+  # builds are static and UPX-packed, so they are installed byte for byte:
+  # stripping or patching a packed binary can break it.
+  beadsmith-trufflehog =
+    (releaseBinary {
+      pname = "trufflehog";
+      version = "3.99.3";
+      src = final.fetchurl {
+        url = "https://github.com/trufflesecurity/trufflehog/releases/download/v3.99.3/trufflehog_3.99.3_${trufflehogTarget}.tar.gz";
+        hash = pick "trufflehog" {
+          x86_64-linux = "sha256:029b182e0ed35fd5b02cd1eadc2a94bd457ab14ad22a9380b6e5d9652261d28d";
+          aarch64-linux = "sha256:fdfc2d0da45c9fc3642c4cad08f881131570c0e8f648a5943a02e5387a94243d";
+          aarch64-darwin = "sha256:07d8744261d4460c2e8ee8d908d71e4aee70e049496100290b50aac7757ad078";
+        };
+      };
+      binaries = [ "trufflehog" ];
+    }).overrideAttrs
+      {
+        dontStrip = true;
+        dontPatchELF = true;
+        dontAutoPatchelf = true;
+      };
 }

@@ -2,7 +2,8 @@
 # flake, the image and the VM test use, so a laptop, CI and an agent sandbox
 # run one toolchain. Backpressure is a failing command, not a longer prompt:
 #
-#   devenv shell      Node, pnpm, bd and Dolt at the pinned versions
+#   devenv shell      Node, pnpm, bd, Dolt, gitleaks and trufflehog at the
+#                     pinned versions
 #   devenv test       pnpm install, then `pnpm run check` and `pnpm run test`
 #   git commit        Prettier on the staged files (pre-commit)
 #   git push          `pnpm run check` (pre-push)
@@ -15,6 +16,9 @@
     pkgs.beadsmith-pnpm
     pkgs.beadsmith-bd
     pkgs.beadsmith-dolt
+    # scripts/public-scan.sh
+    pkgs.beadsmith-gitleaks
+    pkgs.beadsmith-trufflehog
     pkgs.git
     pkgs.jq
   ];
