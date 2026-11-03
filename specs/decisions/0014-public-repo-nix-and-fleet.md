@@ -72,3 +72,9 @@ from one flake.
 `.github/workflows/ci.yml`, `.github/actions/nix/action.yml`,
 `fleet/hosts/beads/networking.nix`, `fleet/hosts/beads/files/uplink/uplink.py`,
 `scripts/public-scan.sh`, `scripts/bd-setup.sh`.
+
+2026-11-03: the overlay also pins the scanners `public-scan.sh` runs,
+`beadsmith-gitleaks` and `beadsmith-trufflehog`, and CI's `public-scan` job
+runs the script on every pull request and push to `main`, so the scan no
+longer depends on one machine having working scanners. The private denylist
+stays out of the repository and out of CI.

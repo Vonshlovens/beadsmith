@@ -35,9 +35,13 @@ This repository is public. Write for someone who has only the repository.
   identify it (public addresses, hostnames, bucket and database names) and
   every secret live in sops-encrypted `fleet/secrets/*.yaml`; docs name them
   by secret (for example `BEADS_PUBLIC_IPV4`), never by value.
-- Run `scripts/public-scan.sh` (gitleaks, trufflehog, and a private denylist
-  when one is configured) before pushing anything that touches `fleet/`,
-  `docs/` or host details.
+- Run `scripts/public-scan.sh` (gitleaks, trufflehog, a private denylist when
+  one is configured, and a check that every commit address is a GitHub
+  noreply one) before pushing anything that touches `fleet/`, `docs/` or host
+  details. CI's `public-scan` job runs it on every pull request and push to
+  `main`, with the scanners pinned in `nix/overlay.nix` (`devenv shell` has
+  them too). The denylist is private and absent in CI, so only a local run
+  checks for private identifiers, and CI sees a leak after it is public.
 - The website in [`site/`](site/README.md) publishes `README.md` and the
   files listed in `site/src/lib/server/docs.ts` as its docs pages. It is a
   separate pnpm project: run its commands from `site/`, not the root.

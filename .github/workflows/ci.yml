@@ -81,6 +81,48 @@ jobs:
       - run: pnpm exec svelte-kit sync
       - run: pnpm exec vp test src/lib/server/dolt/compat.test.ts
 
+  # scripts/public-scan.sh with the scanners nix/overlay.nix pins: gitleaks
+  # and trufflehog over the HEAD tree, and every author and committer address
+  # on HEAD must be a GitHub noreply one. On a pull request HEAD is the merge
+  # commit GitHub makes (refs/pull/N/merge), so its addresses are checked too.
+  # The private denylist lives only on the maintainer's machine, so the script
+  # warns and skips it here; a local run is still what checks for private
+  # identifiers (AGENTS.md).
+  public-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The noreply check reads every commit on HEAD, not only the tip.
+          fetch-depth: 0
+      - uses: ./.github/actions/nix
+        with:
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Put the pinned scanners on PATH
+        run: |
+          paths=$(nix build --no-link --print-out-paths .#beadsmith-gitleaks .#beadsmith-trufflehog)
+          for path in $paths; do echo "$path/bin" >> "$GITHUB_PATH"; done
+      - run: gitleaks version && trufflehog --no-update --version
+      - run: scripts/public-scan.sh --ref HEAD
+      # A scanner that silently finds nothing would pass the step above
+      # forever. Stage a freshly generated SSH private key (never committed,
+      # never used) and require the scan to fail with both scanners reporting.
+      - name: The scan fails on a planted private key
+        run: |
+          mkdir -p canary
+          ssh-keygen -q -t ed25519 -N '' -C '' -f canary/id_ed25519
+          git add -f canary/id_ed25519
+          if out=$(scripts/public-scan.sh 2>&1); then
+            echo "$out"
+            echo "public-scan passed with a private key in the tree"
+            exit 1
+          fi
+          echo "$out"
+          grep -q '^FAIL: gitleaks findings' <<<"$out"
+          grep -q '^FAIL: trufflehog reported' <<<"$out"
+
   quickstart:
     # The README quickstart from a clean checkout.
     needs: test
@@ -195,7 +237,7 @@ jobs:
   # older run can never move it backwards.
   deploy-branch:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [test, bd-compat, quickstart, nix, vm, image]
+    needs: [test, bd-compat, quickstart, public-scan, nix, vm, image]
     runs-on: ubuntu-latest
     concurrency:
       group: deploy-branch

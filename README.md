@@ -180,7 +180,7 @@ Or let Nix pin the toolchain ([devenv](https://devenv.sh); the same
 [`nix/overlay.nix`](nix/overlay.nix) feeds CI, the image and the VM test):
 
 ```sh
-devenv shell         # Node, pnpm, bd and Dolt at the pinned versions
+devenv shell         # Node, pnpm, bd, Dolt and the secret scanners, pinned
 devenv test          # pnpm install, check, test
 nix flake check      # the same gates in the Nix sandbox (+ the NixOS VM test on Linux)
 ```

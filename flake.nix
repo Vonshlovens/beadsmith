@@ -14,8 +14,8 @@
     let
       lib = nixpkgs.lib;
       systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
-      # The toolchain (Node, pnpm, Dolt, bd) comes from nix/overlay.nix, the
-      # same file devenv.nix imports.
+      # The toolchain (Node, pnpm, Dolt, bd, the secret scanners) comes from
+      # nix/overlay.nix, the same file devenv.nix imports.
       overlay = import ./nix/overlay.nix;
       pkgsFor = lib.genAttrs systems (
         system:
@@ -74,6 +74,8 @@
           # The built app as /app: server, production node_modules, script files.
           app = pkgs.callPackage ./nix/app.nix { inherit build prodModules; };
           inherit (pkgs) beadsmith-pnpm beadsmith-dolt beadsmith-bd;
+          # scripts/public-scan.sh's scanners, for CI's public-scan job.
+          inherit (pkgs) beadsmith-gitleaks beadsmith-trufflehog;
         }
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           # OCI image: `nix build .#image`, then `docker load < result`.
