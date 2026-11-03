@@ -1,9 +1,10 @@
 # devenv shell inputs. nixpkgs is the exact revision flake.lock pins, so the
-# shell, the flake checks, the image and the host build from one package set;
-# bump both together (`nix flake update nixpkgs`, then copy the rev here).
+# shell, the flake checks, the image and the host build from one package set.
+# Bump both together: `nix flake update nixpkgs`, copy the rev here, then
+# `devenv update nixpkgs`. checks.toolchain fails when the pins differ.
 inputs:
   nixpkgs:
-    url: github:NixOS/nixpkgs/08d3a97586f6b6343b3b5e799980773629432610
+    url: github:NixOS/nixpkgs/9bb52223f4f6a0cc606fd0852d8784f896c137d5
   git-hooks:
     url: github:cachix/git-hooks.nix
     inputs:
