@@ -99,13 +99,17 @@ gets the same scope; list it only if that is acceptable.
    control plane, and hands every agent a database credential.
 3. **Tailscale in every agent so it reaches the private Dolt host.** Couples
    every agent VM to the private network and still skips this service.
+   Operator-run agent sandboxes are a different case: they join the private
+   network under a policy that limits each one to its scope
+   ([ADR-0015](../specs/decisions/0015-scoped-agent-sandboxes.md)).
 4. **A shared static token.** No subject, no per-caller revocation. The old
    `BDX_AUTH_TOKEN` is gone for that reason.
 5. **Bypass or Everyone on the Access application.** A machine caller is not a
    reason to weaken human login.
 6. **Drive the HTML UI.** Sign-in, CSRF, and cookies are browser flows.
 7. **MCP or `bd` inside the web process as a command proxy.** MCP, if added,
-   is a facade over these authorized HTTP reads, not a shell.
+   is a facade over these authorized HTTP reads, not a shell. ADR-0015 plans
+   it for agents on personal devices, authorized by their user with OAuth.
 
 ## Follow-up
 

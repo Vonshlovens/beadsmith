@@ -22,3 +22,4 @@ edit an ADR on every conversation — see `.agents/skills/architecture/SKILL.md`
 | [0012](./0012-project-helper.md) | **Superseded by 0013.** New project databases from a tailnet project helper on the Dolt host |
 | [0013](./0013-owner-account-and-global-readers.md) | Single-owner server: the owner's `bd` account has `ALL ON *.*`, so plain `bd init` creates projects; readers have `SELECT ON *.*` |
 | [0014](./0014-public-repo-nix-and-fleet.md) | Public repo with its host and sops secrets; one Nix overlay feeds devenv, checks, VM test and the published image |
+| [0015](./0015-scoped-agent-sandboxes.md) | Agents run in beads or repo sandboxes; Beadsmith relays their terminals to admins and never connects into personal devices |

@@ -4,7 +4,9 @@ Date: 2026-08-17 (updated 2026-09-03, 2026-10-17, 2026-10-28 provider-neutral)
 
 ## Status
 
-accepted
+accepted. Amended by [0015](./0015-scoped-agent-sandboxes.md): agents run
+in scoped sandboxes, a beads sandbox may ask for repository work through this
+dispatch API, and admins may see a sandbox agent's raw terminal.
 
 ## Context
 
@@ -106,7 +108,9 @@ process: `BDX_DISPATCH_WEBHOOK_SECRET_FILE` preferred,
 `BDX_DISPATCH_WEBHOOK_SECRET` a local/dev fallback. They must never enter
 SQLite, logs, URLs, API responses, or the agents' environment. The agents a
 runner starts get only what they need to run `bd` (Dolt access) and do not
-launch further agents.
+launch further agents. ([0015](./0015-scoped-agent-sandboxes.md) adds one
+exception: a beads sandbox asks for repository work through this dispatch
+API, never by starting agents itself.)
 
 A human dropping a kanban card onto another status must not PATCH the
 issue. The accepted UI is a confirm modal that dispatches an agent

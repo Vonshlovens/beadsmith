@@ -3,8 +3,9 @@
  *
  * A provider with live events fills this union. Browser stream UI renders
  * only these types — never raw runner payloads, prompts, tool args, PTY, or
- * unknown fields. Steer (s42.5) and First Mate attach (s42.8) reuse the same
- * shape.
+ * unknown fields. Steer and First Mate reuse the same shape. An admin's raw
+ * terminal view of a scoped sandbox is a separate relay (ADR-0015) and never
+ * feeds this union.
  */
 
 export const MISSION_EVENT_TYPES = [

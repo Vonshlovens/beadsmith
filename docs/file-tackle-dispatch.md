@@ -279,7 +279,10 @@ defined in `src/lib/mission-events.ts`; the browser EventSource consumes those
 named events only. Tool `args`/`result` (file bodies, PTY) are not forwarded.
 Text is credential-scrubbed and stripped of ANSI. When the provider has no
 live events or the stream has expired, the proxy emits a `result`
-reconstructed from the durable row.
+reconstructed from the durable row. An admin's raw view of an agent terminal
+on a scoped sandbox is a separate relay
+([ADR-0015](../specs/decisions/0015-scoped-agent-sandboxes.md), not built
+yet) and never feeds this stream.
 
 `POST /api/projects/:id/dispatch/:requestId/cancel` cancels the active run.
 `POST .../follow-up` with `{text}` (max 4000 characters, extra keys fail
@@ -294,7 +297,8 @@ allow.
 
 1. **A runner whose agents can run `bd`.** The agent the provider starts
    needs `bd`, network access to your Dolt server, and a Dolt credential held
-   by the runner, never by Beadsmith. A just-in-time agent without that bridge
+   by the runner, never by Beadsmith. What the runner's machine may hold
+   besides is in [Where agents run](./contract.md#where-agents-run). A just-in-time agent without that bridge
    cannot file or claim issues. Prefer a short-lived, least-privilege Dolt
    user per agent over a shared writer password.
 2. **Provider configuration on the Beadsmith server.** See

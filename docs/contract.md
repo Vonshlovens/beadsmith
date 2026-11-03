@@ -95,10 +95,59 @@ before acknowledging a request. The worker runs under its own identity and
 credentials, separate from the web process. Retries are idempotent,
 observable, and auditable.
 
-The web process never executes an agent or proxies arbitrary commands. It
-persists a request and launches an agent through the configured provider
-(today a signed webhook runner; dispatch is provider-neutral); the agent runs
-`bd` in its own environment.
+The web process never executes an agent itself. It persists a request and
+launches an agent through the configured provider (today a signed webhook
+runner; dispatch is provider-neutral); the agent runs `bd` in its own
+environment. The one place Beadsmith may carry an agent's raw input and
+output is the terminal relay to a scoped sandbox, described in the HTTP
+boundary below.
+
+### Where agents run
+
+Target, **not implemented yet**
+([ADR-0015](../specs/decisions/0015-scoped-agent-sandboxes.md)). Today the
+only provider is the webhook runner, and Beadsmith holds no connection to any
+agent machine.
+
+A machine that runs agents is classified by what it holds, not by where it
+runs:
+
+- **Beads sandbox** (the orchestrator). Holds its own Dolt account, with
+  `SELECT ON *.*` and `ALL PRIVILEGES` on each project database it may
+  change, without `GRANT OPTION`; never data rights on `*.*`, which in Dolt
+  make an administrator. Also model access through the key proxy, and
+  nothing else. Beadsmith may hold a connection to it, launch agents on it,
+  and relay their terminals to admins.
+- **Repo sandbox** (a worker). Reaches one repository through the key proxy
+  (contents and pull requests, with the default branch protected), and
+  models the same way. Optionally holds a Dolt account on that repository's
+  project alone. Beadsmith may do the same as with a beads sandbox.
+- **Personal device.** Anything else: a person's own accounts, keys and
+  checkouts, and the owner's administrator Dolt account. Beadsmith holds no
+  credential that reaches it and opens no connection to it.
+
+The rules that keep those scopes real:
+
+- A machine is a personal device unless an admin registers it as a sandbox,
+  with its scope and, for a repo sandbox, its repository. Dispatch requests
+  cannot name a machine.
+- A sandbox is a machine, VM or microVM dedicated to one scope. Sandboxes of
+  different scopes do not share a kernel. A laptop may host sandboxes in VMs
+  and is itself still a personal device.
+- Sandboxes reach Beadsmith and Dolt over a private network (Tailscale or
+  WireGuard) whose policy enforces the same scopes: Beadsmith may reach
+  sandboxes, a sandbox reaches Dolt only with an account of its own,
+  sandboxes do not reach each other, and nothing reaches a personal device.
+- Model and repository keys stay outside the sandbox. A proxy outside it
+  adds the key to each request, so the agent can use that access, within the
+  proxy's rules, but cannot read, print or copy the key. The scoped Dolt
+  account is the one credential a sandbox may hold itself.
+- A beads sandbox asks for repository work through the dispatch API, under
+  the same arm, allow, idempotency and record as any other request. It holds
+  no connection to repo sandboxes.
+- An agent on a personal device reaches Beadsmith instead: through an MCP
+  server its user authorizes with OAuth, whose tools are a facade over the
+  authorized HTTP API and limited by that user's role.
 
 ## HTTP and UI boundary
 
@@ -211,6 +260,17 @@ launch prompt, raw worker logs, or credentials. `operation: "discuss"`
 agent to talk an issue through, rewrite it, or close it; the agent makes any
 Beads change with `bd`.
 
+Target, **not implemented yet**: the **terminal relay**. An admin may open an
+agent's terminal on a registered beads or repo sandbox
+([Where agents run](#where-agents-run)) from a route under `/api/console/`.
+The relay carries the program's raw output and, when the admin takes over,
+their keystrokes. It never reaches a personal device and is never offered to
+members. Beadsmith does not scrub, store or log relayed bytes: what the
+sandbox prints, the admin sees, which is why keys stay outside the sandbox
+and the one credential it may hold, its Dolt account, is scoped. Each attach and take-over is recorded with its actor
+and time. The relay is separate from the stream above, which keeps its
+sanitized union for every other view.
+
 ## Security invariants
 
 1. The web runtime does not ship with or invoke `bd` today; issue changes go
@@ -222,13 +282,22 @@ Beads change with `bd`.
 4. The protected credential file is the production password source;
    `BEADS_DOLT_PASSWORD` is only a scoped local/development fallback.
 5. The application maintains Host-header, origin, CSRF, session, CSP,
-   rate-limit, request-size, and secret-scrubbing defenses.
+   rate-limit, request-size, and secret-scrubbing defenses. Bytes in the
+   admin terminal relay are not scrubbed; invariant 8 bounds what they can
+   contain.
 6. Target, **not implemented yet**: requests are authorized against a curated
    project catalog before a database name, count, activity item, or error can
    reveal project existence. Today every signed-in account sees every
    SQL-visible project.
 7. A dispatch request is authorized before enqueue; a worker action is never
-   directly triggered by untrusted browser input.
+   directly triggered by untrusted browser input. The one direct path is an
+   admin typing into a relayed sandbox terminal, and it reaches only that
+   sandbox.
+8. Beadsmith holds no credential that reaches a personal device and opens an
+   agent connection only to a registered sandbox. A sandbox's credentials are
+   no wider than its scope: Dolt writes on named project databases, never
+   data rights on `*.*`; repository access to one repository. Its model and
+   repository keys stay outside it, added by a proxy.
 
 ## Observability and failure behavior
 
@@ -273,3 +342,6 @@ At minimum, tests must demonstrate:
    cross-project enumeration.
 5. A dispatch request is validated, authorized, persisted idempotently, and
    processed only by the distinct agent-worker identity.
+6. Once the terminal relay exists, it refuses members and any machine that
+   is not a registered sandbox, stores and logs no relayed bytes, and records
+   every attach and take-over.
