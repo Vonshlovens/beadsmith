@@ -1,6 +1,6 @@
 <script lang="ts">
 	/** Activity log: the same thread as the home rail, at full length. */
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import ActivityFeed from '$lib/components/activity-feed.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import PageHeader from '$lib/components/page-header.svelte';
@@ -29,7 +29,7 @@
 	async function refresh() {
 		refreshing = true;
 		try {
-			await invalidateAll();
+			await refreshAll();
 		} finally {
 			refreshing = false;
 		}

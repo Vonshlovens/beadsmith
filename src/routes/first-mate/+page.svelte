@@ -121,7 +121,7 @@
 	}
 
 	function closeOpen() {
-		void goto(FIRST_MATE_PATH, { keepFocus: true, noScroll: true });
+		void goto(FIRST_MATE_PATH, { reset: false });
 	}
 
 	function deleteChat() {

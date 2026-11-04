@@ -7,7 +7,7 @@
 	 */
 	import { untrack } from 'svelte';
 	import { browser } from '$app/env';
-	import { goto, invalidateAll, replaceState, beforeNavigate } from '$app/navigation';
+	import { goto, refreshAll, replaceState, beforeNavigate } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
 	import ArchiveIcon from '@lucide/svelte/icons/archive';
@@ -577,7 +577,7 @@
 				params.delete(key);
 			}
 		}
-		await goto(`?${params.toString()}`, { keepFocus: true, noScroll: true, replaceState: true });
+		await goto(`?${params.toString()}`, { reset: false, replace: true });
 	}
 
 	/**
@@ -869,7 +869,7 @@
 				<div class="mt-2">{data.error}</div>
 			</div>
 			<div class="banner-acts">
-				<button class="btn btn-sm" type="button" onclick={() => invalidateAll()}>Retry now</button>
+				<button class="btn btn-sm" type="button" onclick={() => refreshAll()}>Retry now</button>
 			</div>
 		</div>
 	{:else if loading}
@@ -882,7 +882,7 @@
 				<div class="mt-2">{vacancy.description}</div>
 			</div>
 			<div class="banner-acts">
-				<button class="btn btn-sm" type="button" onclick={() => invalidateAll()}>Retry now</button>
+				<button class="btn btn-sm" type="button" onclick={() => refreshAll()}>Retry now</button>
 			</div>
 		</div>
 	{:else if vacancy}

@@ -1,6 +1,6 @@
 <script lang="ts">
 	/** Instance-admin console: catalog coverage and redacted health. */
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import AccountSettings from '$lib/components/account-settings.svelte';
 	import BackupSettings from '$lib/components/backup-settings.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
@@ -49,7 +49,7 @@
 		refreshing = true;
 		try {
 			await api.refreshProjects();
-			await invalidateAll();
+			await refreshAll();
 		} catch (error) {
 			toast.error('Could not refresh catalog', { description: errorMessage(error) });
 		} finally {
@@ -64,7 +64,7 @@
 		arming = true;
 		try {
 			await api.setDispatchArmed(next);
-			await invalidateAll();
+			await refreshAll();
 		} catch (error) {
 			toast.error(next ? 'Could not arm dispatch' : 'Could not disarm dispatch', {
 				description: errorMessage(error)
@@ -85,7 +85,7 @@
 		const allow = { ...project.allow, ...patch };
 		try {
 			await api.putDispatchAllow(project.id, allow);
-			await invalidateAll();
+			await refreshAll();
 		} catch (error) {
 			toast.error('Could not update File/Tackle allow', { description: errorMessage(error) });
 		} finally {
@@ -474,7 +474,7 @@
 		project={editing}
 		bind:open={map_open}
 		onSaved={async () => {
-			await invalidateAll();
+			await refreshAll();
 		}}
 	/>
 {/if}
@@ -484,7 +484,7 @@
 		project={file_editing}
 		bind:open={file_open}
 		onSaved={async () => {
-			await invalidateAll();
+			await refreshAll();
 		}}
 	/>
 {/if}

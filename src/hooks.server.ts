@@ -1,4 +1,4 @@
-import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit';
+import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit/hooks';
 import { startBackupScheduler } from '$lib/server/backup/runtime.js';
 import {
 	checkConfig,

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { RequestEvent, ResolveOptions } from '@sveltejs/kit';
+import type { RequestEvent } from '@sveltejs/kit';
+import type { ResolveOptions } from '@sveltejs/kit/hooks';
 import { handle } from './hooks.server.js';
 import { randomBytes } from 'node:crypto';
 import { CSRF_HEADER, getRateLimiter, SESSION_COOKIE } from '$lib/server/security.js';

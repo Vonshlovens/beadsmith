@@ -1,6 +1,6 @@
 <script lang="ts">
 	/** Cross-project Ready deck: control-plane equivalent of `bd ready`. */
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import BotIcon from '@lucide/svelte/icons/bot';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import IssueId from '$lib/components/issue-id.svelte';
@@ -30,7 +30,7 @@
 	async function refresh() {
 		refreshing = true;
 		try {
-			await invalidateAll();
+			await refreshAll();
 		} finally {
 			refreshing = false;
 		}

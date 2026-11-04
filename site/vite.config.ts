@@ -11,8 +11,9 @@ export default defineConfig({
 	// Dev only. Pre-bundling svelte/compiler (CommonJS) for SSR injects an
 	// `import 'node:module'`, and resolving it reads the nearest tsconfig.json
 	// that covers the file: the app's ../tsconfig.json, whose `extends` target
-	// (../.svelte-kit/tsconfig.json) is missing until the app has been synced,
-	// so `vp dev` fails. Node built-ins need no resolving on the server anyway.
+	// ($app/tsconfig, which the app's sync writes into ../node_modules) is
+	// missing until the app has been synced, so `vp dev` fails. Node built-ins
+	// need no resolving on the server anyway.
 	environments: { ssr: { optimizeDeps: { rolldownOptions: { external: [/^node:/] } } } },
 	plugins: [
 		sveltekit({

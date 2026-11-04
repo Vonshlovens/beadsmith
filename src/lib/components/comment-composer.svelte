@@ -3,7 +3,7 @@
 	 * Issue-detail composer: enqueue a /comment agent.
 	 * The web process does not write Beads comment rows itself.
 	 */
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
 	import { api, errorMessage } from '$lib/client/api';
 	import type { DispatchRequest } from '$lib/types';
@@ -56,7 +56,7 @@
 					)
 				) {
 					pending_text = null;
-					await invalidateAll();
+					await refreshAll();
 					toast.success('Comment added');
 					return;
 				}

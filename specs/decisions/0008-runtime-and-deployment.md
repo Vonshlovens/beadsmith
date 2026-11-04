@@ -152,8 +152,8 @@ Shipped:
 
 - Pins: `.node-version`, `package.json` (`packageManager`, `engines`),
   `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `Dockerfile`, `.github/workflows/ci.yml`.
-  Scripts: `package.json`. Server entry: `server.js`. Config: `vite.config.ts`, `vitest.config.ts`,
-  `svelte.config.ts`.
+  Scripts: `package.json`. Server entry: `server.js`. Config: `vite.config.ts` (SvelteKit 3 takes
+  its options there, as `sveltekit()` plugin options), `vitest.config.ts`.
 - Deployment: `compose.yaml`, `.env.example`, `Dockerfile`. CI image
   publish: `image` job in `.github/workflows/ci.yml`.
 - Operator docs: `README.md`, `docs/server-deployment.md`.

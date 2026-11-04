@@ -1,6 +1,6 @@
 <script lang="ts">
 	/** Beads projects and their recent activity. */
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import ActivityFeed from '$lib/components/activity-feed.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
@@ -47,7 +47,7 @@
 		refreshing = true;
 		try {
 			await api.refreshProjects();
-			await invalidateAll();
+			await refreshAll();
 		} catch (error) {
 			toast.error('Could not refresh projects', { description: errorMessage(error) });
 		} finally {

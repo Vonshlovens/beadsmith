@@ -1,6 +1,6 @@
 <script lang="ts">
 	/** Fleet view of agent missions across projects; each row opens its thread. */
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import MissionsList from '$lib/components/missions-list.svelte';
 	import PageHeader from '$lib/components/page-header.svelte';
@@ -19,7 +19,7 @@
 	async function refresh() {
 		refreshing = true;
 		try {
-			await invalidateAll();
+			await refreshAll();
 		} finally {
 			refreshing = false;
 		}
