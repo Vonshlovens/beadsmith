@@ -3,7 +3,7 @@
 	 * The id chip: the project prefix recedes, the short suffix people say out
 	 * loud stays bright.
 	 */
-	import { splitIssueId } from '$lib/client/format';
+	import { splitIssueId } from '#lib/client/format.js';
 
 	interface Props {
 		id: string;

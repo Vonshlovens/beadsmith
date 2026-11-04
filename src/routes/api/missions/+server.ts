@@ -1,8 +1,8 @@
 import type { RequestHandler } from './$types';
-import { discoverProjects } from '$lib/server/discovery.js';
-import { listMissions } from '$lib/server/dispatch/service.js';
-import { errorFromException, jsonResponse } from '$lib/server/security.js';
-import { missions_query_schema, parseQuery } from '$lib/server/validation.js';
+import { discoverProjects } from '#lib/server/discovery.js';
+import { listMissions } from '#lib/server/dispatch/service.js';
+import { errorFromException, jsonResponse } from '#lib/server/security.js';
+import { missions_query_schema, parseQuery } from '#lib/server/validation.js';
 
 async function projectNames(): Promise<Map<string, string>> {
 	try {

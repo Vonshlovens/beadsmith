@@ -3,7 +3,7 @@
  * connected: each message gets {@link UNWIRED_REPLY} after a short pause, so
  * the conversation reads the way it will once one is.
  */
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import {
 	MAX_MESSAGE_CHARS,
 	UNWIRED_REPLY,
@@ -13,7 +13,7 @@ import {
 	sortChats,
 	type Chat,
 	type ChatRole
-} from '$lib/client/mate-chat';
+} from '#lib/client/mate-chat.js';
 
 const STORAGE_KEY = 'bdui:first-mate-chats';
 const REPLY_DELAY_MS = 900;

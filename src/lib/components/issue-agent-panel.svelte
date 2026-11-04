@@ -9,11 +9,11 @@
 	import HammerIcon from '@lucide/svelte/icons/hammer';
 	import MessageSquareIcon from '@lucide/svelte/icons/message-square';
 	import PencilLineIcon from '@lucide/svelte/icons/pencil-line';
-	import AgentThread from '$lib/components/agent-thread.svelte';
-	import { AGENT_INTENTS, intentAllowed, type AgentIntent } from '$lib/client/agent';
-	import { currentProject } from '$lib/client/projects.svelte';
-	import { app_state } from '$lib/client/stores.svelte';
-	import type { IssueSummary, Mission } from '$lib/types';
+	import AgentThread from '#lib/components/agent-thread.svelte';
+	import { AGENT_INTENTS, intentAllowed, type AgentIntent } from '#lib/client/agent.js';
+	import { currentProject } from '#lib/client/projects.svelte.js';
+	import { app_state } from '#lib/client/stores.svelte.js';
+	import type { IssueSummary, Mission } from '#lib/types.js';
 
 	interface Props {
 		project_id: string;

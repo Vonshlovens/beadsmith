@@ -7,14 +7,14 @@
  * visibility.
  */
 import { createColumnHelper, renderComponent } from '@tanstack/svelte-table';
-import IssueId from '$lib/components/issue-id.svelte';
-import PriorityChip from '$lib/components/priority-chip.svelte';
-import StatusBadge from '$lib/components/status-badge.svelte';
-import TypeChip from '$lib/components/type-chip.svelte';
-import { COLUMN_LABELS } from '$lib/client/columns.js';
-import { relativeShort } from '$lib/client/format.js';
-import { issueDetailHref } from '$lib/client/issue-view.js';
-import type { IssueSummary } from '$lib/types.js';
+import IssueId from '#lib/components/issue-id.svelte';
+import PriorityChip from '#lib/components/priority-chip.svelte';
+import StatusBadge from '#lib/components/status-badge.svelte';
+import TypeChip from '#lib/components/type-chip.svelte';
+import { COLUMN_LABELS } from '#lib/client/columns.js';
+import { relativeShort } from '#lib/client/format.js';
+import { issueDetailHref } from '#lib/client/issue-view.js';
+import type { IssueSummary } from '#lib/types.js';
 import AssigneeCell from './assignee-cell.svelte';
 import { features } from './data-table-features.js';
 import type { IssuesTableMeta } from './data-table-features.js';

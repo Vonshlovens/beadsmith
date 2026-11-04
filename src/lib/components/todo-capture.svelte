@@ -1,7 +1,7 @@
 <script lang="ts">
 	/**
 	 * agenda.dev-style capture field: "what's on your agenda?". The line is
-	 * parsed locally on every keystroke (`$lib/todos/parse`) and the result
+	 * parsed locally on every keystroke (`#lib/todos/parse.js`) and the result
 	 * shows as chips before anything is created, so the parse is never a
 	 * surprise. Enter or ⌘/Ctrl+Enter submits; Esc clears, then leaves.
 	 */
@@ -9,10 +9,10 @@
 	import { scale } from 'svelte/transition';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import CalendarIcon from '@lucide/svelte/icons/calendar';
-	import PriorityChip from '$lib/components/priority-chip.svelte';
-	import { dur, expand } from '$lib/client/motion';
-	import { addDays, dueLabel, nextWeekday, toDateOnly } from '$lib/todos/dates';
-	import { parseCapture, type ParsedCapture } from '$lib/todos/parse';
+	import PriorityChip from '#lib/components/priority-chip.svelte';
+	import { dur, expand } from '#lib/client/motion.js';
+	import { addDays, dueLabel, nextWeekday, toDateOnly } from '#lib/todos/dates.js';
+	import { parseCapture, type ParsedCapture } from '#lib/todos/parse.js';
 
 	interface Props {
 		now: Date;

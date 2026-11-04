@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Project } from '$lib/types.js';
+import type { Project } from '#lib/types.js';
 import { GET } from './+server.js';
 
 const mocks = vi.hoisted(() => ({
@@ -8,11 +8,11 @@ const mocks = vi.hoisted(() => ({
 	streamDispatchMissionEvents: vi.fn()
 }));
 
-vi.mock('$lib/server/discovery.js', () => ({
+vi.mock('#lib/server/discovery.js', () => ({
 	resolveProject: mocks.resolveProject
 }));
 
-vi.mock('$lib/server/dispatch/service.js', () => ({
+vi.mock('#lib/server/dispatch/service.js', () => ({
 	dispatchExists: mocks.dispatchExists,
 	streamDispatchMissionEvents: mocks.streamDispatchMissionEvents
 }));

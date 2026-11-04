@@ -4,8 +4,8 @@
  * same `{ column, direction }` shape for the toolbar chip.
  */
 import type { SortingState } from '@tanstack/svelte-table';
-import { SORT_COLUMNS, UNSORTED } from '$lib/client/sort.js';
-import type { SortColumn, SortState } from '$lib/client/sort.js';
+import { SORT_COLUMNS, UNSORTED } from '#lib/client/sort.js';
+import type { SortColumn, SortState } from '#lib/client/sort.js';
 
 /**
  * Whether an untrusted column id is one the issues table can sort on.

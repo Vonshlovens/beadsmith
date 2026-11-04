@@ -1,8 +1,8 @@
 import type { RequestHandler } from './$types';
-import { resolveProject } from '$lib/server/discovery.js';
-import { getProjectIssue } from '$lib/server/read-model.js';
-import { errorFromException, errorResponse, jsonResponse } from '$lib/server/security.js';
-import { issue_id_schema, parseValue, project_id_schema } from '$lib/server/validation.js';
+import { resolveProject } from '#lib/server/discovery.js';
+import { getProjectIssue } from '#lib/server/read-model.js';
+import { errorFromException, errorResponse, jsonResponse } from '#lib/server/security.js';
+import { issue_id_schema, parseValue, project_id_schema } from '#lib/server/validation.js';
 
 export const GET: RequestHandler = async ({ params }) => {
 	const id = parseValue(project_id_schema, params.id);

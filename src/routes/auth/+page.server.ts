@@ -1,7 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
-import { safeRedirectPath } from '$lib/client/auth.js';
-import { getAuthService, MIN_PASSWORD_LENGTH } from '$lib/server/auth/service.js';
+import { safeRedirectPath } from '#lib/client/auth.js';
+import { getAuthService, MIN_PASSWORD_LENGTH } from '#lib/server/auth/service.js';
 
 /**
  * Sign-in page (ADR-0011). A signed-in visitor goes straight back. While no account exists the page

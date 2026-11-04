@@ -1,8 +1,8 @@
 /**
  * Operator console: catalog coverage, redacted health, and read-only Access.
  */
-import { api, errorMessage } from '$lib/client/api';
-import type { ConsoleSnapshot } from '$lib/types';
+import { api, errorMessage } from '#lib/client/api.js';
+import type { ConsoleSnapshot } from '#lib/types.js';
 import type { PageLoad } from './$types';
 
 export const load: PageLoad = async ({ fetch }) => {

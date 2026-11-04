@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Project } from '$lib/types.js';
+import type { Project } from '#lib/types.js';
 import { POST } from './+server.js';
 
 const mocks = vi.hoisted(() => ({
@@ -8,15 +8,15 @@ const mocks = vi.hoisted(() => ({
 	getProjectIssue: vi.fn()
 }));
 
-vi.mock('$lib/server/discovery.js', () => ({
+vi.mock('#lib/server/discovery.js', () => ({
 	resolveProject: mocks.resolveProject
 }));
 
-vi.mock('$lib/server/dispatch/service.js', () => ({
+vi.mock('#lib/server/dispatch/service.js', () => ({
 	enqueueDispatch: mocks.enqueueDispatch
 }));
 
-vi.mock('$lib/server/read-model.js', () => ({
+vi.mock('#lib/server/read-model.js', () => ({
 	getProjectIssue: mocks.getProjectIssue
 }));
 

@@ -1,5 +1,5 @@
 /**
- * Stand-in for SvelteKit's generated `$app/environment`, aliased in by
+ * Stand-in for SvelteKit's generated `$app/env`, aliased in by
  * `vitest.config.ts`. Tests run under node with no DOM, which is exactly the
  * server case the real module reports.
  */

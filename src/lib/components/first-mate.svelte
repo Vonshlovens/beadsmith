@@ -7,15 +7,15 @@
 	 */
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import * as Dialog from '$lib/components/ui/dialog/index.js';
-	import AgentDialog from '$lib/components/agent-dialog.svelte';
-	import FileIssueDialog from '$lib/components/file-issue-dialog.svelte';
-	import FirstMateConsole from '$lib/components/first-mate-console.svelte';
-	import HotkeyHost from '$lib/components/hotkey-host.svelte';
-	import TackleIssueDialog from '$lib/components/tackle-issue-dialog.svelte';
-	import { FIRST_MATE_PATH, firstMatePageHref, isFirstMateHotkey } from '$lib/client/first-mate';
-	import type { FirstMateView } from '$lib/client/first-mate';
-	import { app_state } from '$lib/client/stores.svelte';
+	import * as Dialog from '#lib/components/ui/dialog/index.js';
+	import AgentDialog from '#lib/components/agent-dialog.svelte';
+	import FileIssueDialog from '#lib/components/file-issue-dialog.svelte';
+	import FirstMateConsole from '#lib/components/first-mate-console.svelte';
+	import HotkeyHost from '#lib/components/hotkey-host.svelte';
+	import TackleIssueDialog from '#lib/components/tackle-issue-dialog.svelte';
+	import { FIRST_MATE_PATH, firstMatePageHref, isFirstMateHotkey } from '#lib/client/first-mate.js';
+	import type { FirstMateView } from '#lib/client/first-mate.js';
+	import { app_state } from '#lib/client/stores.svelte.js';
 
 	const on_auth = $derived(page.url.pathname === '/auth');
 

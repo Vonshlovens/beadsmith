@@ -1,20 +1,20 @@
 <script lang="ts">
 	/** Cross-project Ready deck: control-plane equivalent of `bd ready`. */
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import BotIcon from '@lucide/svelte/icons/bot';
-	import EmptyState from '$lib/components/empty-state.svelte';
-	import IssueId from '$lib/components/issue-id.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
-	import PriorityChip from '$lib/components/priority-chip.svelte';
-	import TypeChip from '$lib/components/type-chip.svelte';
-	import { agentAvailability } from '$lib/client/agent';
-	import { relativeShort } from '$lib/client/format';
-	import { useHotkeys } from '$lib/client/hotkeys.svelte';
-	import { stepFocus } from '$lib/client/list-focus';
-	import { projectList, statusSnapshot } from '$lib/client/projects.svelte';
-	import { app_state } from '$lib/client/stores.svelte';
-	import { PRODUCT_NAME } from '$lib/product';
-	import type { ReadyIssue } from '$lib/types';
+	import EmptyState from '#lib/components/empty-state.svelte';
+	import IssueId from '#lib/components/issue-id.svelte';
+	import PageHeader from '#lib/components/page-header.svelte';
+	import PriorityChip from '#lib/components/priority-chip.svelte';
+	import TypeChip from '#lib/components/type-chip.svelte';
+	import { agentAvailability } from '#lib/client/agent.js';
+	import { relativeShort } from '#lib/client/format.js';
+	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
+	import { stepFocus } from '#lib/client/list-focus.js';
+	import { projectList, statusSnapshot } from '#lib/client/projects.svelte.js';
+	import { app_state } from '#lib/client/stores.svelte.js';
+	import { PRODUCT_NAME } from '#lib/product.js';
+	import type { ReadyIssue } from '#lib/types.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -30,7 +30,7 @@
 	async function refresh() {
 		refreshing = true;
 		try {
-			await invalidateAll();
+			await refreshAll();
 		} finally {
 			refreshing = false;
 		}

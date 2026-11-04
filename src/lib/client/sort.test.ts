@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ariaSort, nextSort, sortIssues, UNSORTED } from './sort.js';
 import type { SortState } from './sort.js';
-import type { IssueSummary } from '$lib/types.js';
+import type { IssueSummary } from '#lib/types.js';
 
 /**
  * Build a row with only the fields a test cares about.

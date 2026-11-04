@@ -1,17 +1,17 @@
 import type { RequestHandler } from './$types';
-import { getTodoStore } from '$lib/server/state/db.js';
-import { errorFromException, errorResponse, jsonResponse } from '$lib/server/security.js';
+import { getTodoStore } from '#lib/server/state/db.js';
+import { errorFromException, errorResponse, jsonResponse } from '#lib/server/security.js';
 import {
 	create_todo_schema,
 	parseJsonBody,
 	parseQuery,
 	todos_query_schema
-} from '$lib/server/validation.js';
+} from '#lib/server/validation.js';
 
 /**
  * `GET /api/todos?status=open|done|archived|all&tag=&q=&limit=` →
  * `{ todos: Todo[] }`, in manual order (`sort_key`). Urgency is not stored:
- * clients derive it with `$lib/todos/urgency.ts`. Admin-only via the request
+ * clients derive it with `#lib/todos/urgency.ts`. Admin-only via the request
  * gate (`requiredPermission`), reads included.
  */
 export const GET: RequestHandler = async ({ url }) => {

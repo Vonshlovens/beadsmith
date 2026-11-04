@@ -5,7 +5,7 @@
  * `x-bdx-request: 1` CSRF hard-stop header, and error bodies are parsed into
  * `ApiError` so callers can branch on `code` instead of scraping messages.
  */
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import { goto } from '$app/navigation';
 import type {
 	AccountRole,
@@ -31,9 +31,9 @@ import type {
 	ReadyListResponse,
 	StatusSnapshot,
 	ThemePreference
-} from '$lib/types';
+} from '#lib/types.js';
 
-import type { Todo, TodoComment, TodoStatus } from '$lib/server/todos/store';
+import type { Todo, TodoComment, TodoStatus } from '#lib/server/todos/store.js';
 
 const BASE_URL = '/api';
 

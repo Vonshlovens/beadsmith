@@ -42,16 +42,16 @@ own license file inside the package.
 | @noble/ciphers | 2.4.0 | MIT |
 | @noble/hashes | 2.4.0 | MIT |
 | @polka/url | 1.0.0-next.29 | MIT |
+| @rolldown/pluginutils | 1.0.1 | MIT |
 | @standard-schema/spec | 1.1.0 | MIT |
 | @sveltejs/acorn-typescript | 1.0.13 | MIT |
-| @sveltejs/adapter-node | 5.5.7 | MIT |
-| @sveltejs/kit | 2.70.3 | MIT |
+| @sveltejs/adapter-node | 6.0.1 | MIT |
+| @sveltejs/kit | 3.1.1 | MIT |
 | @swc/helpers | 0.5.23 | Apache-2.0 |
 | @tanstack/store | 0.11.2 | MIT |
 | @tanstack/svelte-store | 0.12.3 | MIT |
 | @tanstack/svelte-table | 9.3.1 | MIT |
 | @tanstack/table-core | 9.3.1 | MIT |
-| @types/cookie | 0.6.0 | MIT |
 | @types/estree | 1.0.9 | MIT |
 | @types/node | 26.6.5 | MIT |
 | @types/trusted-types | 2.0.7 | MIT |
@@ -64,7 +64,7 @@ own license file inside the package.
 | better-call | 1.4.4 | MIT |
 | bits-ui | 2.20.2 | MIT |
 | clsx | 2.1.1 | MIT |
-| cookie | 0.7.2 | MIT |
+| cookie | 2.0.1 | MIT |
 | defu | 6.1.7 | MIT |
 | dequal | 2.0.3 | MIT |
 | detect-libc | 2.0.2 | Apache-2.0 |
@@ -80,7 +80,6 @@ own license file inside the package.
 | is-reference | 3.0.3 | MIT |
 | jose | 6.2.13 | MIT |
 | js-base64 | 3.9.4 | BSD-3-Clause |
-| kleur | 4.1.5 | MIT |
 | kysely | 0.29.7 | MIT |
 | libsql | 0.5.29 | MIT |
 | locate-character | 3.0.0 | MIT |
@@ -88,6 +87,7 @@ own license file inside the package.
 | lru.min | 1.1.5 | MIT |
 | lz-string | 1.5.0 | MIT |
 | magic-string | 0.30.21 | MIT |
+| magic-string | 1.4.3 | MIT |
 | marked | 18.1.1 | MIT |
 | mode-watcher | 1.1.0 | MIT |
 | mrmime | 2.0.1 | MIT |

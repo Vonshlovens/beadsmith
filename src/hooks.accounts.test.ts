@@ -10,20 +10,20 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { RequestEvent } from '@sveltejs/kit';
 import { handle } from './hooks.server.js';
-import { CSRF_HEADER } from '$lib/server/security.js';
-import { resetEnvCache } from '$lib/server/env.js';
+import { CSRF_HEADER } from '#lib/server/security.js';
+import { resetEnvCache } from '#lib/server/env.js';
 import {
 	resetCloudflareAccessVerifier,
 	setCloudflareAccessVerifierForTest
-} from '$lib/server/cloudflare-access.js';
-import { setStateStore, type StateStore } from '$lib/server/state/db.js';
-import { setAuthServiceForTest } from '$lib/server/auth/service.js';
+} from '#lib/server/cloudflare-access.js';
+import { setStateStore, type StateStore } from '#lib/server/state/db.js';
+import { setAuthServiceForTest } from '#lib/server/auth/service.js';
 import {
 	bootstrapAdmin,
 	createMember,
 	createTestAuth,
 	type TestAuth
-} from '$lib/server/auth/test-helpers.js';
+} from '#lib/server/auth/test-helpers.js';
 
 const ENV_KEYS = [
 	'BEADS_DOLT_SERVER_HOST',

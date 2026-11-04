@@ -1,17 +1,17 @@
 <script lang="ts">
 	/** Beads projects and their recent activity. */
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
-	import ActivityFeed from '$lib/components/activity-feed.svelte';
-	import EmptyState from '$lib/components/empty-state.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
-	import SkeletonCards from '$lib/components/skeleton-cards.svelte';
-	import { api, errorMessage } from '$lib/client/api';
-	import { meterSegments, projectHealth, relativeLong } from '$lib/client/format';
-	import { useHotkeys } from '$lib/client/hotkeys.svelte';
-	import { stepFocus } from '$lib/client/list-focus';
-	import { projectList } from '$lib/client/projects.svelte';
-	import { PRODUCT_NAME } from '$lib/product';
+	import ActivityFeed from '#lib/components/activity-feed.svelte';
+	import EmptyState from '#lib/components/empty-state.svelte';
+	import PageHeader from '#lib/components/page-header.svelte';
+	import SkeletonCards from '#lib/components/skeleton-cards.svelte';
+	import { api, errorMessage } from '#lib/client/api.js';
+	import { meterSegments, projectHealth, relativeLong } from '#lib/client/format.js';
+	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
+	import { stepFocus } from '#lib/client/list-focus.js';
+	import { projectList } from '#lib/client/projects.svelte.js';
+	import { PRODUCT_NAME } from '#lib/product.js';
 	import { toast } from 'svelte-sonner';
 	import type { PageProps } from './$types';
 
@@ -47,7 +47,7 @@
 		refreshing = true;
 		try {
 			await api.refreshProjects();
-			await invalidateAll();
+			await refreshAll();
 		} catch (error) {
 			toast.error('Could not refresh projects', { description: errorMessage(error) });
 		} finally {

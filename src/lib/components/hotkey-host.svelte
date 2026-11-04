@@ -8,7 +8,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import XIcon from '@lucide/svelte/icons/x';
-	import * as Dialog from '$lib/components/ui/dialog/index.js';
+	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import {
 		describeSequence,
 		eventToken,
@@ -18,15 +18,15 @@
 		overlayGroups,
 		SEQUENCE_TIMEOUT_MS,
 		type HotkeyBinding
-	} from '$lib/client/hotkeys';
-	import { hotkeyScopes, setPendingKeys, useHotkeys } from '$lib/client/hotkeys.svelte';
+	} from '#lib/client/hotkeys.js';
+	import { hotkeyScopes, setPendingKeys, useHotkeys } from '#lib/client/hotkeys.svelte.js';
 	import {
 		issueViewStorageKey,
 		parseStoredIssueView,
 		projectIssuesHref
-	} from '$lib/client/issue-view';
-	import { currentProject, currentViewer, projectList } from '$lib/client/projects.svelte';
-	import { app_state } from '$lib/client/stores.svelte';
+	} from '#lib/client/issue-view.js';
+	import { currentProject, currentViewer, projectList } from '#lib/client/projects.svelte.js';
+	import { app_state } from '#lib/client/stores.svelte.js';
 
 	const mac = $derived(
 		typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)

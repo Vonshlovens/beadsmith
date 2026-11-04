@@ -16,7 +16,7 @@ const ROOT = new URL('..', import.meta.url).pathname;
 const OUTPUT = join(ROOT, 'THIRD_PARTY_NOTICES.md');
 /** Shipped although declared as devDependencies (bundled or imported at start). */
 const SHIPPED_DEV = ['@sveltejs/adapter-node', '@sveltejs/kit', 'svelte'];
-/** Shipped, but their own dependencies are build tools (Rollup), not shipped. */
+/** Shipped, but their own dependencies (if any) are build tools, not shipped. */
 const NOT_FOLLOWED = new Set(['@sveltejs/adapter-node']);
 const LISTED_ONLY = new Set(['MIT', 'ISC', '0BSD']);
 

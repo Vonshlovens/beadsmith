@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { DispatchPolicyStore } from '$lib/server/dispatch/policy.js';
-import { setDispatchPolicyStore } from '$lib/server/state/db.js';
+import type { DispatchPolicyStore } from '#lib/server/dispatch/policy.js';
+import { setDispatchPolicyStore } from '#lib/server/state/db.js';
 import { PUT } from './+server.js';
 
 let armed = true;

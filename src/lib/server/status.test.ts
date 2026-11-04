@@ -11,7 +11,7 @@ import {
 import { readEnv } from './env.js';
 import type { DoltClient } from './dolt/client.js';
 import { DoltCredentialError } from './dolt-password.js';
-import type { ActivityEvent, Project, StatusSnapshot } from '$lib/types.js';
+import type { ActivityEvent, Project, StatusSnapshot } from '#lib/types.js';
 
 /** Build a complete read-only Dolt client stub. */
 function fakeDolt(overrides: Partial<DoltClient> = {}): DoltClient {

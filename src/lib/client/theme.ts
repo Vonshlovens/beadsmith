@@ -10,7 +10,7 @@
  * Deliberately free of runes and `$app` imports so it stays plain, testable
  * TypeScript.
  */
-import type { ResolvedTheme, ThemePreference } from '$lib/types';
+import type { ResolvedTheme, ThemePreference } from '#lib/types.js';
 
 /** Cycle order used by the top-bar toggle. */
 export const THEME_PREFERENCES: readonly ThemePreference[] = ['system', 'light', 'dark'];

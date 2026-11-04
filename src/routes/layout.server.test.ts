@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Project, StatusSnapshot } from '$lib/types.js';
-import type { StatusDeps } from '$lib/server/status.js';
+import type { Project, StatusSnapshot } from '#lib/types.js';
+import type { StatusDeps } from '#lib/server/status.js';
 
 const mocks = vi.hoisted(() => ({
 	discoverProjects: vi.fn<() => Promise<Project[]>>(),
@@ -8,16 +8,16 @@ const mocks = vi.hoisted(() => ({
 	getDispatchPolicyStore: vi.fn()
 }));
 
-vi.mock('$lib/server/discovery.js', () => ({
+vi.mock('#lib/server/discovery.js', () => ({
 	discoverProjects: mocks.discoverProjects
 }));
 
-vi.mock('$lib/server/status.js', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('$lib/server/status.js')>();
+vi.mock('#lib/server/status.js', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('#lib/server/status.js')>();
 	return { ...actual, getStatus: mocks.getStatus };
 });
 
-vi.mock('$lib/server/state/db.js', () => ({
+vi.mock('#lib/server/state/db.js', () => ({
 	getDispatchPolicyStore: mocks.getDispatchPolicyStore
 }));
 

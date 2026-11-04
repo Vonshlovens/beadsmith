@@ -7,10 +7,10 @@ import type {
 	IssueRef,
 	IssueSummary,
 	ProjectCounts
-} from '$lib/types.js';
+} from '#lib/types.js';
 
 /** Re-export the shared public failure taxonomy for existing server callers. */
-export type { DoltFailureKind } from '$lib/types.js';
+export type { DoltFailureKind } from '#lib/types.js';
 
 /** Row shape returned by the query function. */
 export type SqlRow = Record<string, unknown>;

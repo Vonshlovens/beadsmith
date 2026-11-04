@@ -7,12 +7,12 @@
  * explain what is missing. A signed-out visitor (only ever on the sign-in
  * page) gets none of it: no project name or count leaves before sign-in.
  */
-import { discoverProjects } from '$lib/server/discovery.js';
-import { DEFAULT_DISPATCH_ALLOW } from '$lib/server/dispatch/policy.js';
-import { scrubSecretLines } from '$lib/server/security.js';
-import { getDispatchPolicyStore } from '$lib/server/state/db.js';
-import { getStatus, statusForViewer } from '$lib/server/status.js';
-import type { Project, StatusSnapshot, Viewer } from '$lib/types.js';
+import { discoverProjects } from '#lib/server/discovery.js';
+import { DEFAULT_DISPATCH_ALLOW } from '#lib/server/dispatch/policy.js';
+import { scrubSecretLines } from '#lib/server/security.js';
+import { getDispatchPolicyStore } from '#lib/server/state/db.js';
+import { getStatus, statusForViewer } from '#lib/server/status.js';
+import type { Project, StatusSnapshot, Viewer } from '#lib/types.js';
 import type { LayoutServerLoad } from './$types';
 
 function errorMessage(error: unknown): string {

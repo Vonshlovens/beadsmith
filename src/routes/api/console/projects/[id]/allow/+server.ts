@@ -1,13 +1,13 @@
 import type { RequestHandler } from './$types';
-import { resolveProject } from '$lib/server/discovery.js';
-import { getDispatchPolicyStore } from '$lib/server/state/db.js';
-import { errorFromException, errorResponse, jsonResponse } from '$lib/server/security.js';
+import { resolveProject } from '#lib/server/discovery.js';
+import { getDispatchPolicyStore } from '#lib/server/state/db.js';
+import { errorFromException, errorResponse, jsonResponse } from '#lib/server/security.js';
 import {
 	dispatch_allow_schema,
 	parseJsonBody,
 	parseValue,
 	project_id_schema
-} from '$lib/server/validation.js';
+} from '#lib/server/validation.js';
 
 export const PUT: RequestHandler = async ({ params, request }) => {
 	const id = parseValue(project_id_schema, params.id);

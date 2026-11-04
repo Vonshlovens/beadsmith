@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { RequestEvent } from '@sveltejs/kit';
-import { setAuthServiceForTest } from '$lib/server/auth/service.js';
+import { setAuthServiceForTest } from '#lib/server/auth/service.js';
 import {
 	bootstrapAdmin,
 	createTestAuth,
 	TEST_AUTH_ORIGIN,
 	TEST_PASSWORD,
 	type TestAuth
-} from '$lib/server/auth/test-helpers.js';
+} from '#lib/server/auth/test-helpers.js';
 import { GET, POST } from './+server.js';
 
 let t: TestAuth;

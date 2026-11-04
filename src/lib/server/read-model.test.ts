@@ -10,7 +10,7 @@ import {
 } from './read-model.js';
 import type { DoltClient } from './dolt/client.js';
 import { UnsupportedSchemaError } from './dolt/schema.js';
-import type { IssueSummary, Project } from '$lib/types.js';
+import type { IssueSummary, Project } from '#lib/types.js';
 
 /** Build a complete read-only Dolt client stub. */
 function fakeDolt(overrides: Partial<DoltClient> = {}): DoltClient {

@@ -3,13 +3,13 @@
 	 * Subscribe to the beads-web SSE proxy and render MissionEvent frames.
 	 * EventSource is same-origin; provider credentials never enter the browser.
 	 */
-	import MissionEventStream from '$lib/components/mission-event-stream.svelte';
+	import MissionEventStream from '#lib/components/mission-event-stream.svelte';
 	import {
 		MISSION_EVENT_TYPES,
 		missionStreamPath,
 		parseMissionEventJson,
 		type MissionEvent
-	} from '$lib/mission-events';
+	} from '#lib/mission-events.js';
 
 	interface Props {
 		project_id: string;

@@ -5,8 +5,8 @@
 	 * *preference*, not the resolved theme, so `auto` stays distinguishable
 	 * from whichever theme it currently resolves to.
 	 */
-	import { app_state } from '$lib/client/stores.svelte';
-	import { themeToggleLabel } from '$lib/client/theme';
+	import { app_state } from '#lib/client/stores.svelte.js';
+	import { themeToggleLabel } from '#lib/client/theme.js';
 
 	const label = $derived(themeToggleLabel(app_state.theme));
 	const word = $derived(app_state.theme === 'system' ? 'auto' : app_state.theme);

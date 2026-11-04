@@ -5,7 +5,7 @@ import type {
 	DispatchProviderId,
 	DispatchStatus,
 	DispatchTurn
-} from '$lib/types.js';
+} from '#lib/types.js';
 import { DispatchError, type DispatchPayload, type DispatchRecord } from './types.js';
 
 export interface CreateDispatchInput {

@@ -7,7 +7,7 @@
  * refresh behind it. `view` is not part of the key: list and board share one
  * payload. SSR must not touch this map (it is a process singleton).
  */
-import type { IssueSummary } from '$lib/types.js';
+import type { IssueSummary } from '#lib/types.js';
 
 /** Serve a cached list for this long, then wait on the network again. */
 export const ISSUE_LIST_CACHE_TTL_MS = 10_000;

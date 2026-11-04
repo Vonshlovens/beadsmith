@@ -1,5 +1,5 @@
 import type { Client } from '@libsql/client';
-import type { DiscussIntent, DispatchOperation, DispatchProjectAllow } from '$lib/types.js';
+import type { DiscussIntent, DispatchOperation, DispatchProjectAllow } from '#lib/types.js';
 
 /**
  * Service-local File/Tackle policy: a global arm switch and per-project allow.

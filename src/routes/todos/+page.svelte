@@ -9,21 +9,21 @@
 	import { page } from '$app/state';
 	import { flip } from 'svelte/animate';
 	import { toast } from 'svelte-sonner';
-	import EmptyState from '$lib/components/empty-state.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
-	import TodoCapture from '$lib/components/todo-capture.svelte';
-	import TodoCard from '$lib/components/todo-card.svelte';
-	import TodoListView from '$lib/components/todo-list-view.svelte';
-	import TodoRouteHotkey from '$lib/components/todo-route-hotkey.svelte';
-	import TodoRouteDialog from '$lib/components/todo-route-dialog.svelte';
-	import { api, errorMessage } from '$lib/client/api';
-	import { useHotkeys } from '$lib/client/hotkeys.svelte';
-	import { dur, expand, receive, send, springOut } from '$lib/client/motion';
-	import type { Todo } from '$lib/server/todos/store';
-	import { groupIntoColumns, type ColumnCount, type ColumnOrder } from '$lib/todos/columns';
-	import { dueForColumn, placeAt } from '$lib/todos/dnd';
-	import { dueLabel } from '$lib/todos/dates';
-	import type { ParsedCapture } from '$lib/todos/parse';
+	import EmptyState from '#lib/components/empty-state.svelte';
+	import PageHeader from '#lib/components/page-header.svelte';
+	import TodoCapture from '#lib/components/todo-capture.svelte';
+	import TodoCard from '#lib/components/todo-card.svelte';
+	import TodoListView from '#lib/components/todo-list-view.svelte';
+	import TodoRouteHotkey from '#lib/components/todo-route-hotkey.svelte';
+	import TodoRouteDialog from '#lib/components/todo-route-dialog.svelte';
+	import { api, errorMessage } from '#lib/client/api.js';
+	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
+	import { dur, expand, receive, send, springOut } from '#lib/client/motion.js';
+	import type { Todo } from '#lib/server/todos/store.js';
+	import { groupIntoColumns, type ColumnCount, type ColumnOrder } from '#lib/todos/columns.js';
+	import { dueForColumn, placeAt } from '#lib/todos/dnd.js';
+	import { dueLabel } from '#lib/todos/dates.js';
+	import type { ParsedCapture } from '#lib/todos/parse.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -82,7 +82,7 @@
 		} catch {
 			/* storage unavailable */
 		}
-		const url = new URL(page.url);
+		const url = new URL(page.url.href);
 		if (next === 'list') url.searchParams.set('view', 'list');
 		else url.searchParams.delete('view');
 		replaceState(url, page.state);

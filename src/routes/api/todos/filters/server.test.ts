@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { requiredPermission, roleCan } from '$lib/server/auth/roles.js';
-import { setStateStore, type StateStore } from '$lib/server/state/db.js';
+import { requiredPermission, roleCan } from '#lib/server/auth/roles.js';
+import { setStateStore, type StateStore } from '#lib/server/state/db.js';
 import { GET, PUT } from './+server.js';
 
 let settings: Map<string, string>;

@@ -1,8 +1,8 @@
 /**
  * Cross-project File/Tackle fleet.
  */
-import { api, errorMessage } from '$lib/client/api';
-import type { Mission } from '$lib/types';
+import { api, errorMessage } from '#lib/client/api.js';
+import type { Mission } from '#lib/types.js';
 import type { PageLoad } from './$types';
 
 export const load: PageLoad = async ({ fetch }) => {

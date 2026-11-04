@@ -8,7 +8,7 @@ import {
 	isSafeRunUrl,
 	missionVerb
 } from './agent.js';
-import type { DispatchHealth } from '$lib/types.js';
+import type { DispatchHealth } from '#lib/types.js';
 
 function health(patch: Partial<DispatchHealth> = {}): { dispatch: DispatchHealth } {
 	return {

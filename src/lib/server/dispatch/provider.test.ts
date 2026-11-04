@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createClient } from '@libsql/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Project } from '$lib/types.js';
+import type { Project } from '#lib/types.js';
 import { readEnv } from '../env.js';
 import { initStateSchema } from '../state/db.js';
 import { getAgentProvider, type AgentProvider } from './provider.js';

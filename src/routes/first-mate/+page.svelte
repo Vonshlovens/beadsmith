@@ -4,7 +4,7 @@
 	 * chats (and agent threads, when a runner is configured) and one
 	 * conversation column. A new chat starts from the question screen.
 	 *
-	 * The chat is not wired to a model yet; see $lib/client/mate-chat.ts.
+	 * The chat is not wired to a model yet; see src/lib/client/mate-chat.ts.
 	 * Agent threads are real: `?thread=&project=` opens a mission as before.
 	 * The command palette stays on ⌘K, reachable from every composer.
 	 */
@@ -14,23 +14,23 @@
 	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
 	import CommandIcon from '@lucide/svelte/icons/command';
 	import PlusIcon from '@lucide/svelte/icons/plus';
-	import AgentThread from '$lib/components/agent-thread.svelte';
-	import ChatComposer from '$lib/components/chat-composer.svelte';
-	import IssueId from '$lib/components/issue-id.svelte';
-	import MateChatView from '$lib/components/mate-chat-view.svelte';
-	import MateContextSelect from '$lib/components/mate-context-select.svelte';
-	import { api, errorMessage } from '$lib/client/api';
-	import { agentAvailability, isBusyStatus, missionVerb } from '$lib/client/agent';
-	import { FIRST_MATE_PATH, threadHref } from '$lib/client/first-mate';
-	import { dispatchBadgeKey, relativeShort } from '$lib/client/format';
-	import { useHotkeys } from '$lib/client/hotkeys.svelte';
-	import { stepFocus } from '$lib/client/list-focus';
-	import { STARTERS, chatHref } from '$lib/client/mate-chat';
-	import { mate_chats } from '$lib/client/mate-chat.svelte';
-	import { currentProject, statusSnapshot } from '$lib/client/projects.svelte';
-	import { app_state } from '$lib/client/stores.svelte';
-	import { PRODUCT_NAME } from '$lib/product';
-	import type { DispatchRequest, Mission } from '$lib/types';
+	import AgentThread from '#lib/components/agent-thread.svelte';
+	import ChatComposer from '#lib/components/chat-composer.svelte';
+	import IssueId from '#lib/components/issue-id.svelte';
+	import MateChatView from '#lib/components/mate-chat-view.svelte';
+	import MateContextSelect from '#lib/components/mate-context-select.svelte';
+	import { api, errorMessage } from '#lib/client/api.js';
+	import { agentAvailability, isBusyStatus, missionVerb } from '#lib/client/agent.js';
+	import { FIRST_MATE_PATH, threadHref } from '#lib/client/first-mate.js';
+	import { dispatchBadgeKey, relativeShort } from '#lib/client/format.js';
+	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
+	import { stepFocus } from '#lib/client/list-focus.js';
+	import { STARTERS, chatHref } from '#lib/client/mate-chat.js';
+	import { mate_chats } from '#lib/client/mate-chat.svelte.js';
+	import { currentProject, statusSnapshot } from '#lib/client/projects.svelte.js';
+	import { app_state } from '#lib/client/stores.svelte.js';
+	import { PRODUCT_NAME } from '#lib/product.js';
+	import type { DispatchRequest, Mission } from '#lib/types.js';
 
 	/** How often the thread list re-reads missions while one is working. */
 	const LIST_POLL_MS = 8000;
@@ -121,7 +121,7 @@
 	}
 
 	function closeOpen() {
-		void goto(FIRST_MATE_PATH, { keepFocus: true, noScroll: true });
+		void goto(FIRST_MATE_PATH, { reset: false });
 	}
 
 	function deleteChat() {

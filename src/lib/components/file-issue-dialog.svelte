@@ -4,12 +4,12 @@
 	 * The web process does not create the Beads issue itself.
 	 */
 	import { toast } from 'svelte-sonner';
-	import * as Dialog from '$lib/components/ui/dialog/index.js';
-	import { api, errorMessage } from '$lib/client/api';
-	import { boardCreateHeading, fileStatusAfterCreate } from '$lib/client/board';
-	import { statusLabel } from '$lib/client/format';
-	import type { StatusKey } from '$lib/client/format';
-	import type { DispatchRequest } from '$lib/types';
+	import * as Dialog from '#lib/components/ui/dialog/index.js';
+	import { api, errorMessage } from '#lib/client/api.js';
+	import { boardCreateHeading, fileStatusAfterCreate } from '#lib/client/board.js';
+	import { statusLabel } from '#lib/client/format.js';
+	import type { StatusKey } from '#lib/client/format.js';
+	import type { DispatchRequest } from '#lib/types.js';
 
 	let {
 		project_id,

@@ -1,10 +1,10 @@
 import { createClient } from '@libsql/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { requiredPermission, roleCan } from '$lib/server/auth/roles.js';
-import { DispatchError } from '$lib/server/dispatch/types.js';
-import { initStateSchema, setTodoStore } from '$lib/server/state/db.js';
-import { createTodoStore, type TodoStore } from '$lib/server/todos/store.js';
-import type { Project } from '$lib/types.js';
+import { requiredPermission, roleCan } from '#lib/server/auth/roles.js';
+import { DispatchError } from '#lib/server/dispatch/types.js';
+import { initStateSchema, setTodoStore } from '#lib/server/state/db.js';
+import { createTodoStore, type TodoStore } from '#lib/server/todos/store.js';
+import type { Project } from '#lib/types.js';
 import { GET, POST } from './+server.js';
 
 const mocks = vi.hoisted(() => ({
@@ -13,11 +13,11 @@ const mocks = vi.hoisted(() => ({
 	getDispatch: vi.fn()
 }));
 
-vi.mock('$lib/server/discovery.js', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/server/discovery.js')>()),
+vi.mock('#lib/server/discovery.js', async (importOriginal) => ({
+	...(await importOriginal<typeof import('#lib/server/discovery.js')>()),
 	resolveProject: mocks.resolveProject
 }));
-vi.mock('$lib/server/dispatch/service.js', () => ({
+vi.mock('#lib/server/dispatch/service.js', () => ({
 	enqueueDispatch: mocks.enqueueDispatch,
 	getDispatch: mocks.getDispatch
 }));

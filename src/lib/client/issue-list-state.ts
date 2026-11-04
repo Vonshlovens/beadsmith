@@ -2,7 +2,7 @@
  * Classify an empty issue list so the page never paints silence for both
  * "this project has no issues" and "the load failed or filters hid everything".
  */
-import type { ProjectCounts } from '$lib/types';
+import type { ProjectCounts } from '#lib/types.js';
 
 export type IssueListVacancyKind = 'empty' | 'closed_hidden' | 'filtered' | 'partial';
 

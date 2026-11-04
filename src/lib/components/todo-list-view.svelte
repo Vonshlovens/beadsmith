@@ -2,36 +2,42 @@
 	/**
 	 * The tuxedo-style list over the same todos: one dense
 	 * monospace row per todo, driven from the keyboard. State and mutations
-	 * live here; the pure parts are in `$lib/todos/{keymap,sort,query,lines,
+	 * live here; the pure parts are in `src/lib/todos/{keymap,sort,query,lines,
 	 * selection,undo}`. Keys are registered through `useHotkeys`, so they stay
 	 * inert in fields and under dialogs, and appear in the `?` overlay.
 	 */
 	import { onMount, tick, untrack } from 'svelte';
 	import { flip } from 'svelte/animate';
 	import { toast } from 'svelte-sonner';
-	import EmptyState from '$lib/components/empty-state.svelte';
-	import { api, errorMessage } from '$lib/client/api';
-	import { pendingKeys, useHotkeys } from '$lib/client/hotkeys.svelte';
-	import { dur } from '$lib/client/motion';
-	import type { Todo, TodoComment } from '$lib/server/todos/store';
-	import { dueLabel } from '$lib/todos/dates';
+	import EmptyState from '#lib/components/empty-state.svelte';
+	import { api, errorMessage } from '#lib/client/api.js';
+	import { pendingKeys, useHotkeys } from '#lib/client/hotkeys.svelte.js';
+	import { dur } from '#lib/client/motion.js';
+	import type { Todo, TodoComment } from '#lib/server/todos/store.js';
+	import { dueLabel } from '#lib/todos/dates.js';
 	import {
 		listBindings,
 		modeLabel,
 		paletteEntries,
 		type ActionHandler,
 		type ListMode
-	} from '$lib/todos/keymap';
-	import { bodyLine, editLine, nextPriority, rawLine, toggleTag } from '$lib/todos/lines';
-	import { parseCapture } from '$lib/todos/parse';
+	} from '#lib/todos/keymap.js';
+	import { bodyLine, editLine, nextPriority, rawLine, toggleTag } from '#lib/todos/lines.js';
+	import { parseCapture } from '#lib/todos/parse.js';
 	import {
 		cycleFilter,
 		defaultFilterName,
 		matchesQuery,
 		tagCounts,
 		type SavedFilters
-	} from '$lib/todos/query';
-	import { flipRow, moveCursor, selectedIds, startVisual, type Visual } from '$lib/todos/selection';
+	} from '#lib/todos/query.js';
+	import {
+		flipRow,
+		moveCursor,
+		selectedIds,
+		startVisual,
+		type Visual
+	} from '#lib/todos/selection.js';
 	import {
 		cycleSort,
 		groupByCompletion,
@@ -41,9 +47,9 @@
 		sortTodos,
 		type Group,
 		type SortMode
-	} from '$lib/todos/sort';
-	import { UndoStack, type Restore, type UndoEntry } from '$lib/todos/undo';
-	import { urgency } from '$lib/todos/urgency';
+	} from '#lib/todos/sort.js';
+	import { UndoStack, type Restore, type UndoEntry } from '#lib/todos/undo.js';
+	import { urgency } from '#lib/todos/urgency.js';
 
 	let {
 		todos = $bindable(),

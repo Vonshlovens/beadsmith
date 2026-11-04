@@ -7,7 +7,7 @@
  * holds when a model arrives: First Mate reads Beads, agents change it.
  */
 
-import { FIRST_MATE_PATH } from '$lib/client/first-mate';
+import { FIRST_MATE_PATH } from '#lib/client/first-mate.js';
 
 export type ChatRole = 'you' | 'mate';
 

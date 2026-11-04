@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { errorResponse } from './security.js';
-import type { ThemePreference } from '$lib/types.js';
+import type { ThemePreference } from '#lib/types.js';
 import type { FileCheckoutMapping } from './dispatch/file-maps.js';
 import { parseGitHubRepositoryUrl, parseGitRef } from './dispatch/repositories.js';
 import type { TackleRepositoryMapping } from './dispatch/repositories.js';

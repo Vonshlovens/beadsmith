@@ -5,7 +5,7 @@
  * `enqueueDispatch` (ADR-0006): the same arm, allow and checkout checks and the
  * same durable queue as `POST /api/projects/:id/dispatch`.
  */
-import type { Project } from '$lib/types.js';
+import type { Project } from '#lib/types.js';
 import { enqueueDispatch, getDispatch, type DispatchDeps } from '../dispatch/service.js';
 import type { FilePayload } from '../dispatch/types.js';
 import { LABEL_PATTERN } from '../validation.js';

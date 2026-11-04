@@ -1,19 +1,19 @@
-import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit';
-import { startBackupScheduler } from '$lib/server/backup/runtime.js';
+import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit/hooks';
+import { startBackupScheduler } from '#lib/server/backup/runtime.js';
 import {
 	checkConfig,
 	getEnv,
 	isAllowedCloudflareAccessServiceToken,
 	isLoopbackHost
-} from '$lib/server/env.js';
+} from '#lib/server/env.js';
 import {
 	CloudflareAccessVerificationError,
 	getCloudflareAccessVerifier,
 	normalizeCloudflareAccessIssuer
-} from '$lib/server/cloudflare-access.js';
-import { getStateStore } from '$lib/server/state/db.js';
-import { getAuthService } from '$lib/server/auth/service.js';
-import { requiredPermission, roleCan } from '$lib/server/auth/roles.js';
+} from '#lib/server/cloudflare-access.js';
+import { getStateStore } from '#lib/server/state/db.js';
+import { getAuthService } from '#lib/server/auth/service.js';
+import { requiredPermission, roleCan } from '#lib/server/auth/roles.js';
 import {
 	CSRF_HEADER,
 	errorResponse,
@@ -28,7 +28,7 @@ import {
 	passesCsrfGate,
 	requiresCsrfHeader,
 	SECURITY_HEADERS
-} from '$lib/server/security.js';
+} from '#lib/server/security.js';
 
 let config_error_logged = false;
 
@@ -464,6 +464,16 @@ export const handle: Handle = async ({ event, resolve }) => {
 	return applySecurityHeaders(withSetCookies(response, set_cookies), is_api);
 };
 
-export const handleError: HandleServerError = ({ status }) => {
+/**
+ * Never send an unexpected error's message to the client. SvelteKit 3 calls
+ * this for every error, including those thrown with `error(...)`: their
+ * message is one the app chose to show, so they keep it (SvelteKit 2 never
+ * passed them here).
+ */
+export const handleError: HandleServerError = ({ kind, error }) => {
+	if (kind === 'app') {
+		return;
+	}
+	const status = kind === 'unknown' ? 500 : error.status;
 	return { message: status === 404 ? 'not found' : 'internal error' };
 };

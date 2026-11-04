@@ -12,7 +12,7 @@ import type {
 	DispatchRequest,
 	DispatchStatus,
 	StatusSnapshot
-} from '$lib/types';
+} from '#lib/types.js';
 
 /** What the operator can ask of an agent about one issue. */
 export type AgentIntent = DiscussIntent | 'tackle';

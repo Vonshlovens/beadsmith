@@ -1,12 +1,12 @@
 import type { RequestHandler } from './$types';
-import { resolveProject } from '$lib/server/discovery.js';
-import { cancelDispatch } from '$lib/server/dispatch/service.js';
-import { errorFromException, errorResponse, jsonResponse } from '$lib/server/security.js';
+import { resolveProject } from '#lib/server/discovery.js';
+import { cancelDispatch } from '#lib/server/dispatch/service.js';
+import { errorFromException, errorResponse, jsonResponse } from '#lib/server/security.js';
 import {
 	dispatch_request_id_schema,
 	parseValue,
 	project_id_schema
-} from '$lib/server/validation.js';
+} from '#lib/server/validation.js';
 
 export const POST: RequestHandler = async ({ params }) => {
 	const id = parseValue(project_id_schema, params.id);

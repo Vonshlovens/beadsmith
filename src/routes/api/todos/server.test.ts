@@ -1,9 +1,9 @@
 import { createClient } from '@libsql/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { roleCan, requiredPermission } from '$lib/server/auth/roles.js';
-import { initStateSchema, setTodoStore } from '$lib/server/state/db.js';
-import { createTodoStore } from '$lib/server/todos/store.js';
-import type { ApiErrorBody } from '$lib/types.js';
+import { roleCan, requiredPermission } from '#lib/server/auth/roles.js';
+import { initStateSchema, setTodoStore } from '#lib/server/state/db.js';
+import { createTodoStore } from '#lib/server/todos/store.js';
+import type { ApiErrorBody } from '#lib/types.js';
 import { DELETE, GET as GET_ONE, PATCH } from './[id]/+server.js';
 import { GET as GET_COMMENTS, POST as POST_COMMENT } from './[id]/comments/+server.js';
 import { DELETE as DELETE_COMMENT } from './[id]/comments/[cid]/+server.js';

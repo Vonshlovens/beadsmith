@@ -13,8 +13,8 @@
  * `AgentProvider`, adds its id and capabilities here, and adds a branch to
  * `getAgentProvider`.
  */
-import type { MissionEvent } from '$lib/mission-events.js';
-import type { DispatchCapabilities, DispatchProviderId } from '$lib/types.js';
+import type { MissionEvent } from '#lib/mission-events.js';
+import type { DispatchCapabilities, DispatchProviderId } from '#lib/types.js';
 import { getEnv, type ServerEnv } from '../env.js';
 import { createWebhookProvider } from './webhook-provider.js';
 

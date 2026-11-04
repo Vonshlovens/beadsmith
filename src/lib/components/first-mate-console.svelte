@@ -8,9 +8,9 @@
 	import { tick, untrack, type Snippet } from 'svelte';
 	import { page } from '$app/state';
 	import BotIcon from '@lucide/svelte/icons/bot';
-	import { api, errorMessage } from '$lib/client/api';
-	import { agentAvailability } from '$lib/client/agent';
-	import { app_state } from '$lib/client/stores.svelte';
+	import { api, errorMessage } from '#lib/client/api.js';
+	import { agentAvailability } from '#lib/client/agent.js';
+	import { app_state } from '#lib/client/stores.svelte.js';
 	import {
 		catalogFetchForView,
 		defaultCommands,
@@ -26,8 +26,8 @@
 		type FirstMateMission,
 		type FirstMateReadyIssue,
 		type FirstMateView
-	} from '$lib/client/first-mate';
-	import { currentProject, projectList, statusSnapshot } from '$lib/client/projects.svelte';
+	} from '#lib/client/first-mate.js';
+	import { currentProject, projectList, statusSnapshot } from '#lib/client/projects.svelte.js';
 
 	interface Props {
 		variant: 'palette' | 'page';

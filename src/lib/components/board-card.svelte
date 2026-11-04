@@ -6,19 +6,19 @@
 	 * as a drop without nesting buttons inside the link.
 	 */
 	import SendHorizontalIcon from '@lucide/svelte/icons/send-horizontal';
-	import IssueId from '$lib/components/issue-id.svelte';
-	import PriorityChip from '$lib/components/priority-chip.svelte';
-	import TypeChip from '$lib/components/type-chip.svelte';
-	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
-	import { rememberIssueSummaryHint } from '$lib/client/issue-summary-hint.js';
-	import { keyboardDispatchChoices } from '$lib/client/board-dispatch';
-	import { boardCardAccessibleName } from '$lib/client/board-keyboard';
-	import { relativeShort, statusKey, statusLabel } from '$lib/client/format';
-	import { agentAvailability } from '$lib/client/agent';
-	import { currentProject, statusSnapshot } from '$lib/client/projects.svelte';
-	import { app_state } from '$lib/client/stores.svelte';
-	import type { StatusKey } from '$lib/client/format';
-	import type { IssueSummary } from '$lib/types';
+	import IssueId from '#lib/components/issue-id.svelte';
+	import PriorityChip from '#lib/components/priority-chip.svelte';
+	import TypeChip from '#lib/components/type-chip.svelte';
+	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
+	import { rememberIssueSummaryHint } from '#lib/client/issue-summary-hint.js';
+	import { keyboardDispatchChoices } from '#lib/client/board-dispatch.js';
+	import { boardCardAccessibleName } from '#lib/client/board-keyboard.js';
+	import { relativeShort, statusKey, statusLabel } from '#lib/client/format.js';
+	import { agentAvailability } from '#lib/client/agent.js';
+	import { currentProject, statusSnapshot } from '#lib/client/projects.svelte.js';
+	import { app_state } from '#lib/client/stores.svelte.js';
+	import type { StatusKey } from '#lib/client/format.js';
+	import type { IssueSummary } from '#lib/types.js';
 
 	interface Props {
 		issue: IssueSummary;

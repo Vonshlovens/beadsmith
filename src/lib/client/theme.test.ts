@@ -8,7 +8,7 @@ import {
 	themeToggleLabel,
 	toThemePreference
 } from './theme.js';
-import type { ThemePreference } from '$lib/types.js';
+import type { ThemePreference } from '#lib/types.js';
 
 describe('nextTheme', () => {
 	it('cycles system → light → dark → system', () => {

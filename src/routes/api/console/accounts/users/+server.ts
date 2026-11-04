@@ -1,8 +1,8 @@
 import type { RequestHandler } from './$types';
-import { AccountAdminError, createAccount, create_account_schema } from '$lib/server/auth/admin.js';
-import { getAuthService } from '$lib/server/auth/service.js';
-import { errorFromException, errorResponse, jsonResponse } from '$lib/server/security.js';
-import { parseJsonBody } from '$lib/server/validation.js';
+import { AccountAdminError, createAccount, create_account_schema } from '#lib/server/auth/admin.js';
+import { getAuthService } from '#lib/server/auth/service.js';
+import { errorFromException, errorResponse, jsonResponse } from '#lib/server/security.js';
+import { parseJsonBody } from '#lib/server/validation.js';
 
 /** Create an account with an initial password (admin-only via `hooks.server.ts`). */
 export const POST: RequestHandler = async ({ request }) => {

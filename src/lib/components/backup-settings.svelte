@@ -6,9 +6,9 @@
 	 */
 	import { onDestroy, onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import { api, errorMessage } from '$lib/client/api';
-	import { relativeLong } from '$lib/client/format';
-	import type { BackupSettingsUpdate, BackupsResponse } from '$lib/types';
+	import { api, errorMessage } from '#lib/client/api.js';
+	import { relativeLong } from '#lib/client/format.js';
+	import type { BackupSettingsUpdate, BackupsResponse } from '#lib/types.js';
 
 	let state_ = $state<BackupsResponse | null>(null);
 	let load_error = $state<string | null>(null);

@@ -8,8 +8,8 @@
 	import BotIcon from '@lucide/svelte/icons/bot';
 	import DatabaseIcon from '@lucide/svelte/icons/database';
 	import ServerIcon from '@lucide/svelte/icons/server';
-	import { statusSnapshot } from '$lib/client/projects.svelte';
-	import { relativeLong } from '$lib/client/format';
+	import { statusSnapshot } from '#lib/client/projects.svelte.js';
+	import { relativeLong } from '#lib/client/format.js';
 
 	const status = $derived(statusSnapshot());
 

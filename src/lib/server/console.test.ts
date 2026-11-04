@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getConsoleSnapshot } from './console.js';
 import { readEnv } from './env.js';
-import type { Project, StatusSnapshot } from '$lib/types.js';
+import type { Project, StatusSnapshot } from '#lib/types.js';
 
 const HEALTH: StatusSnapshot = {
 	mode: 'remote',

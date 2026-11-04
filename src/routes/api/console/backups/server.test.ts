@@ -1,8 +1,8 @@
 import { createClient } from '@libsql/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createBackupStore } from '$lib/server/backup/store.js';
-import { createSecretBox, setSecretBox } from '$lib/server/secret-box.js';
-import { initStateSchema, setBackupStore } from '$lib/server/state/db.js';
+import { createBackupStore } from '#lib/server/backup/store.js';
+import { createSecretBox, setSecretBox } from '#lib/server/secret-box.js';
+import { initStateSchema, setBackupStore } from '#lib/server/state/db.js';
 import { GET, PUT } from './+server.js';
 import { POST as RUN } from './run/+server.js';
 

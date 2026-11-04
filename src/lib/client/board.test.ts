@@ -8,7 +8,7 @@ import {
 	visibleBoardColumns
 } from './board.js';
 import { STATUS_KEYS } from './format.js';
-import type { IssueSummary } from '$lib/types.js';
+import type { IssueSummary } from '#lib/types.js';
 
 /**
  * Build a row with only the fields a test cares about.

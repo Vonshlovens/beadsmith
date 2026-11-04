@@ -8,18 +8,18 @@
 	 * plain links to the detail page.
 	 */
 	import { untrack } from 'svelte';
-	import { browser } from '$app/environment';
+	import { browser } from '$app/env';
 	import { goto, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
-	import IssueDetailView from '$lib/components/issue-detail-view.svelte';
-	import PriorityChip from '$lib/components/priority-chip.svelte';
-	import { api, errorMessage } from '$lib/client/api';
-	import { agentAvailability } from '$lib/client/agent';
-	import { useHotkeys } from '$lib/client/hotkeys.svelte';
-	import { currentProject, statusSnapshot } from '$lib/client/projects.svelte';
-	import { app_state } from '$lib/client/stores.svelte';
-	import { relativeShort, splitIssueId, statusKey, statusLabel } from '$lib/client/format';
-	import { issueDetailHref } from '$lib/client/issue-view';
+	import IssueDetailView from '#lib/components/issue-detail-view.svelte';
+	import PriorityChip from '#lib/components/priority-chip.svelte';
+	import { api, errorMessage } from '#lib/client/api.js';
+	import { agentAvailability } from '#lib/client/agent.js';
+	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
+	import { currentProject, statusSnapshot } from '#lib/client/projects.svelte.js';
+	import { app_state } from '#lib/client/stores.svelte.js';
+	import { relativeShort, splitIssueId, statusKey, statusLabel } from '#lib/client/format.js';
+	import { issueDetailHref } from '#lib/client/issue-view.js';
 	import {
 		groupParade,
 		PARADE_COLLAPSED_KEY,
@@ -27,8 +27,8 @@
 		parseCollapsed,
 		stepSelection,
 		type ParadeSectionId
-	} from '$lib/client/parade';
-	import type { IssueDetail, IssueSummary, Mission } from '$lib/types.js';
+	} from '#lib/client/parade.js';
+	import type { IssueDetail, IssueSummary, Mission } from '#lib/types.js';
 
 	interface Props {
 		issues: IssueSummary[];
@@ -103,7 +103,7 @@
 	 */
 	function select(id: string) {
 		chosen = id;
-		const url = new URL(page.url);
+		const url = new URL(page.url.href);
 		url.searchParams.set('issue', id);
 		replaceState(url, page.state);
 		requestAnimationFrame(() => {

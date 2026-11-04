@@ -1,16 +1,16 @@
 import type { RequestHandler } from './$types';
-import { resolveProject } from '$lib/server/discovery.js';
-import { INVALID_CONSOLE_FILE_MAP_MESSAGE } from '$lib/server/dispatch/file-maps.js';
-import { getFileMapStore } from '$lib/server/state/db.js';
-import { errorFromException, errorResponse, jsonResponse } from '$lib/server/security.js';
+import { resolveProject } from '#lib/server/discovery.js';
+import { INVALID_CONSOLE_FILE_MAP_MESSAGE } from '#lib/server/dispatch/file-maps.js';
+import { getFileMapStore } from '#lib/server/state/db.js';
+import { errorFromException, errorResponse, jsonResponse } from '#lib/server/security.js';
 import {
 	file_map_schema,
 	parseFileMapBody,
 	parseJsonBody,
 	parseValue,
 	project_id_schema
-} from '$lib/server/validation.js';
-import type { ConsoleProjectRow } from '$lib/types.js';
+} from '#lib/server/validation.js';
+import type { ConsoleProjectRow } from '#lib/types.js';
 
 function sqliteRow(mapping: { url: string; ref: string }): ConsoleProjectRow['file'] {
 	return {

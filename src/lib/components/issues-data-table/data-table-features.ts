@@ -11,7 +11,7 @@ import {
 	rowSortingFeature,
 	tableFeatures
 } from '@tanstack/svelte-table';
-import type { ColumnId } from '$lib/client/columns.js';
+import type { ColumnId } from '#lib/client/columns.js';
 
 /** Per-table callbacks the header cells need for the Beads resize grip. */
 export type IssuesTableMeta = {

@@ -14,7 +14,7 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { APIError, createAuthMiddleware } from 'better-auth/api';
 import { admin } from 'better-auth/plugins/admin';
 import { drizzle } from 'drizzle-orm/libsql';
-import { PRODUCT_NAME } from '$lib/product.js';
+import { PRODUCT_NAME } from '#lib/product.js';
 import { getEnv } from '../env.js';
 import { SESSION_COOKIE, expectedOrigin } from '../security.js';
 import { authSchema } from '../state/schema.js';

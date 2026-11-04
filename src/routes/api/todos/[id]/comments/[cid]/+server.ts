@@ -1,7 +1,7 @@
 import type { RequestHandler } from './$types';
-import { getTodoStore } from '$lib/server/state/db.js';
-import { errorFromException, errorResponse, jsonResponse } from '$lib/server/security.js';
-import { parseValue, todo_comment_id_schema, todo_id_schema } from '$lib/server/validation.js';
+import { getTodoStore } from '#lib/server/state/db.js';
+import { errorFromException, errorResponse, jsonResponse } from '#lib/server/security.js';
+import { parseValue, todo_comment_id_schema, todo_id_schema } from '#lib/server/validation.js';
 
 /** `DELETE /api/todos/:id/comments/:cid` → `{ deleted: true }`; 404 when the comment is not on that todo. */
 export const DELETE: RequestHandler = async ({ params }) => {

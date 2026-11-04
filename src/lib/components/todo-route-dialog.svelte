@@ -5,11 +5,11 @@
 	 * adds an optional note. An agent files the issue and will not implement it.
 	 */
 	import { toast } from 'svelte-sonner';
-	import PriorityChip from '$lib/components/priority-chip.svelte';
-	import * as Dialog from '$lib/components/ui/dialog/index.js';
-	import { api, errorMessage } from '$lib/client/api';
-	import { projectList } from '$lib/client/projects.svelte';
-	import type { Todo } from '$lib/server/todos/store';
+	import PriorityChip from '#lib/components/priority-chip.svelte';
+	import * as Dialog from '#lib/components/ui/dialog/index.js';
+	import { api, errorMessage } from '#lib/client/api.js';
+	import { projectList } from '#lib/client/projects.svelte.js';
+	import type { Todo } from '#lib/server/todos/store.js';
 
 	let {
 		todo,

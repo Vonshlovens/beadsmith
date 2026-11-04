@@ -6,8 +6,8 @@
  * restrict to admins.
  */
 import type { RequestHandler } from './$types';
-import { AUTH_BASE_PATH, getAuthService } from '$lib/server/auth/service.js';
-import { errorFromException, errorResponse } from '$lib/server/security.js';
+import { AUTH_BASE_PATH, getAuthService } from '#lib/server/auth/service.js';
+import { errorFromException, errorResponse } from '#lib/server/security.js';
 
 const EXPOSED_AUTH_ENDPOINTS = new Set([
 	'GET /get-session',

@@ -1,6 +1,6 @@
 /** Open todos for the agenda; done items load on demand. */
-import { api, errorMessage } from '$lib/client/api';
-import type { Todo } from '$lib/server/todos/store';
+import { api, errorMessage } from '#lib/client/api.js';
+import type { Todo } from '#lib/server/todos/store.js';
 import type { PageLoad } from './$types';
 
 export const load: PageLoad = async ({ fetch }) => {

@@ -1,4 +1,4 @@
-import type { DispatchProviderId } from '$lib/types.js';
+import type { DispatchProviderId } from '#lib/types.js';
 import { normalizeCloudflareAccessIssuer } from './cloudflare-access.js';
 import {
 	loadTackleRepositoriesFromEnv,

@@ -7,7 +7,7 @@ import {
 	parseCollapsed,
 	stepSelection
 } from './parade.js';
-import type { IssueSummary } from '$lib/types';
+import type { IssueSummary } from '#lib/types.js';
 
 function issue(
 	id: string,

@@ -5,10 +5,10 @@ import {
 	removeAccount,
 	updateAccount,
 	update_account_schema
-} from '$lib/server/auth/admin.js';
-import { getAuthService } from '$lib/server/auth/service.js';
-import { errorFromException, errorResponse, jsonResponse } from '$lib/server/security.js';
-import { parseJsonBody, parseValue } from '$lib/server/validation.js';
+} from '#lib/server/auth/admin.js';
+import { getAuthService } from '#lib/server/auth/service.js';
+import { errorFromException, errorResponse, jsonResponse } from '#lib/server/security.js';
+import { parseJsonBody, parseValue } from '#lib/server/validation.js';
 
 /**
  * Map a refused change or an unexpected failure onto the error envelope.

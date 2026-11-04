@@ -9,8 +9,8 @@
 		isResizable,
 		MAX_COLUMN_WIDTH,
 		MIN_COLUMN_WIDTH
-	} from '$lib/client/columns.js';
-	import type { ColumnId } from '$lib/client/columns.js';
+	} from '#lib/client/columns.js';
+	import type { ColumnId } from '#lib/client/columns.js';
 	import type { IssuesTableMeta } from './data-table-features.js';
 
 	interface Props {

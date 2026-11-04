@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { setStateStore, type StateStore } from '$lib/server/state/db.js';
-import type { ApiErrorBody } from '$lib/types.js';
+import { setStateStore, type StateStore } from '#lib/server/state/db.js';
+import type { ApiErrorBody } from '#lib/types.js';
 import { POST } from './+server.js';
 
 let settings: Map<string, string>;

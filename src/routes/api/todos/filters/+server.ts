@@ -1,8 +1,8 @@
 import type { RequestHandler } from './$types';
-import { getStateStore } from '$lib/server/state/db.js';
-import { errorFromException, jsonResponse } from '$lib/server/security.js';
-import { parseJsonBody, todo_filters_schema } from '$lib/server/validation.js';
-import { parseSavedFilters } from '$lib/todos/query.js';
+import { getStateStore } from '#lib/server/state/db.js';
+import { errorFromException, jsonResponse } from '#lib/server/security.js';
+import { parseJsonBody, todo_filters_schema } from '#lib/server/validation.js';
+import { parseSavedFilters } from '#lib/todos/query.js';
 
 /** Settings key holding the saved searches (JSON name → query). */
 const TODO_FILTERS_KEY = 'todos.filters';
