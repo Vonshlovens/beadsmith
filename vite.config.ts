@@ -30,6 +30,11 @@ export default defineConfig({
 			}
 		})
 	],
+	// adapter-node marks every runtime dependency external to the server build,
+	// and an external is resolved with Node's conditions. tw-animate-css is CSS
+	// that app.css imports; it exports only a `style` condition, so as an
+	// external Tailwind cannot resolve it. Listed here, the adapter leaves it in.
+	ssr: { noExternal: ['tw-animate-css'] },
 	// Prettier stays the formatter (`pnpm run format`): it formats Svelte files
 	// and sorts Tailwind classes. `vp check` runs Oxlint only.
 	check: { fmt: false }

@@ -31,24 +31,27 @@ override: that also bumps every unrelated caret-range package.
 
 | Override  | Pin                                      | Chain                                                                                                        | Advisory                                                                                                                                                                                                                                                                                                                                                                 |
 | --------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `cookie`  | `^0.7.2`                                 | Transitive cookie parser                                                                                     | Existing pin; keep.                                                                                                                                                                                                                                                                                                                                                      |
 | `esbuild` | `0.28.1`                                 | `drizzle-kit@0.31.11` → deprecated `@esbuild-kit/esm-loader` → `@esbuild-kit/core-utils` → `esbuild@0.18.20` | GHSA-67mh-4wv8-2f99 (moderate). The advisory is the esbuild _dev server_ CORS bug (`<=0.24.2`). drizzle-kit still declares `@esbuild-kit`, so 0.18.20 would enter the lock. The override lifts every esbuild copy to the patched 0.28.1. Runtime does not run drizzle-kit (`drizzle.config.ts`). A later drizzle-kit that drops `@esbuild-kit` can remove this override. |
 | `vite`    | `npm:@voidzero-dev/vite-plus-core@1.4.0` | Every package that peers on `vite` (SvelteKit, Tailwind, `@sveltejs/vite-plugin-svelte`)                     | Not an advisory. Vite+ ships its own Vite build; the override (also the direct `vite` devDependency) makes every plugin use that one copy. Bump it together with `vite-plus`.                                                                                                                                                                                            |
 
 The `nanoid` override (3.3.18, GHSA-2v37-7h3g-55p8) was removed on 2026-10-27:
 `postcss@8.5.31` now requires `nanoid@^3.3.20` itself.
+The `cookie` override (^0.7.2) was removed on 2026-11-03 with the SvelteKit 3
+upgrade: SvelteKit, its only dependent, now requires `cookie@^2.0.1`, and the
+pin would have held it on a 0.7 release that lacks the API it calls.
 
 ## Known findings below the gate
 
-`pnpm audit` reports three **low** advisories:
+`pnpm audit` reports one **low** advisory:
 
-- Two against `@sveltejs/kit` 2.x (GHSA-pfhg-q3qv-9q6r, GHSA-27mw-82g8-phjj),
-  fixed only in SvelteKit 3. The second needs prerendered pages, which
-  Beadsmith does not use. They clear with the SvelteKit 3 upgrade (which also
-  needs `@sveltejs/adapter-node` 6).
-- `deepmerge@4.3.1` (GHSA-gcqx-w48m-w2h4, prototype poisoning), reached only
-  through build tools (`@sveltejs/vite-plugin-svelte`,
-  `@rollup/plugin-node-resolve`); it is not in the production install.
+- `deepmerge@4.3.1` (GHSA-gcqx-w48m-w2h4, prototype poisoning), with no patched
+  release. It is reached only through a build tool,
+  `@sveltejs/vite-plugin-svelte`, and is not in the production install
+  (`pnpm why deepmerge --prod` is empty).
+
+The SvelteKit 3 upgrade (2026-11-03) cleared the two low advisories against
+`@sveltejs/kit` 2.x (GHSA-pfhg-q3qv-9q6r, GHSA-27mw-82g8-phjj). Neither was
+reachable: Beadsmith has no `use:enhance`, form actions or prerendered pages.
 
 ## How to re-check
 
