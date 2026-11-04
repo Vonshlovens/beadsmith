@@ -5,7 +5,7 @@
  * `x-bdx-request: 1` CSRF hard-stop header, and error bodies are parsed into
  * `ApiError` so callers can branch on `code` instead of scraping messages.
  */
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import { goto } from '$app/navigation';
 import type {
 	AccountRole,

@@ -8,7 +8,7 @@
 	 * plain links to the detail page.
 	 */
 	import { untrack } from 'svelte';
-	import { browser } from '$app/environment';
+	import { browser } from '$app/env';
 	import { goto, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
 	import IssueDetailView from '$lib/components/issue-detail-view.svelte';

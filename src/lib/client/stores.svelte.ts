@@ -7,7 +7,7 @@
  * non-secret UI preferences: the rail width goes to localStorage, the theme to
  * the server settings table (so the shell can paint it before hydration).
  */
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import { toast } from 'svelte-sonner';
 import { api, errorMessage } from '$lib/client/api';
 import {

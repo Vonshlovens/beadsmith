@@ -7,7 +7,7 @@
 	 * card stays put until Beads changes.
 	 */
 	import { tick, untrack } from 'svelte';
-	import { browser } from '$app/environment';
+	import { browser } from '$app/env';
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import BoardCard from '$lib/components/board-card.svelte';

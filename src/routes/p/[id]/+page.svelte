@@ -6,7 +6,7 @@
 	 * selected row's left edge.
 	 */
 	import { untrack } from 'svelte';
-	import { browser } from '$app/environment';
+	import { browser } from '$app/env';
 	import { goto, invalidateAll, replaceState, beforeNavigate } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';

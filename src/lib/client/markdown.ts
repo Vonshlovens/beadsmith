@@ -5,7 +5,7 @@
  * reach `{@html}`. DOMPurify needs a real DOM, so server-rendered output falls
  * back to escaped plain text and the full rendering appears on hydration.
  */
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 

@@ -5,7 +5,7 @@
  * promise so the detail page can mount immediately. Direct URLs and SSR
  * await the fetch so the header is real data, not an empty shell.
  */
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import { error as kitError } from '@sveltejs/kit';
 import { api, ApiError, errorMessage } from '$lib/client/api';
 import { peekIssueSummaryHint } from '$lib/client/issue-summary-hint.js';

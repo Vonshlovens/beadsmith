@@ -8,7 +8,7 @@
  * Client navigations reuse the last successful list payload for a few
  * seconds so back-from-detail does not wait on SQL.
  */
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import { api, errorMessage } from '$lib/client/api';
 import { readListFilters, resolveIssueListPayload } from '$lib/client/issue-list-cache.js';
 import { parseIssueView } from '$lib/client/issue-view';
