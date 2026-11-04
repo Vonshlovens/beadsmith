@@ -4,7 +4,7 @@ import { discoverProjects } from './discovery.js';
 import { dispatchEnabled } from './dispatch/policy.js';
 import { PROVIDER_CAPABILITIES } from './dispatch/provider.js';
 import { getDispatchPolicyStore, stateDbHealthy, getStateStore } from './state/db.js';
-import type { DoltFailureKind, Project, StatusSnapshot } from '$lib/types.js';
+import type { DoltFailureKind, Project, StatusSnapshot } from '#lib/types.js';
 import { roleCan, type AccountRole } from './auth/roles.js';
 
 export const DOLT_PROBE_TTL_MS = 15_000;

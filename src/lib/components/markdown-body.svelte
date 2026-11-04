@@ -8,7 +8,7 @@
 	 * Long markdown bodies get the prose exception: system sans at
 	 * 13.5px/1.6. Everything else in the product stays mono.
 	 */
-	import { renderMarkdown, renderPlain } from '$lib/client/markdown';
+	import { renderMarkdown, renderPlain } from '#lib/client/markdown.js';
 
 	interface Props {
 		source: string | undefined;

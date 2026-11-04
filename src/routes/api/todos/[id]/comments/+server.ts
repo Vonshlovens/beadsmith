@@ -1,12 +1,12 @@
 import type { RequestHandler } from './$types';
-import { getTodoStore } from '$lib/server/state/db.js';
-import { errorFromException, errorResponse, jsonResponse } from '$lib/server/security.js';
+import { getTodoStore } from '#lib/server/state/db.js';
+import { errorFromException, errorResponse, jsonResponse } from '#lib/server/security.js';
 import {
 	create_todo_comment_schema,
 	parseJsonBody,
 	parseValue,
 	todo_id_schema
-} from '$lib/server/validation.js';
+} from '#lib/server/validation.js';
 
 /** `GET /api/todos/:id/comments` → `{ comments }`, oldest first. */
 export const GET: RequestHandler = async ({ params }) => {

@@ -6,8 +6,8 @@
  * is that a sort is not shareable and does not survive leaving the route,
  * which is the right way round for a control you click while reading.
  */
-import { statusKey, STATUS_KEYS } from '$lib/client/format';
-import type { IssueSummary } from '$lib/types';
+import { statusKey, STATUS_KEYS } from '#lib/client/format.js';
+import type { IssueSummary } from '#lib/types.js';
 
 /** Sortable columns, in the order the table renders them. */
 export const SORT_COLUMNS = [

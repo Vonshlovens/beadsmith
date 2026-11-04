@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Project } from '$lib/types.js';
-import type { TackleMapStore } from '$lib/server/dispatch/tackle-maps.js';
-import { ENV_LOCKED_TACKLE_MAP_MESSAGE } from '$lib/server/dispatch/tackle-maps.js';
-import { setTackleMapStore } from '$lib/server/state/db.js';
+import type { Project } from '#lib/types.js';
+import type { TackleMapStore } from '#lib/server/dispatch/tackle-maps.js';
+import { ENV_LOCKED_TACKLE_MAP_MESSAGE } from '#lib/server/dispatch/tackle-maps.js';
+import { setTackleMapStore } from '#lib/server/state/db.js';
 import { DELETE, PUT } from './+server.js';
 
 const mocks = vi.hoisted(() => ({
@@ -10,12 +10,12 @@ const mocks = vi.hoisted(() => ({
 	loadTackleRepositoriesFromEnv: vi.fn()
 }));
 
-vi.mock('$lib/server/discovery.js', () => ({
+vi.mock('#lib/server/discovery.js', () => ({
 	resolveProject: mocks.resolveProject
 }));
 
-vi.mock('$lib/server/dispatch/repositories.js', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('$lib/server/dispatch/repositories.js')>();
+vi.mock('#lib/server/dispatch/repositories.js', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('#lib/server/dispatch/repositories.js')>();
 	return {
 		...actual,
 		loadTackleRepositoriesFromEnv: mocks.loadTackleRepositoriesFromEnv

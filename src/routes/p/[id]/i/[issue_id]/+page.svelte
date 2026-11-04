@@ -6,19 +6,19 @@
 	 */
 	import { goto } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
-	import IssueAgentPanel from '$lib/components/issue-agent-panel.svelte';
-	import IssueDetailView from '$lib/components/issue-detail-view.svelte';
-	import { agentAvailability } from '$lib/client/agent';
-	import { useHotkeys } from '$lib/client/hotkeys.svelte';
+	import IssueAgentPanel from '#lib/components/issue-agent-panel.svelte';
+	import IssueDetailView from '#lib/components/issue-detail-view.svelte';
+	import { agentAvailability } from '#lib/client/agent.js';
+	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
 	import {
 		issueViewStorageKey,
 		parseStoredIssueView,
 		projectIssuesHref
-	} from '$lib/client/issue-view';
-	import { app_state } from '$lib/client/stores.svelte';
-	import { currentProject, statusSnapshot } from '$lib/client/projects.svelte';
-	import { takeIssueSummaryHint } from '$lib/client/issue-summary-hint.js';
-	import type { IssueDetail, IssueSummary } from '$lib/types.js';
+	} from '#lib/client/issue-view.js';
+	import { app_state } from '#lib/client/stores.svelte.js';
+	import { currentProject, statusSnapshot } from '#lib/client/projects.svelte.js';
+	import { takeIssueSummaryHint } from '#lib/client/issue-summary-hint.js';
+	import type { IssueDetail, IssueSummary } from '#lib/types.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();

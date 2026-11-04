@@ -4,14 +4,14 @@
 	 * The card is not moved; Beads status changes only after the worker uses bd.
 	 */
 	import { toast } from 'svelte-sonner';
-	import * as Dialog from '$lib/components/ui/dialog/index.js';
-	import { api, errorMessage } from '$lib/client/api';
+	import * as Dialog from '#lib/components/ui/dialog/index.js';
+	import { api, errorMessage } from '#lib/client/api.js';
 	import {
 		boardDispatchStatusCopy,
 		type BoardDispatchAction,
 		type BoardDispatchPending
-	} from '$lib/client/board-dispatch';
-	import type { DispatchRequest } from '$lib/types';
+	} from '#lib/client/board-dispatch.js';
+	import type { DispatchRequest } from '#lib/types.js';
 
 	let {
 		project_id,

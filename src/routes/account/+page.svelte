@@ -4,8 +4,8 @@
 	 * change. Changing the password signs out every other session.
 	 */
 	import { toast } from 'svelte-sonner';
-	import { auth, authErrorMessage } from '$lib/client/auth';
-	import { PRODUCT_NAME } from '$lib/product';
+	import { auth, authErrorMessage } from '#lib/client/auth.js';
+	import { PRODUCT_NAME } from '#lib/product.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();

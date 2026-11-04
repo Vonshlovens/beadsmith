@@ -3,7 +3,7 @@
 	 * The Beadsmith mark: a hammer raised over three beads on a rod, resting on
 	 * an anvil. The beads on their rod are the earlier mark, kept whole. Inline
 	 * so it takes the theme's ink, paper and red from the tokens; the PNGs in
-	 * $lib/assets are the same drawing for favicons.
+	 * src/lib/assets are the same drawing for favicons.
 	 */
 	interface Props {
 		/** Rendered width and height in CSS pixels. */

@@ -7,10 +7,10 @@
 	 */
 	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import { api, errorMessage } from '$lib/client/api';
-	import { currentViewer } from '$lib/client/projects.svelte';
-	import { relativeLong } from '$lib/client/format';
-	import type { AccountRole, AccountsResponse } from '$lib/types';
+	import { api, errorMessage } from '#lib/client/api.js';
+	import { currentViewer } from '#lib/client/projects.svelte.js';
+	import { relativeLong } from '#lib/client/format.js';
+	import type { AccountRole, AccountsResponse } from '#lib/types.js';
 
 	let state_ = $state<AccountsResponse | null>(null);
 	let load_error = $state<string | null>(null);

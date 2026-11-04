@@ -1,13 +1,13 @@
 <script lang="ts">
 	/** Fleet view of agent missions across projects; each row opens its thread. */
 	import { refreshAll } from '$app/navigation';
-	import EmptyState from '$lib/components/empty-state.svelte';
-	import MissionsList from '$lib/components/missions-list.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
-	import { isBusyStatus } from '$lib/client/agent';
-	import { useHotkeys } from '$lib/client/hotkeys.svelte';
-	import { stepFocus } from '$lib/client/list-focus';
-	import { PRODUCT_NAME } from '$lib/product';
+	import EmptyState from '#lib/components/empty-state.svelte';
+	import MissionsList from '#lib/components/missions-list.svelte';
+	import PageHeader from '#lib/components/page-header.svelte';
+	import { isBusyStatus } from '#lib/client/agent.js';
+	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
+	import { stepFocus } from '#lib/client/list-focus.js';
+	import { PRODUCT_NAME } from '#lib/product.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();

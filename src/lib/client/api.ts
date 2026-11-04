@@ -31,9 +31,9 @@ import type {
 	ReadyListResponse,
 	StatusSnapshot,
 	ThemePreference
-} from '$lib/types';
+} from '#lib/types.js';
 
-import type { Todo, TodoComment, TodoStatus } from '$lib/server/todos/store';
+import type { Todo, TodoComment, TodoStatus } from '#lib/server/todos/store.js';
 
 const BASE_URL = '/api';
 

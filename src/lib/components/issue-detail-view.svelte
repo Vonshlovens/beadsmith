@@ -10,28 +10,28 @@
 	 */
 	import type { Snippet } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import CommentComposer from '$lib/components/comment-composer.svelte';
-	import IssueId from '$lib/components/issue-id.svelte';
-	import MarkdownBody from '$lib/components/markdown-body.svelte';
-	import MissionsList from '$lib/components/missions-list.svelte';
-	import PriorityChip from '$lib/components/priority-chip.svelte';
+	import CommentComposer from '#lib/components/comment-composer.svelte';
+	import IssueId from '#lib/components/issue-id.svelte';
+	import MarkdownBody from '#lib/components/markdown-body.svelte';
+	import MissionsList from '#lib/components/missions-list.svelte';
+	import PriorityChip from '#lib/components/priority-chip.svelte';
 	import BotIcon from '@lucide/svelte/icons/bot';
 	import HammerIcon from '@lucide/svelte/icons/hammer';
-	import StatusBadge from '$lib/components/status-badge.svelte';
-	import TypeChip from '$lib/components/type-chip.svelte';
+	import StatusBadge from '#lib/components/status-badge.svelte';
+	import TypeChip from '#lib/components/type-chip.svelte';
 	import {
 		absoluteStamp,
 		depLabel,
 		relativeLong,
 		statusKey,
 		statusLabel
-	} from '$lib/client/format';
-	import { extractToc } from '$lib/client/markdown';
-	import { issueDetailHref } from '$lib/client/issue-view';
-	import { agentAvailability, type AgentIntent } from '$lib/client/agent';
-	import { currentProject, statusSnapshot } from '$lib/client/projects.svelte';
-	import { app_state } from '$lib/client/stores.svelte';
-	import type { IssueDetail, IssueRef, IssueSummary, Mission } from '$lib/types.js';
+	} from '#lib/client/format.js';
+	import { extractToc } from '#lib/client/markdown.js';
+	import { issueDetailHref } from '#lib/client/issue-view.js';
+	import { agentAvailability, type AgentIntent } from '#lib/client/agent.js';
+	import { currentProject, statusSnapshot } from '#lib/client/projects.svelte.js';
+	import { app_state } from '#lib/client/stores.svelte.js';
+	import type { IssueDetail, IssueRef, IssueSummary, Mission } from '#lib/types.js';
 
 	interface MissionState {
 		missions: Mission[];

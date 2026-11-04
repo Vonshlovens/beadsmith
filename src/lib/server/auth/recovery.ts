@@ -5,7 +5,7 @@
  * is lost, since the console cannot reset or demote the last admin.
  *
  * Node runs this without SvelteKit or a bundler (type stripping), so it
- * imports no `$lib` alias and not `service.ts`, and it names its relative
+ * imports no `#lib` alias and not `service.ts`, and it names its relative
  * imports `.ts`. The Dockerfile copies this file and what it imports, one by
  * one. Passwords are hashed by
  * Better Auth's own `hashPassword`, so the sign-in page accepts them. The

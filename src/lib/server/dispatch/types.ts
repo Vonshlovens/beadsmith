@@ -3,8 +3,8 @@ import type {
 	DispatchOperation,
 	DispatchProviderId,
 	DispatchStatus
-} from '$lib/types.js';
-import type { StatusKey } from '$lib/client/format.js';
+} from '#lib/types.js';
+import type { StatusKey } from '#lib/client/format.js';
 
 /** Validated File payload stored on the dispatch record. */
 export interface FilePayload {

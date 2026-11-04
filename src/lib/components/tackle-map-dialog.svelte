@@ -3,9 +3,9 @@
 	 * Edit or clear a console-persisted Tackle map. Env/file maps stay locked.
 	 */
 	import { toast } from 'svelte-sonner';
-	import * as Dialog from '$lib/components/ui/dialog/index.js';
-	import { api, errorMessage } from '$lib/client/api';
-	import type { ConsoleProjectRow } from '$lib/types';
+	import * as Dialog from '#lib/components/ui/dialog/index.js';
+	import { api, errorMessage } from '#lib/client/api.js';
+	import type { ConsoleProjectRow } from '#lib/types.js';
 
 	let {
 		project,

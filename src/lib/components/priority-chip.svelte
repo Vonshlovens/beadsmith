@@ -1,6 +1,6 @@
 <script lang="ts">
 	/** Priority chip with a weighted left edge. P0 is the only one that borrows ember. */
-	import { priorityClass, priorityName } from '$lib/client/format';
+	import { priorityClass, priorityName } from '#lib/client/format.js';
 
 	interface Props {
 		priority: number | undefined;

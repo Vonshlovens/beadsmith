@@ -1,20 +1,20 @@
 import type { RequestHandler } from './$types';
-import { resolveProject } from '$lib/server/discovery.js';
-import { loadTackleRepositoriesFromEnv } from '$lib/server/dispatch/repositories.js';
+import { resolveProject } from '#lib/server/discovery.js';
+import { loadTackleRepositoriesFromEnv } from '#lib/server/dispatch/repositories.js';
 import {
 	ENV_LOCKED_TACKLE_MAP_MESSAGE,
 	INVALID_CONSOLE_TACKLE_MAP_MESSAGE
-} from '$lib/server/dispatch/tackle-maps.js';
-import { getTackleMapStore } from '$lib/server/state/db.js';
-import { errorFromException, errorResponse, jsonResponse } from '$lib/server/security.js';
+} from '#lib/server/dispatch/tackle-maps.js';
+import { getTackleMapStore } from '#lib/server/state/db.js';
+import { errorFromException, errorResponse, jsonResponse } from '#lib/server/security.js';
 import {
 	parseJsonBody,
 	parseTackleMapBody,
 	parseValue,
 	project_id_schema,
 	tackle_map_schema
-} from '$lib/server/validation.js';
-import type { ConsoleProjectRow } from '$lib/types.js';
+} from '#lib/server/validation.js';
+import type { ConsoleProjectRow } from '#lib/types.js';
 
 function envLocked(project_id: string): boolean {
 	const env_maps = loadTackleRepositoriesFromEnv();

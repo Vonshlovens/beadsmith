@@ -1,7 +1,7 @@
 import type { RequestHandler } from './$types';
-import { backupDeps } from '$lib/server/backup/runtime.js';
-import { isBackupRunning, runBackup } from '$lib/server/backup/service.js';
-import { errorFromException, errorResponse, jsonResponse } from '$lib/server/security.js';
+import { backupDeps } from '#lib/server/backup/runtime.js';
+import { isBackupRunning, runBackup } from '#lib/server/backup/service.js';
+import { errorFromException, errorResponse, jsonResponse } from '#lib/server/security.js';
 
 /** Start a manual run in the background; poll GET /api/console/backups. */
 export const POST: RequestHandler = async () => {

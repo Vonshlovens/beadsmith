@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { UNSORTED } from '$lib/client/sort.js';
+import { UNSORTED } from '#lib/client/sort.js';
 import { fromSortingState, toSortingState } from './sorting.js';
 
 describe('toSortingState', () => {

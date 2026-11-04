@@ -2,7 +2,7 @@
  * Presentation helpers shared by every screen: relative stamps, id splitting,
  * and the status/priority vocabulary the design system encodes as beads.
  */
-import type { DispatchStatus, Project } from '$lib/types';
+import type { DispatchStatus, Project } from '#lib/types.js';
 
 /** Status values that have a bead and a badge in the design system. */
 export const STATUS_KEYS = [

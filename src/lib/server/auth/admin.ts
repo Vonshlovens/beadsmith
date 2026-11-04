@@ -7,7 +7,7 @@
  */
 import { isAPIError } from 'better-auth/api';
 import { z } from 'zod';
-import type { AccountView, AccountsResponse, ApiErrorCode } from '$lib/types.js';
+import type { AccountView, AccountsResponse, ApiErrorCode } from '#lib/types.js';
 import { ACCOUNT_ROLES, accountRole, type AccountRole } from './roles.js';
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, type AuthService } from './service.js';
 

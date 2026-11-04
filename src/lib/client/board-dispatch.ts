@@ -5,7 +5,7 @@
  * confirm copy. The card stays in its source column until Beads changes.
  */
 import { STATUS_KEYS, statusLabel, type StatusKey } from './format.js';
-import type { IssueSummary } from '$lib/types';
+import type { IssueSummary } from '#lib/types.js';
 
 /** Destinations that can enqueue an agent from the board. */
 export const BOARD_DISPATCH_DESTINATIONS = [

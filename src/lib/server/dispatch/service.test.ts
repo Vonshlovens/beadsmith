@@ -1,6 +1,6 @@
 import { createClient } from '@libsql/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { IssueDetail, Project } from '$lib/types.js';
+import type { IssueDetail, Project } from '#lib/types.js';
 import { readEnv } from '../env.js';
 import { initStateSchema } from '../state/db.js';
 import {

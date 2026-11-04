@@ -1,6 +1,6 @@
 import { createClient } from '@libsql/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Project } from '$lib/types.js';
+import type { Project } from '#lib/types.js';
 import { createDispatchStore } from '../dispatch/store.js';
 import type { AgentProvider } from '../dispatch/provider.js';
 import { DISARMED_DISPATCH_MESSAGE, FILE_NOT_ALLOWED_MESSAGE } from '../dispatch/policy.js';

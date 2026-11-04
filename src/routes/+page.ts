@@ -1,8 +1,8 @@
 /**
  * Home needs the cross-project activity feed; projects arrive from the layout.
  */
-import { api, errorMessage } from '$lib/client/api';
-import type { ActivityEvent } from '$lib/types';
+import { api, errorMessage } from '#lib/client/api.js';
+import type { ActivityEvent } from '#lib/types.js';
 import type { PageLoad } from './$types';
 
 export const load: PageLoad = async ({ fetch }) => {

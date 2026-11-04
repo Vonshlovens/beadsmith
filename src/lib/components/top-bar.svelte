@@ -13,13 +13,13 @@
 	import PanelLeftIcon from '@lucide/svelte/icons/panel-left';
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import SparklesIcon from '@lucide/svelte/icons/sparkles';
-	import ProjectSwitcher from '$lib/components/project-switcher.svelte';
-	import StatusCluster from '$lib/components/status-cluster.svelte';
-	import BrandMark from '$lib/components/brand-mark.svelte';
-	import { currentProject, projectList } from '$lib/client/projects.svelte';
-	import { app_state } from '$lib/client/stores.svelte';
-	import { FIRST_MATE_PATH } from '$lib/client/first-mate';
-	import { PRODUCT_NAME } from '$lib/product';
+	import ProjectSwitcher from '#lib/components/project-switcher.svelte';
+	import StatusCluster from '#lib/components/status-cluster.svelte';
+	import BrandMark from '#lib/components/brand-mark.svelte';
+	import { currentProject, projectList } from '#lib/client/projects.svelte.js';
+	import { app_state } from '#lib/client/stores.svelte.js';
+	import { FIRST_MATE_PATH } from '#lib/client/first-mate.js';
+	import { PRODUCT_NAME } from '#lib/product.js';
 
 	let query = $state(page.url.searchParams.get('q') ?? '');
 

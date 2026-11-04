@@ -13,7 +13,7 @@ import {
 	sortChats,
 	type Chat,
 	type ChatRole
-} from '$lib/client/mate-chat';
+} from '#lib/client/mate-chat.js';
 
 const STORAGE_KEY = 'bdui:first-mate-chats';
 const REPLY_DELAY_MS = 900;

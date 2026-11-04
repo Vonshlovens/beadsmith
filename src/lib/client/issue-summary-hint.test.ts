@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { IssueSummary } from '$lib/types.js';
+import type { IssueSummary } from '#lib/types.js';
 import {
 	clearIssueSummaryHints,
 	peekIssueSummaryHint,

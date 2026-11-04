@@ -9,16 +9,16 @@
  */
 import { browser } from '$app/env';
 import { toast } from 'svelte-sonner';
-import { api, errorMessage } from '$lib/client/api';
+import { api, errorMessage } from '#lib/client/api.js';
 import {
 	DARK_MEDIA_QUERY,
 	applyTheme,
 	nextTheme,
 	resolveTheme,
 	toThemePreference
-} from '$lib/client/theme';
-import type { AgentTarget } from '$lib/client/agent';
-import type { ResolvedTheme, StatusSnapshot, ThemePreference } from '$lib/types';
+} from '#lib/client/theme.js';
+import type { AgentTarget } from '#lib/client/agent.js';
+import type { ResolvedTheme, StatusSnapshot, ThemePreference } from '#lib/types.js';
 
 const RAIL_KEY = 'bdui:rail-collapsed';
 const STATUS_INTERVAL_MS = 30_000;

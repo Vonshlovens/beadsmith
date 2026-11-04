@@ -7,7 +7,7 @@
 	 */
 	import type { Snippet } from 'svelte';
 	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
-	import { useHotkeys } from '$lib/client/hotkeys.svelte';
+	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
 
 	interface Props {
 		title: string;

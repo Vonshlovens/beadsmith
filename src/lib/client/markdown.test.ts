@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractToc, slugify, taskBox } from '$lib/client/markdown';
+import { extractToc, slugify, taskBox } from '#lib/client/markdown.js';
 
 describe('extractToc', () => {
 	it('returns nothing for an empty body', () => {

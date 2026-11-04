@@ -3,15 +3,15 @@ import type { RequestEvent } from '@sveltejs/kit';
 import type { ResolveOptions } from '@sveltejs/kit/hooks';
 import { handle } from './hooks.server.js';
 import { randomBytes } from 'node:crypto';
-import { CSRF_HEADER, getRateLimiter, SESSION_COOKIE } from '$lib/server/security.js';
-import { setAuthServiceForTest, type AuthService } from '$lib/server/auth/service.js';
-import { resetEnvCache } from '$lib/server/env.js';
+import { CSRF_HEADER, getRateLimiter, SESSION_COOKIE } from '#lib/server/security.js';
+import { setAuthServiceForTest, type AuthService } from '#lib/server/auth/service.js';
+import { resetEnvCache } from '#lib/server/env.js';
 import {
 	CloudflareAccessVerificationError,
 	resetCloudflareAccessVerifier,
 	setCloudflareAccessVerifierForTest
-} from '$lib/server/cloudflare-access.js';
-import { setDispatchPolicyStore, setStateStore, type StateStore } from '$lib/server/state/db.js';
+} from '#lib/server/cloudflare-access.js';
+import { setDispatchPolicyStore, setStateStore, type StateStore } from '#lib/server/state/db.js';
 
 interface EventOptions {
 	path?: string;

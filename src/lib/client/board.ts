@@ -10,7 +10,7 @@
  */
 import { statusKey, statusLabel, STATUS_KEYS } from './format.js';
 import type { StatusKey } from './format.js';
-import type { IssueSummary } from '$lib/types';
+import type { IssueSummary } from '#lib/types.js';
 
 export interface BoardColumnOptions {
 	/** Active status filter from the URL; empty means "any". */

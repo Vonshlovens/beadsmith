@@ -14,11 +14,11 @@
 	import MessageSquareIcon from '@lucide/svelte/icons/message-square';
 	import PencilLineIcon from '@lucide/svelte/icons/pencil-line';
 	import XIcon from '@lucide/svelte/icons/x';
-	import * as Dialog from '$lib/components/ui/dialog/index.js';
-	import AgentThread from '$lib/components/agent-thread.svelte';
-	import IssueId from '$lib/components/issue-id.svelte';
-	import MissionStatus from '$lib/components/mission-status.svelte';
-	import { api, errorMessage } from '$lib/client/api';
+	import * as Dialog from '#lib/components/ui/dialog/index.js';
+	import AgentThread from '#lib/components/agent-thread.svelte';
+	import IssueId from '#lib/components/issue-id.svelte';
+	import MissionStatus from '#lib/components/mission-status.svelte';
+	import { api, errorMessage } from '#lib/client/api.js';
 	import {
 		AGENT_INTENTS,
 		agentAvailability,
@@ -26,12 +26,12 @@
 		intentInfo,
 		missionVerb,
 		type AgentIntent
-	} from '$lib/client/agent';
-	import { relativeShort } from '$lib/client/format';
-	import { useHotkeys } from '$lib/client/hotkeys.svelte';
-	import { projectList, statusSnapshot } from '$lib/client/projects.svelte';
-	import { app_state } from '$lib/client/stores.svelte';
-	import type { Mission } from '$lib/types';
+	} from '#lib/client/agent.js';
+	import { relativeShort } from '#lib/client/format.js';
+	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
+	import { projectList, statusSnapshot } from '#lib/client/projects.svelte.js';
+	import { app_state } from '#lib/client/stores.svelte.js';
+	import type { Mission } from '#lib/types.js';
 
 	const ICONS = {
 		discuss: MessageSquareIcon,

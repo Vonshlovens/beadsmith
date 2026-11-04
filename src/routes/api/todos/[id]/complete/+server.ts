@@ -1,7 +1,7 @@
 import type { RequestHandler } from './$types';
-import { getTodoStore } from '$lib/server/state/db.js';
-import { errorFromException, errorResponse, jsonResponse } from '$lib/server/security.js';
-import { parseValue, todo_id_schema } from '$lib/server/validation.js';
+import { getTodoStore } from '#lib/server/state/db.js';
+import { errorFromException, errorResponse, jsonResponse } from '#lib/server/security.js';
+import { parseValue, todo_id_schema } from '#lib/server/validation.js';
 
 /** `POST /api/todos/:id/complete` sets status `done` → `{ todo }`. Same as PATCH `status`. */
 export const POST: RequestHandler = async ({ params }) => {

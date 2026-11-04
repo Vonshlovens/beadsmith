@@ -9,7 +9,7 @@
  * Within the list's own keys `d d`, `y y`, `y b`, `f p`, `f c`, `f f`, `f s`
  * are the same kind of two-key chord, armed for 1.2 s (the app-wide window).
  */
-import type { HotkeyBinding } from '$lib/client/hotkeys';
+import type { HotkeyBinding } from '#lib/client/hotkeys.js';
 
 export type ListMode = 'normal' | 'visual' | 'search' | 'insert' | 'command' | 'pick';
 

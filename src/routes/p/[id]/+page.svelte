@@ -9,7 +9,7 @@
 	import { browser } from '$app/env';
 	import { goto, refreshAll, replaceState, beforeNavigate } from '$app/navigation';
 	import { navigating, page } from '$app/state';
-	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
+	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import ArchiveIcon from '@lucide/svelte/icons/archive';
 	import CircleDotIcon from '@lucide/svelte/icons/circle-dot';
 	import Columns3Icon from '@lucide/svelte/icons/columns-3';
@@ -21,13 +21,13 @@
 	import ShapesIcon from '@lucide/svelte/icons/shapes';
 	import SignalHighIcon from '@lucide/svelte/icons/signal-high';
 	import XIcon from '@lucide/svelte/icons/x';
-	import EmptyState from '$lib/components/empty-state.svelte';
-	import FileIssueDialog from '$lib/components/file-issue-dialog.svelte';
-	import IssuesBoard from '$lib/components/issues-board.svelte';
-	import IssuesDataTable from '$lib/components/issues-data-table/issues-data-table.svelte';
-	import IssuesParade from '$lib/components/issues-parade.svelte';
-	import PriorityChip from '$lib/components/priority-chip.svelte';
-	import SkeletonRows from '$lib/components/skeleton-rows.svelte';
+	import EmptyState from '#lib/components/empty-state.svelte';
+	import FileIssueDialog from '#lib/components/file-issue-dialog.svelte';
+	import IssuesBoard from '#lib/components/issues-board.svelte';
+	import IssuesDataTable from '#lib/components/issues-data-table/issues-data-table.svelte';
+	import IssuesParade from '#lib/components/issues-parade.svelte';
+	import PriorityChip from '#lib/components/priority-chip.svelte';
+	import SkeletonRows from '#lib/components/skeleton-rows.svelte';
 	import {
 		clampWidth,
 		columnsForWidth,
@@ -44,10 +44,10 @@
 		stickyLeft,
 		tableMinWidth,
 		toggleVisible
-	} from '$lib/client/columns.js';
-	import type { ColumnId } from '$lib/client/columns.js';
-	import { boardColumnCreateEnabled } from '$lib/client/board';
-	import { statusKey, type StatusKey } from '$lib/client/format';
+	} from '#lib/client/columns.js';
+	import type { ColumnId } from '#lib/client/columns.js';
+	import { boardColumnCreateEnabled } from '#lib/client/board.js';
+	import { statusKey, type StatusKey } from '#lib/client/format.js';
 	import {
 		getIssueList,
 		issueListCacheKey,
@@ -55,9 +55,9 @@
 		readListFilters,
 		rememberIssueList,
 		subscribeIssueListCache
-	} from '$lib/client/issue-list-cache.js';
-	import { describeIssueListVacancy } from '$lib/client/issue-list-state';
-	import { rememberHintIfListed } from '$lib/client/issue-summary-hint.js';
+	} from '#lib/client/issue-list-cache.js';
+	import { describeIssueListVacancy } from '#lib/client/issue-list-state.js';
+	import { rememberHintIfListed } from '#lib/client/issue-summary-hint.js';
 	import {
 		DEFAULT_ISSUE_VIEW,
 		hasExplicitIssueView,
@@ -68,12 +68,12 @@
 		projectIssuesHref,
 		resolveIssueView,
 		type IssueView
-	} from '$lib/client/issue-view';
-	import { useHotkeys } from '$lib/client/hotkeys.svelte';
-	import { currentProject, statusSnapshot } from '$lib/client/projects.svelte';
-	import { UNSORTED } from '$lib/client/sort';
-	import type { SortColumn, SortState } from '$lib/client/sort';
-	import { PRODUCT_NAME } from '$lib/product';
+	} from '#lib/client/issue-view.js';
+	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
+	import { currentProject, statusSnapshot } from '#lib/client/projects.svelte.js';
+	import { UNSORTED } from '#lib/client/sort.js';
+	import type { SortColumn, SortState } from '#lib/client/sort.js';
+	import { PRODUCT_NAME } from '#lib/product.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();

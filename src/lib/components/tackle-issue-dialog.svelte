@@ -3,9 +3,9 @@
 	 * Tackle control: enqueue a /tackle agent for one issue.
 	 */
 	import { toast } from 'svelte-sonner';
-	import * as Dialog from '$lib/components/ui/dialog/index.js';
-	import { api, errorMessage } from '$lib/client/api';
-	import type { DispatchRequest } from '$lib/types';
+	import * as Dialog from '#lib/components/ui/dialog/index.js';
+	import { api, errorMessage } from '#lib/client/api.js';
+	import type { DispatchRequest } from '#lib/types.js';
 
 	let {
 		project_id,

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { IssueSummary } from '$lib/types.js';
+import type { IssueSummary } from '#lib/types.js';
 import {
 	ISSUE_LIST_CACHE_TTL_MS,
 	clearIssueListCache,

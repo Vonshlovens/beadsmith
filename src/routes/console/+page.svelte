@@ -1,14 +1,14 @@
 <script lang="ts">
 	/** Instance-admin console: catalog coverage and redacted health. */
 	import { refreshAll } from '$app/navigation';
-	import AccountSettings from '$lib/components/account-settings.svelte';
-	import BackupSettings from '$lib/components/backup-settings.svelte';
-	import EmptyState from '$lib/components/empty-state.svelte';
-	import FileCheckoutDialog from '$lib/components/file-checkout-dialog.svelte';
-	import TackleMapDialog from '$lib/components/tackle-map-dialog.svelte';
-	import { api, errorMessage } from '$lib/client/api';
-	import { relativeLong } from '$lib/client/format';
-	import { PRODUCT_NAME } from '$lib/product';
+	import AccountSettings from '#lib/components/account-settings.svelte';
+	import BackupSettings from '#lib/components/backup-settings.svelte';
+	import EmptyState from '#lib/components/empty-state.svelte';
+	import FileCheckoutDialog from '#lib/components/file-checkout-dialog.svelte';
+	import TackleMapDialog from '#lib/components/tackle-map-dialog.svelte';
+	import { api, errorMessage } from '#lib/client/api.js';
+	import { relativeLong } from '#lib/client/format.js';
+	import { PRODUCT_NAME } from '#lib/product.js';
 	import { toast } from 'svelte-sonner';
 	import type {
 		ConsoleAccessPolicyClass,
@@ -16,7 +16,7 @@
 		ConsoleSnapshot,
 		DispatchProjectAllow,
 		DispatchProviderId
-	} from '$lib/types';
+	} from '#lib/types.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();

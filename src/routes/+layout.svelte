@@ -8,14 +8,14 @@
 	import '../app.css';
 	import { untrack } from 'svelte';
 	import { page } from '$app/state';
-	import brandMarkDark from '$lib/assets/beadsmith-mark.png';
-	import brandMarkLight from '$lib/assets/beadsmith-mark-light.png';
-	import touchIcon from '$lib/assets/beadsmith-touch-icon.png';
-	import AppSidebar from '$lib/components/app-sidebar.svelte';
-	import FirstMate from '$lib/components/first-mate.svelte';
-	import TopBar from '$lib/components/top-bar.svelte';
-	import { Toaster } from '$lib/components/ui/sonner/index.js';
-	import { app_state, startStatusPolling } from '$lib/client/stores.svelte';
+	import brandMarkDark from '#lib/assets/beadsmith-mark.png';
+	import brandMarkLight from '#lib/assets/beadsmith-mark-light.png';
+	import touchIcon from '#lib/assets/beadsmith-touch-icon.png';
+	import AppSidebar from '#lib/components/app-sidebar.svelte';
+	import FirstMate from '#lib/components/first-mate.svelte';
+	import TopBar from '#lib/components/top-bar.svelte';
+	import { Toaster } from '#lib/components/ui/sonner/index.js';
+	import { app_state, startStatusPolling } from '#lib/client/stores.svelte.js';
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();

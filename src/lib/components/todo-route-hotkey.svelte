@@ -5,7 +5,7 @@
 	 * header's `r` (refresh). With no routable card focused it is switched off
 	 * and `r` refreshes as everywhere else.
 	 */
-	import { useHotkeys } from '$lib/client/hotkeys.svelte';
+	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
 
 	let { enabled, onroute }: { enabled: boolean; onroute: () => void } = $props();
 

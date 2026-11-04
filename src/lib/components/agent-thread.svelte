@@ -11,11 +11,11 @@
 	import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
 	import GitPullRequestIcon from '@lucide/svelte/icons/git-pull-request';
 	import SquareIcon from '@lucide/svelte/icons/square';
-	import ChatComposer from '$lib/components/chat-composer.svelte';
-	import MarkdownBody from '$lib/components/markdown-body.svelte';
-	import MissionLiveStream from '$lib/components/mission-live-stream.svelte';
-	import MissionStatus from '$lib/components/mission-status.svelte';
-	import { api, errorMessage } from '$lib/client/api';
+	import ChatComposer from '#lib/components/chat-composer.svelte';
+	import MarkdownBody from '#lib/components/markdown-body.svelte';
+	import MissionLiveStream from '#lib/components/mission-live-stream.svelte';
+	import MissionStatus from '#lib/components/mission-status.svelte';
+	import { api, errorMessage } from '#lib/client/api.js';
 	import {
 		composerState,
 		formatElapsed,
@@ -24,10 +24,10 @@
 		isSafeRunUrl,
 		missionVerb,
 		THREAD_POLL_MS
-	} from '$lib/client/agent';
-	import { absoluteStamp, relativeShort } from '$lib/client/format';
-	import { statusSnapshot } from '$lib/client/projects.svelte';
-	import type { DispatchRequest, DispatchTurn } from '$lib/types';
+	} from '#lib/client/agent.js';
+	import { absoluteStamp, relativeShort } from '#lib/client/format.js';
+	import { statusSnapshot } from '#lib/client/projects.svelte.js';
+	import type { DispatchRequest, DispatchTurn } from '#lib/types.js';
 
 	interface Props {
 		project_id: string;

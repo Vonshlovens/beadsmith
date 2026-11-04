@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Project, ReadyListResponse } from '$lib/types.js';
+import type { Project, ReadyListResponse } from '#lib/types.js';
 import { GET } from './+server.js';
 
 const mocks = vi.hoisted(() => ({
@@ -7,11 +7,11 @@ const mocks = vi.hoisted(() => ({
 	getMergedReadyIssues: vi.fn<(projects: Project[], limit: number) => Promise<ReadyListResponse>>()
 }));
 
-vi.mock('$lib/server/discovery.js', () => ({
+vi.mock('#lib/server/discovery.js', () => ({
 	discoverProjects: mocks.discoverProjects
 }));
 
-vi.mock('$lib/server/read-model.js', () => ({
+vi.mock('#lib/server/read-model.js', () => ({
 	getMergedReadyIssues: mocks.getMergedReadyIssues
 }));
 

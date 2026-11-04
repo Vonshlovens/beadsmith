@@ -1,6 +1,6 @@
 <script lang="ts">
 	/** What a First Mate chat is about: every project, or one of them. */
-	import { projectList } from '$lib/client/projects.svelte';
+	import { projectList } from '#lib/client/projects.svelte.js';
 
 	interface Props {
 		/** Project id, or null for every project. */

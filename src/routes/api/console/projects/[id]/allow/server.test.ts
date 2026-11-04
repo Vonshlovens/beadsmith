@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Project } from '$lib/types.js';
-import type { DispatchPolicyStore } from '$lib/server/dispatch/policy.js';
-import { setDispatchPolicyStore } from '$lib/server/state/db.js';
+import type { Project } from '#lib/types.js';
+import type { DispatchPolicyStore } from '#lib/server/dispatch/policy.js';
+import { setDispatchPolicyStore } from '#lib/server/state/db.js';
 import { PUT } from './+server.js';
 
 const mocks = vi.hoisted(() => ({
 	resolveProject: vi.fn<(id: string) => Promise<Project | undefined>>()
 }));
 
-vi.mock('$lib/server/discovery.js', () => ({
+vi.mock('#lib/server/discovery.js', () => ({
 	resolveProject: mocks.resolveProject
 }));
 

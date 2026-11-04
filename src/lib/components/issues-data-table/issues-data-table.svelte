@@ -8,20 +8,20 @@
 	 * Status and Id pin to the left of that scrollport.
 	 */
 	import { goto, preloadData } from '$app/navigation';
-	import { issueDetailHref } from '$lib/client/issue-view.js';
+	import { issueDetailHref } from '#lib/client/issue-view.js';
 	import { FlexRender, createTable, type SortingState, type Updater } from '@tanstack/svelte-table';
-	import * as Table from '$lib/components/ui/table/index.js';
-	import { STICKY_COLUMNS, visibilityState } from '$lib/client/columns.js';
-	import type { ColumnId, StickyColumn } from '$lib/client/columns.js';
-	import { statusKey } from '$lib/client/format.js';
-	import { sortIssues } from '$lib/client/sort.js';
-	import type { SortState } from '$lib/client/sort.js';
-	import { rememberIssueSummaryHint } from '$lib/client/issue-summary-hint.js';
-	import { agentAvailability } from '$lib/client/agent.js';
-	import { useHotkeys } from '$lib/client/hotkeys.svelte.js';
-	import { currentProject, statusSnapshot } from '$lib/client/projects.svelte.js';
-	import { app_state } from '$lib/client/stores.svelte.js';
-	import type { IssueSummary } from '$lib/types.js';
+	import * as Table from '#lib/components/ui/table/index.js';
+	import { STICKY_COLUMNS, visibilityState } from '#lib/client/columns.js';
+	import type { ColumnId, StickyColumn } from '#lib/client/columns.js';
+	import { statusKey } from '#lib/client/format.js';
+	import { sortIssues } from '#lib/client/sort.js';
+	import type { SortState } from '#lib/client/sort.js';
+	import { rememberIssueSummaryHint } from '#lib/client/issue-summary-hint.js';
+	import { agentAvailability } from '#lib/client/agent.js';
+	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
+	import { currentProject, statusSnapshot } from '#lib/client/projects.svelte.js';
+	import { app_state } from '#lib/client/stores.svelte.js';
+	import type { IssueSummary } from '#lib/types.js';
 	import { issueColumns } from './columns.js';
 	import { features } from './data-table-features.js';
 	import type { IssuesTableMeta } from './data-table-features.js';

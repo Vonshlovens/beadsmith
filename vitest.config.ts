@@ -15,7 +15,6 @@ export default defineConfig({
 	},
 	resolve: {
 		alias: {
-			$lib: new URL('./src/lib', import.meta.url).pathname,
 			// SvelteKit generates this module during a build, so a plain vitest run
 			// cannot resolve it. The tests here are server-side by definition.
 			'$app/env': new URL('./src/lib/test/app-env.ts', import.meta.url).pathname

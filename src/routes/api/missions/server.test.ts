@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Mission } from '$lib/types.js';
+import type { Mission } from '#lib/types.js';
 import { GET } from './+server.js';
 
 const mocks = vi.hoisted(() => ({
@@ -7,11 +7,11 @@ const mocks = vi.hoisted(() => ({
 	listMissions: vi.fn()
 }));
 
-vi.mock('$lib/server/discovery.js', () => ({
+vi.mock('#lib/server/discovery.js', () => ({
 	discoverProjects: mocks.discoverProjects
 }));
 
-vi.mock('$lib/server/dispatch/service.js', () => ({
+vi.mock('#lib/server/dispatch/service.js', () => ({
 	listMissions: mocks.listMissions
 }));
 

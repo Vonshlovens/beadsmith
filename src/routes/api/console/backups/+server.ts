@@ -1,9 +1,9 @@
 import type { RequestHandler } from './$types';
-import { getBackupStore } from '$lib/server/state/db.js';
-import { isBackupRunning } from '$lib/server/backup/service.js';
-import { getSecretBox } from '$lib/server/secret-box.js';
-import { errorFromException, errorResponse, jsonResponse } from '$lib/server/security.js';
-import { backup_settings_schema, parseJsonBody } from '$lib/server/validation.js';
+import { getBackupStore } from '#lib/server/state/db.js';
+import { isBackupRunning } from '#lib/server/backup/service.js';
+import { getSecretBox } from '#lib/server/secret-box.js';
+import { errorFromException, errorResponse, jsonResponse } from '#lib/server/security.js';
+import { backup_settings_schema, parseJsonBody } from '#lib/server/validation.js';
 
 /** Settings view (never secrets), recent runs, and the master key source. */
 export const GET: RequestHandler = async () => {

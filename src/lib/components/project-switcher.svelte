@@ -2,9 +2,9 @@
 	/** Top-bar switcher for Beads projects. */
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
-	import { currentProject, projectList } from '$lib/client/projects.svelte';
-	import type { Project } from '$lib/types';
+	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
+	import { currentProject, projectList } from '#lib/client/projects.svelte.js';
+	import type { Project } from '#lib/types.js';
 
 	const current = $derived(currentProject());
 	const projects = $derived(projectList());

@@ -1,6 +1,6 @@
-import type { DispatchTurn, IssueDetail, Mission, Project } from '$lib/types.js';
-import type { MissionEvent } from '$lib/mission-events.js';
-import { encodeMissionEvent } from '$lib/mission-events.js';
+import type { DispatchTurn, IssueDetail, Mission, Project } from '#lib/types.js';
+import type { MissionEvent } from '#lib/mission-events.js';
+import { encodeMissionEvent } from '#lib/mission-events.js';
 import { getEnv } from '../env.js';
 import {
 	getDispatchPolicyStore,

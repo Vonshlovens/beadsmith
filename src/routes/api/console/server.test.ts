@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ConsoleSnapshot } from '$lib/types.js';
+import type { ConsoleSnapshot } from '#lib/types.js';
 import { GET } from './+server.js';
 
 const mocks = vi.hoisted(() => ({
 	getConsoleSnapshot: vi.fn<() => Promise<ConsoleSnapshot>>()
 }));
 
-vi.mock('$lib/server/console.js', () => ({
+vi.mock('#lib/server/console.js', () => ({
 	getConsoleSnapshot: mocks.getConsoleSnapshot
 }));
 

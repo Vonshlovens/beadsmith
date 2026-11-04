@@ -1,13 +1,13 @@
 import type { RequestHandler } from './$types';
-import { resolveProject } from '$lib/server/discovery.js';
-import { dispatchExists, streamDispatchMissionEvents } from '$lib/server/dispatch/service.js';
-import { encodeMissionEvent, type MissionEvent } from '$lib/mission-events.js';
-import { errorFromException, errorResponse } from '$lib/server/security.js';
+import { resolveProject } from '#lib/server/discovery.js';
+import { dispatchExists, streamDispatchMissionEvents } from '#lib/server/dispatch/service.js';
+import { encodeMissionEvent, type MissionEvent } from '#lib/mission-events.js';
+import { errorFromException, errorResponse } from '#lib/server/security.js';
 import {
 	dispatch_request_id_schema,
 	parseValue,
 	project_id_schema
-} from '$lib/server/validation.js';
+} from '#lib/server/validation.js';
 
 function encodeSse(event: MissionEvent): string {
 	const payload = encodeMissionEvent(event);

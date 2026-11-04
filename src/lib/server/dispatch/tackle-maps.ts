@@ -1,5 +1,5 @@
 import type { Client } from '@libsql/client';
-import type { ConsoleTackleMapSource } from '$lib/types.js';
+import type { ConsoleTackleMapSource } from '#lib/types.js';
 import type { TackleRepositoryConfig, TackleRepositoryMapping } from './repositories.js';
 
 /**

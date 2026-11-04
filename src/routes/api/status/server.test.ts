@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { StatusSnapshot } from '$lib/types.js';
+import type { StatusSnapshot } from '#lib/types.js';
 
 const snapshot = {
 	mode: 'remote',
@@ -9,8 +9,8 @@ const snapshot = {
 	dispatch: { enabled: true, key_configured: true, armed: true, provider: 'webhook' }
 } as StatusSnapshot;
 
-vi.mock('$lib/server/status.js', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('$lib/server/status.js')>();
+vi.mock('#lib/server/status.js', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('#lib/server/status.js')>();
 	return { ...actual, getStatus: async () => structuredClone(snapshot) };
 });
 

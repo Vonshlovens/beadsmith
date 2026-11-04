@@ -4,7 +4,7 @@
 	 * it. `compact` keeps only the bead (a narrow list column); the word moves
 	 * to the tooltip and stays for screen readers.
 	 */
-	import { statusKey, statusLabel } from '$lib/client/format';
+	import { statusKey, statusLabel } from '#lib/client/format.js';
 
 	interface Props {
 		status: string | undefined;

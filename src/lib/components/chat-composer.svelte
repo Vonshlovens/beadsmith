@@ -7,7 +7,7 @@
 	 */
 	import type { Snippet } from 'svelte';
 	import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
-	import { MAX_MESSAGE_CHARS } from '$lib/client/mate-chat';
+	import { MAX_MESSAGE_CHARS } from '#lib/client/mate-chat.js';
 
 	interface Props {
 		value: string;

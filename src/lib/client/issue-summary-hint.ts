@@ -1,4 +1,4 @@
-import type { IssueSummary } from '$lib/types.js';
+import type { IssueSummary } from '#lib/types.js';
 
 const HINTS_KEY = '__beadsIssueSummaryHints';
 

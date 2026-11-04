@@ -7,8 +7,8 @@
  * inside `$derived(...)` and they stay reactive.
  */
 import { page } from '$app/state';
-import { app_state } from '$lib/client/stores.svelte';
-import type { Project, StatusSnapshot, Viewer } from '$lib/types';
+import { app_state } from '#lib/client/stores.svelte.js';
+import type { Project, StatusSnapshot, Viewer } from '#lib/types.js';
 
 /** Every known project, in the order discovery returned them. */
 export function projectList(): Project[] {

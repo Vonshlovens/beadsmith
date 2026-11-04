@@ -7,9 +7,9 @@
  */
 import { browser } from '$app/env';
 import { error as kitError } from '@sveltejs/kit';
-import { api, ApiError, errorMessage } from '$lib/client/api';
-import { peekIssueSummaryHint } from '$lib/client/issue-summary-hint.js';
-import type { IssueDetail, Mission } from '$lib/types.js';
+import { api, ApiError, errorMessage } from '#lib/client/api.js';
+import { peekIssueSummaryHint } from '#lib/client/issue-summary-hint.js';
+import type { IssueDetail, Mission } from '#lib/types.js';
 import type { PageLoad } from './$types';
 
 async function loadIssue(

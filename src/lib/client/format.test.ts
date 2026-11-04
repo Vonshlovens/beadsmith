@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { dispatchBadgeKey, projectHealth } from './format.js';
-import type { Project } from '$lib/types';
+import type { Project } from '#lib/types.js';
 
 function project(overrides: Partial<Project> = {}): Project {
 	return {

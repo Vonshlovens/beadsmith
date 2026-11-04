@@ -3,9 +3,9 @@
 	 * Sign-in, open sign-up, and first-admin setup (ADR-0011). Rendered without
 	 * the app shell: nothing behind it loads until there is a session.
 	 */
-	import BrandMark from '$lib/components/brand-mark.svelte';
-	import { auth, authErrorMessage } from '$lib/client/auth';
-	import { PRODUCT_NAME } from '$lib/product';
+	import BrandMark from '#lib/components/brand-mark.svelte';
+	import { auth, authErrorMessage } from '#lib/client/auth.js';
+	import { PRODUCT_NAME } from '#lib/product.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();

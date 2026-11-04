@@ -3,9 +3,9 @@
 	 * Beads on a thread, ordered by time (specs/01). Agent actors get a
 	 * distinct bead so automated work is legible at a glance.
 	 */
-	import IssueId from '$lib/components/issue-id.svelte';
-	import { relativeShort } from '$lib/client/format';
-	import type { ActivityEvent } from '$lib/types';
+	import IssueId from '#lib/components/issue-id.svelte';
+	import { relativeShort } from '#lib/client/format.js';
+	import type { ActivityEvent } from '#lib/types.js';
 
 	interface Props {
 		events: ActivityEvent[];

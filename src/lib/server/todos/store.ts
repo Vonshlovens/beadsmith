@@ -2,7 +2,7 @@
  * Admin todo list in `state.db` (ADR-0004). Application-owned
  * rows, not Beads issues: a routed todo keeps only the project id, dispatch
  * request id and, once the agent reports it, the issue id. Urgency is derived
- * (`$lib/todos/urgency.ts`) and never stored.
+ * (`#lib/todos/urgency.ts`) and never stored.
  */
 import type { Client } from '@libsql/client';
 import { randomBytes } from 'node:crypto';

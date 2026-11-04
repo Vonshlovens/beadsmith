@@ -8,7 +8,7 @@ import type {
 	Project,
 	ReadyIssue,
 	ReadyListResponse
-} from '$lib/types.js';
+} from '#lib/types.js';
 
 /**
  * Read paths shared by the issue, detail, dependency, and activity endpoints.

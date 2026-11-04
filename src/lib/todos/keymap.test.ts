@@ -6,7 +6,7 @@ import {
 	type HotkeyBinding,
 	type HotkeyScope,
 	SEQUENCE_TIMEOUT_MS
-} from '$lib/client/hotkeys';
+} from '#lib/client/hotkeys.js';
 import { LIST_ACTIONS, listBindings, modeLabel, paletteEntries, type ListMode } from './keymap.js';
 
 function setup(mode: ListMode, live: (id: string) => boolean = () => true) {

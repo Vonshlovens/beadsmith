@@ -1,14 +1,14 @@
 import type { RequestHandler } from './$types';
-import { resolveProject } from '$lib/server/discovery.js';
-import { enqueueDispatch } from '$lib/server/dispatch/service.js';
-import { getProjectIssue } from '$lib/server/read-model.js';
-import { errorFromException, errorResponse, jsonResponse } from '$lib/server/security.js';
+import { resolveProject } from '#lib/server/discovery.js';
+import { enqueueDispatch } from '#lib/server/dispatch/service.js';
+import { getProjectIssue } from '#lib/server/read-model.js';
+import { errorFromException, errorResponse, jsonResponse } from '#lib/server/security.js';
 import {
 	dispatch_schema,
 	parseJsonBody,
 	parseValue,
 	project_id_schema
-} from '$lib/server/validation.js';
+} from '#lib/server/validation.js';
 
 function actorFromLocals(locals: App.Locals): string {
 	const email = (locals.user?.email ?? locals.cloudflare_access?.email)?.trim();

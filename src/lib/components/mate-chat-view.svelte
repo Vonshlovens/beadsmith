@@ -2,18 +2,18 @@
 	/**
 	 * One First Mate chat: its messages, newest at the bottom, and the composer
 	 * pinned under them. The chat is not wired to a model yet (see
-	 * $lib/client/mate-chat.ts), and says so at the top.
+	 * src/lib/client/mate-chat.ts), and says so at the top.
 	 */
 	import { tick } from 'svelte';
 	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
 	import CommandIcon from '@lucide/svelte/icons/command';
-	import ChatComposer from '$lib/components/chat-composer.svelte';
-	import MarkdownBody from '$lib/components/markdown-body.svelte';
-	import MateContextSelect from '$lib/components/mate-context-select.svelte';
-	import { absoluteStamp, relativeShort } from '$lib/client/format';
-	import { mate_chats } from '$lib/client/mate-chat.svelte';
-	import type { Chat } from '$lib/client/mate-chat';
-	import { app_state } from '$lib/client/stores.svelte';
+	import ChatComposer from '#lib/components/chat-composer.svelte';
+	import MarkdownBody from '#lib/components/markdown-body.svelte';
+	import MateContextSelect from '#lib/components/mate-context-select.svelte';
+	import { absoluteStamp, relativeShort } from '#lib/client/format.js';
+	import { mate_chats } from '#lib/client/mate-chat.svelte.js';
+	import type { Chat } from '#lib/client/mate-chat.js';
+	import { app_state } from '#lib/client/stores.svelte.js';
 
 	interface Props {
 		chat: Chat;

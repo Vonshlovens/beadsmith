@@ -4,7 +4,7 @@ import { ProjectDiscoveryError } from './discovery.js';
 import { DoltError, isDoltConnectionError } from './dolt/client.js';
 import { DispatchError } from './dispatch/types.js';
 import { UnsupportedSchemaError } from './dolt/schema.js';
-import type { ApiErrorBody, ApiErrorCode, DoltFailureKind } from '$lib/types.js';
+import type { ApiErrorBody, ApiErrorCode, DoltFailureKind } from '#lib/types.js';
 
 /**
  * `__Host-` prefix: cookies ignore ports, so without it any other local HTTP

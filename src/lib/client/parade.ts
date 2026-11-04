@@ -9,7 +9,7 @@
 import { sortBoardCards } from './board.js';
 import { statusKey } from './format.js';
 import type { StatusKey } from './format.js';
-import type { IssueSummary } from '$lib/types';
+import type { IssueSummary } from '#lib/types.js';
 
 export const PARADE_SECTIONS = ['rolling', 'lined_up', 'stalled', 'deferred', 'past'] as const;
 

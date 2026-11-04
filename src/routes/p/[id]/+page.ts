@@ -9,12 +9,12 @@
  * seconds so back-from-detail does not wait on SQL.
  */
 import { browser } from '$app/env';
-import { api, errorMessage } from '$lib/client/api';
-import { readListFilters, resolveIssueListPayload } from '$lib/client/issue-list-cache.js';
-import { parseIssueView } from '$lib/client/issue-view';
+import { api, errorMessage } from '#lib/client/api.js';
+import { readListFilters, resolveIssueListPayload } from '#lib/client/issue-list-cache.js';
+import { parseIssueView } from '#lib/client/issue-view.js';
 import type { PageLoad } from './$types';
 
-export type { ListFilters } from '$lib/client/issue-list-cache.js';
+export type { ListFilters } from '#lib/client/issue-list-cache.js';
 
 export const load: PageLoad = async ({ fetch, params, url }) => {
 	const filters = readListFilters(url.searchParams);

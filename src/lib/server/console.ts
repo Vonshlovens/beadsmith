@@ -17,7 +17,7 @@ import type {
 	DispatchProjectAllow,
 	Project,
 	StatusSnapshot
-} from '$lib/types.js';
+} from '#lib/types.js';
 import { getDoltClient } from './dolt/client.js';
 import type { SchemaInfo } from './dolt/schema.js';
 

@@ -5,17 +5,17 @@
 	 * on the desktop and overlays the content below 900px.
 	 */
 	import { page } from '$app/state';
-	import { auth, authErrorMessage } from '$lib/client/auth';
-	import { currentProject, currentViewer } from '$lib/client/projects.svelte';
+	import { auth, authErrorMessage } from '#lib/client/auth.js';
+	import { currentProject, currentViewer } from '#lib/client/projects.svelte.js';
 	import { toast } from 'svelte-sonner';
-	import ThemeToggle from '$lib/components/theme-toggle.svelte';
-	import { app_state } from '$lib/client/stores.svelte';
+	import ThemeToggle from '#lib/components/theme-toggle.svelte';
+	import { app_state } from '#lib/client/stores.svelte.js';
 	import {
 		boardNavActive,
 		issuesNavActive,
 		parseIssueView,
 		projectIssuesHref
-	} from '$lib/client/issue-view';
+	} from '#lib/client/issue-view.js';
 
 	const current = $derived(currentProject());
 	const path = $derived(page.url.pathname);

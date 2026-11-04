@@ -5,8 +5,8 @@
 	 */
 	import { refreshAll } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
-	import { api, errorMessage } from '$lib/client/api';
-	import type { DispatchRequest } from '$lib/types';
+	import { api, errorMessage } from '#lib/client/api.js';
+	import type { DispatchRequest } from '#lib/types.js';
 
 	let {
 		project_id,

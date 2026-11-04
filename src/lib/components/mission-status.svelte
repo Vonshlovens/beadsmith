@@ -1,7 +1,7 @@
 <script lang="ts">
 	/** Dispatch workflow status using the existing badge + bead colours. */
-	import { dispatchBadgeKey } from '$lib/client/format';
-	import type { DispatchStatus } from '$lib/types';
+	import { dispatchBadgeKey } from '#lib/client/format.js';
+	import type { DispatchStatus } from '#lib/types.js';
 
 	interface Props {
 		status: DispatchStatus;

@@ -1,7 +1,7 @@
 import type { RequestHandler } from './$types';
-import { getStateStore } from '$lib/server/state/db.js';
-import { errorFromException, jsonResponse } from '$lib/server/security.js';
-import { parseJsonBody, theme_schema } from '$lib/server/validation.js';
+import { getStateStore } from '#lib/server/state/db.js';
+import { errorFromException, jsonResponse } from '#lib/server/security.js';
+import { parseJsonBody, theme_schema } from '#lib/server/validation.js';
 
 /** Settings key holding the UI theme preference. Read back by `hooks.server.ts`. */
 const THEME_SETTING_KEY = 'ui.theme';

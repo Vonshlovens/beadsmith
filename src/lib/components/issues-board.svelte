@@ -10,30 +10,30 @@
 	import { browser } from '$app/env';
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import PlusIcon from '@lucide/svelte/icons/plus';
-	import BoardCard from '$lib/components/board-card.svelte';
-	import BoardDispatchDialog from '$lib/components/board-dispatch-dialog.svelte';
-	import { boardCreateHeading, groupBoardColumns } from '$lib/client/board';
-	import { boardDropIntent, type BoardDispatchPending } from '$lib/client/board-dispatch';
+	import BoardCard from '#lib/components/board-card.svelte';
+	import BoardDispatchDialog from '#lib/components/board-dispatch-dialog.svelte';
+	import { boardCreateHeading, groupBoardColumns } from '#lib/client/board.js';
+	import { boardDropIntent, type BoardDispatchPending } from '#lib/client/board-dispatch.js';
 	import {
 		boardColumnAccessibleName,
 		isBoardNavKey,
 		moveBoardFocus,
 		VIM_BOARD_KEYS,
 		type BoardNavTarget
-	} from '$lib/client/board-keyboard';
-	import { agentAvailability } from '$lib/client/agent';
-	import { useHotkeys } from '$lib/client/hotkeys.svelte';
-	import { currentProject, statusSnapshot } from '$lib/client/projects.svelte';
-	import { app_state } from '$lib/client/stores.svelte';
+	} from '#lib/client/board-keyboard.js';
+	import { agentAvailability } from '#lib/client/agent.js';
+	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
+	import { currentProject, statusSnapshot } from '#lib/client/projects.svelte.js';
+	import { app_state } from '#lib/client/stores.svelte.js';
 	import {
 		boardCollapsedStorageKey,
 		expandCollapsedColumn,
 		parseCollapsed,
 		serializeCollapsed,
 		toggleCollapsed
-	} from '$lib/client/board-prefs';
-	import { statusKey, type StatusKey } from '$lib/client/format';
-	import type { IssueSummary } from '$lib/types';
+	} from '#lib/client/board-prefs.js';
+	import { statusKey, type StatusKey } from '#lib/client/format.js';
+	import type { IssueSummary } from '#lib/types.js';
 
 	interface Props {
 		issues: IssueSummary[];

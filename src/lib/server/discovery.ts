@@ -5,7 +5,7 @@ import {
 	toDoltConnectionError,
 	type DoltClient
 } from './dolt/client.js';
-import type { DoltFailureKind, Project } from '$lib/types.js';
+import type { DoltFailureKind, Project } from '#lib/types.js';
 import { clearSchemaCache } from './dolt/schema.js';
 
 /** Opaque URL id for a remote Dolt project. */

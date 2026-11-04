@@ -7,13 +7,13 @@
 	 */
 	import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
 	import GitPullRequestIcon from '@lucide/svelte/icons/git-pull-request';
-	import IssueId from '$lib/components/issue-id.svelte';
-	import MissionStatus from '$lib/components/mission-status.svelte';
-	import { formatElapsed, isSafeRunUrl, missionVerb } from '$lib/client/agent';
-	import { threadHref } from '$lib/client/first-mate';
-	import { relativeShort } from '$lib/client/format';
-	import { app_state } from '$lib/client/stores.svelte';
-	import type { Mission } from '$lib/types';
+	import IssueId from '#lib/components/issue-id.svelte';
+	import MissionStatus from '#lib/components/mission-status.svelte';
+	import { formatElapsed, isSafeRunUrl, missionVerb } from '#lib/client/agent.js';
+	import { threadHref } from '#lib/client/first-mate.js';
+	import { relativeShort } from '#lib/client/format.js';
+	import { app_state } from '#lib/client/stores.svelte.js';
+	import type { Mission } from '#lib/types.js';
 
 	interface Props {
 		missions: Mission[];

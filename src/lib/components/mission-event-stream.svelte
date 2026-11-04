@@ -3,7 +3,7 @@
 	 * Render canonical mission events. The browser never
 	 * receives raw runner payloads — only this union.
 	 */
-	import { reduceMissionEvents, type MissionEvent } from '$lib/mission-events';
+	import { reduceMissionEvents, type MissionEvent } from '#lib/mission-events.js';
 
 	interface Props {
 		events: MissionEvent[];

@@ -13,17 +13,17 @@
 	import MessageSquareIcon from '@lucide/svelte/icons/message-square';
 	import SendIcon from '@lucide/svelte/icons/send';
 	import Trash2Icon from '@lucide/svelte/icons/trash-2';
-	import MissionStatus from '$lib/components/mission-status.svelte';
-	import PriorityChip from '$lib/components/priority-chip.svelte';
-	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
-	import { api, errorMessage } from '$lib/client/api';
-	import { relativeShort } from '$lib/client/format';
-	import { dur, expand } from '$lib/client/motion';
-	import { projectList } from '$lib/client/projects.svelte';
-	import type { Todo, TodoComment } from '$lib/server/todos/store';
-	import { addDays, dueLabel, nextWeekday, toDateOnly } from '$lib/todos/dates';
-	import { dueBucket, urgency, urgencyRatio } from '$lib/todos/urgency';
-	import type { DispatchRequest } from '$lib/types';
+	import MissionStatus from '#lib/components/mission-status.svelte';
+	import PriorityChip from '#lib/components/priority-chip.svelte';
+	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
+	import { api, errorMessage } from '#lib/client/api.js';
+	import { relativeShort } from '#lib/client/format.js';
+	import { dur, expand } from '#lib/client/motion.js';
+	import { projectList } from '#lib/client/projects.svelte.js';
+	import type { Todo, TodoComment } from '#lib/server/todos/store.js';
+	import { addDays, dueLabel, nextWeekday, toDateOnly } from '#lib/todos/dates.js';
+	import { dueBucket, urgency, urgencyRatio } from '#lib/todos/urgency.js';
+	import type { DispatchRequest } from '#lib/types.js';
 
 	interface Props {
 		todo: Todo;

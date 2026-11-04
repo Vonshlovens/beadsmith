@@ -1,19 +1,19 @@
 import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit/hooks';
-import { startBackupScheduler } from '$lib/server/backup/runtime.js';
+import { startBackupScheduler } from '#lib/server/backup/runtime.js';
 import {
 	checkConfig,
 	getEnv,
 	isAllowedCloudflareAccessServiceToken,
 	isLoopbackHost
-} from '$lib/server/env.js';
+} from '#lib/server/env.js';
 import {
 	CloudflareAccessVerificationError,
 	getCloudflareAccessVerifier,
 	normalizeCloudflareAccessIssuer
-} from '$lib/server/cloudflare-access.js';
-import { getStateStore } from '$lib/server/state/db.js';
-import { getAuthService } from '$lib/server/auth/service.js';
-import { requiredPermission, roleCan } from '$lib/server/auth/roles.js';
+} from '#lib/server/cloudflare-access.js';
+import { getStateStore } from '#lib/server/state/db.js';
+import { getAuthService } from '#lib/server/auth/service.js';
+import { requiredPermission, roleCan } from '#lib/server/auth/roles.js';
 import {
 	CSRF_HEADER,
 	errorResponse,
@@ -28,7 +28,7 @@ import {
 	passesCsrfGate,
 	requiresCsrfHeader,
 	SECURITY_HEADERS
-} from '$lib/server/security.js';
+} from '#lib/server/security.js';
 
 let config_error_logged = false;
 
