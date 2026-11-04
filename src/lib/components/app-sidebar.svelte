@@ -9,6 +9,7 @@
 	import { currentProject, currentViewer } from '#lib/client/projects.svelte.js';
 	import { toast } from 'svelte-sonner';
 	import ThemeToggle from '#lib/components/theme-toggle.svelte';
+	import FontToggle from '#lib/components/font-toggle.svelte';
 	import { app_state } from '#lib/client/stores.svelte.js';
 	import {
 		boardNavActive,
@@ -163,6 +164,7 @@
 		<span class="foot-faint" title="Beadsmith only reads; agents change Beads with bd">{host}</span>
 		<span class="foot-ctls">
 			<ThemeToggle />
+			<FontToggle />
 			<button
 				class="foot-ctl keys-open"
 				type="button"
@@ -191,6 +193,7 @@
 	}
 	.foot-ctls {
 		display: flex;
+		flex-wrap: wrap;
 		gap: var(--s-2);
 		margin-top: var(--s-1);
 	}

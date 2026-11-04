@@ -16,8 +16,8 @@ fetchPnpmDeps {
   # built yet; the first build on a Mac prints it.
   hash =
     {
-      x86_64-linux = "sha256-wET0qpnL/smMB6AlRylV/HzK+NVWtCyLB3xVoM6a958=";
-      aarch64-linux = "sha256-wET0qpnL/smMB6AlRylV/HzK+NVWtCyLB3xVoM6a958=";
+      x86_64-linux = "sha256-JXeMKJyi4UUAdyXl39euhSRiJ5pRYfTn/UvCVpyALD8=";
+      aarch64-linux = "sha256-JXeMKJyi4UUAdyXl39euhSRiJ5pRYfTn/UvCVpyALD8=";
     }
     .${stdenv.hostPlatform.system} or lib.fakeHash;
 }
