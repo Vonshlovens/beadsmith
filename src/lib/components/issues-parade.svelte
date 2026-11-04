@@ -103,7 +103,7 @@
 	 */
 	function select(id: string) {
 		chosen = id;
-		const url = new URL(page.url);
+		const url = new URL(page.url.href);
 		url.searchParams.set('issue', id);
 		replaceState(url, page.state);
 		requestAnimationFrame(() => {

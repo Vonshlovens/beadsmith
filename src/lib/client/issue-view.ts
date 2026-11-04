@@ -1,3 +1,5 @@
+import type { ReadonlyURLSearchParams } from '$app/state';
+
 /**
  * Parade, list and board are views of the same project issues URL, not
  * separate routes. `view=parade|list|board` are explicit destinations. A
@@ -45,7 +47,7 @@ export function parseStoredIssueView(raw: string | null | undefined): IssueView 
  *
  * @param params - Current search params.
  */
-export function hasExplicitIssueView(params: URLSearchParams): boolean {
+export function hasExplicitIssueView(params: ReadonlyURLSearchParams): boolean {
 	return params.has('view');
 }
 
@@ -56,7 +58,10 @@ export function hasExplicitIssueView(params: URLSearchParams): boolean {
  * @param params - Current search params.
  * @param remembered - Stored preference, or null when none.
  */
-export function resolveIssueView(params: URLSearchParams, remembered: IssueView | null): IssueView {
+export function resolveIssueView(
+	params: ReadonlyURLSearchParams,
+	remembered: IssueView | null
+): IssueView {
 	if (hasExplicitIssueView(params)) {
 		return parseIssueView(params.get('view'));
 	}
@@ -75,9 +80,9 @@ export function resolveIssueView(params: URLSearchParams, remembered: IssueView 
 export function projectIssuesHref(
 	project_id: string,
 	view: IssueView,
-	current?: URLSearchParams
+	current?: ReadonlyURLSearchParams
 ): string {
-	const params = new URLSearchParams(current);
+	const params = new URLSearchParams(current?.toString());
 	params.set('view', view);
 	const qs = params.toString();
 	return qs ? `/p/${project_id}?${qs}` : `/p/${project_id}`;

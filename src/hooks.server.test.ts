@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RequestEvent } from '@sveltejs/kit';
 import type { ResolveOptions } from '@sveltejs/kit/hooks';
-import { handle } from './hooks.server.js';
+import { handle, handleError } from './hooks.server.js';
 import { randomBytes } from 'node:crypto';
 import { CSRF_HEADER, getRateLimiter, SESSION_COOKIE } from '#lib/server/security.js';
 import { setAuthServiceForTest, type AuthService } from '#lib/server/auth/service.js';
@@ -1153,5 +1153,32 @@ describe('security headers', () => {
 		const response = await handle({ event, resolve: resolveOk });
 
 		expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
+	});
+});
+
+describe('handleError', () => {
+	const { event } = makeEvent();
+
+	it('keeps the message the app chose with error(...)', () => {
+		const message = 'The console is for admins.';
+		expect(handleError({ kind: 'app', error: { status: 403, message }, event })).toBeUndefined();
+	});
+
+	it('names a framework 404 and hides other framework messages', () => {
+		expect(
+			handleError({ kind: 'framework', error: { status: 404, message: 'Not Found' }, event })
+		).toEqual({ message: 'not found' });
+		expect(
+			handleError({
+				kind: 'framework',
+				error: { status: 405, message: 'Method Not Allowed' },
+				event
+			})
+		).toEqual({ message: 'internal error' });
+	});
+
+	it('never echoes an unexpected error', () => {
+		const result = handleError({ kind: 'unknown', error: new Error('secret detail'), event });
+		expect(result).toEqual({ message: 'internal error' });
 	});
 });

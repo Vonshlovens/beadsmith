@@ -464,6 +464,16 @@ export const handle: Handle = async ({ event, resolve }) => {
 	return applySecurityHeaders(withSetCookies(response, set_cookies), is_api);
 };
 
-export const handleError: HandleServerError = ({ status }) => {
+/**
+ * Never send an unexpected error's message to the client. SvelteKit 3 calls
+ * this for every error, including those thrown with `error(...)`: their
+ * message is one the app chose to show, so they keep it (SvelteKit 2 never
+ * passed them here).
+ */
+export const handleError: HandleServerError = ({ kind, error }) => {
+	if (kind === 'app') {
+		return;
+	}
+	const status = kind === 'unknown' ? 500 : error.status;
 	return { message: status === 404 ? 'not found' : 'internal error' };
 };

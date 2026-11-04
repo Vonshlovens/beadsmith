@@ -569,7 +569,7 @@
 	 * @param changes - Query parameters to set; empty values are removed.
 	 */
 	async function applyFilters(changes: Record<string, string>) {
-		const params = new URLSearchParams(page.url.searchParams);
+		const params = new URLSearchParams(page.url.search);
 		for (const [key, value] of Object.entries(changes)) {
 			if (value) {
 				params.set(key, value);

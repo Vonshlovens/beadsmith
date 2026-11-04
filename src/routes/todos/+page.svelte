@@ -82,7 +82,7 @@
 		} catch {
 			/* storage unavailable */
 		}
-		const url = new URL(page.url);
+		const url = new URL(page.url.href);
 		if (next === 'list') url.searchParams.set('view', 'list');
 		else url.searchParams.delete('view');
 		replaceState(url, page.state);
