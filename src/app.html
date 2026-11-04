@@ -28,6 +28,14 @@
 			} catch (error) {
 				/* no matchMedia or no dataset — the server-rendered default stands */
 			}
+			/* Interface font trial: this browser's choice from font-toggle.svelte. */
+			try {
+				if (localStorage.getItem('bdui.font') === 'commissioner') {
+					document.documentElement.dataset.font = 'commissioner';
+				}
+			} catch (error) {
+				/* storage blocked — JetBrains Mono stands */
+			}
 		</script>
 		%sveltekit.head%
 	</head>

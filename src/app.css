@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @import '@fontsource-variable/jetbrains-mono/wght.css';
+@import '@fontsource-variable/commissioner/wght.css';
 @import 'tw-animate-css';
 
 @custom-variant dark (&:is(.dark *));
@@ -2321,4 +2322,21 @@ table.tbl [data-slot='table-caption'] {
 	100% {
 		background-position: -200% 0;
 	}
+}
+
+/* =========================================================================
+   Interface font trial (font-toggle.svelte). `data-font="commissioner"` on
+   <html> sets the interface and long Markdown in Commissioner; IDs, keys,
+   code and numbers stay JetBrains Mono. Without the attribute nothing here
+   applies. Unlayered on purpose, so it outranks the base and component rules
+   that set `font-family: var(--font)` on those elements.
+   ========================================================================= */
+:root[data-font='commissioner'] {
+	--font-ui: 'Commissioner Variable', ui-sans-serif, system-ui, sans-serif;
+	--font: var(--font-ui);
+	--font-prose: var(--font-ui);
+}
+
+:root[data-font='commissioner'] :is(code, kbd, pre, samp, .id, .iv-id, .kbd, .mono, .mono-num) {
+	font-family: var(--font-mono);
 }
