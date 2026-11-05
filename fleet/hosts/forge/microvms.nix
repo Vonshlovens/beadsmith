@@ -35,16 +35,7 @@ let
 
   keyDir = "/var/lib/microvm-keys";
 
-  mate = {
-    tap = "${tapPrefix}mate";
-    # Locally administered, unicast.
-    mac = "02:00:00:00:00:01";
-    hostAddress = "10.100.0.1";
-    guestAddress = "10.100.0.2";
-    prefixLength = 30;
-    # Public half of ${keyDir}/mate_ed25519, generated on forge.
-    controlKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB/zT5gwEHkOSaLALyOE2y76kEZwM2W2+gxTV5GL+Hhv forge-microvm-control-mate";
-  };
+  mate = import ./guests/mate-net.nix;
 
   # Guest traffic is filtered by a table of its own rather than by switching
   # the host firewall to nftables: networking.nftables.enable would replace
@@ -79,11 +70,11 @@ let
       }
 
       # The host opens connections to guests (SSH); guests open none to the
-      # host, except a ping to their own gateway address. Proxy ports for
-      # model and repository access will be allowed here.
+      # host, except a ping to their gateway and the scoped model proxy.
       chain guest-to-host {
         ct state established,related accept
         meta nfproto ipv4 icmp type echo-request fib daddr . iif type local accept
+        iifname "${mate.tap}" ip saddr ${mate.guestAddress} ip daddr ${mate.hostAddress} tcp dport ${toString mate.modelProxyPort} accept
         counter drop
       }
 
@@ -141,6 +132,8 @@ in
     net = mate;
     stateDir = "${stateDir}/mate";
   };
+
+  networking.firewall.interfaces.${mate.tap}.allowedTCPPorts = [ mate.modelProxyPort ];
 
   networking.networkmanager.unmanaged = [ "interface-name:${tapPrefix}*" ];
 

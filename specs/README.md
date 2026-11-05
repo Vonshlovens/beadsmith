@@ -41,7 +41,9 @@ reality**. Search `src/` before treating a spec as implemented.
   and keyboard Send-to-agent confirm the same dispatch rather than PATCHing
   status. Comment uses the File checkout
   ([ADR-0006](decisions/0006-durable-agent-dispatch.md)).
-- Target, not shipped: **agents run in scoped sandboxes**. A beads sandbox
+- The first Claude Code guest and host runner are implemented in
+  [ADR-0016](decisions/0016-first-mate-worker-runtime.md). Model enrollment and
+  production app activation are separate gates. Remaining target: **agents run in scoped sandboxes**. A beads sandbox
   (the orchestrator) holds per-project Dolt grants and asks for repository
   work through dispatch; a repo sandbox reaches one repository. Model and
   repository keys stay outside sandboxes, behind a proxy. Beadsmith may
@@ -102,6 +104,8 @@ Follow the `architecture` skill at
 | [0011-accounts-and-roles.md](decisions/0011-accounts-and-roles.md) | [`src/lib/server/auth/`](../src/lib/server/auth/), [`src/hooks.server.ts`](../src/hooks.server.ts) | Better Auth accounts; admin/member roles; first-run setup token |
 | [0013-owner-account-and-global-readers.md](decisions/0013-owner-account-and-global-readers.md) | [`scripts/ci/dolt-grants-smoke.sh`](../scripts/ci/dolt-grants-smoke.sh), [`docs/new-project.md`](../docs/new-project.md) | Plain `bd init` creates projects; global readers; accounts scoped to projects for other agents |
 | [0015-scoped-agent-sandboxes.md](decisions/0015-scoped-agent-sandboxes.md) | — (not shipped) | Beads and repo sandboxes; admin terminal relay to sandboxes only; personal devices reach in through MCP |
+
+| [0016-first-mate-worker-runtime.md](decisions/0016-first-mate-worker-runtime.md) | [`fleet/hosts/forge/runtime.nix`](../fleet/hosts/forge/runtime.nix) | Persistent guest Claude Code, host model proxy and signed runner |
 
 ## UI map
 
