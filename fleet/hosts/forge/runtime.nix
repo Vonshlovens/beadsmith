@@ -6,8 +6,8 @@ let
     mkdir -p $out/scripts $out/src/lib
     cp ${../../../scripts/mate-runner.ts} $out/scripts/mate-runner.ts
     cp ${../../../scripts/ts-resolve.mjs} $out/scripts/ts-resolve.mjs
-    cp -r ${../../../src/lib/mate-runner} $out/src/lib/
-    cp ${../../../src/lib/mission-events.ts} $out/src/lib/
+    cp -r ${../../../src/lib/mate-runner} $out/src/lib/mate-runner
+    cp ${../../../src/lib/mission-events.ts} $out/src/lib/mission-events.ts
     echo '{"type":"module"}' > $out/package.json
   '';
   knownHosts = pkgs.writeText "mate-known-hosts" "${net.guestAddress} ${net.hostKey}\n";
@@ -64,7 +64,7 @@ in {
       LoadCredential = [ (credentials "mate-runner-secret") "agent-key:/var/lib/mate-runner/ssh/agent_ed25519" ];
       User = "mate-runner"; Group = "mate-runner";
       StateDirectory = "mate-runner"; StateDirectoryMode = "0700";
-      Restart = "on-failure"; KillMode = "control-group";
+      Restart = "on-failure"; RestartSec = 5; KillMode = "control-group";
       NoNewPrivileges = true; ProtectSystem = "strict"; ProtectHome = true;
       PrivateTmp = true; PrivateDevices = true; UMask = "0077";
     };
