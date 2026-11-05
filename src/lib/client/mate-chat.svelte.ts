@@ -32,6 +32,10 @@ function newMessageId(): string {
 	return globalThis.crypto.randomUUID();
 }
 
+function lastTerminalId(events: MateEvent[]): string | undefined {
+	return events.findLast((event) => event.type === 'result' || event.type === 'error')?.id;
+}
+
 class MateChats {
 	status = $state<MateStatus | null>(null);
 	chats = $state<MateChat[]>([]);
@@ -41,7 +45,20 @@ class MateChats {
 	/** The chat whose events are loaded. */
 	open_id = $state<string | null>(null);
 	events = $state<MateEvent[]>([]);
-	pending = $state<PendingMessage[]>([]);
+	// Ephemeral page-session input only; never persisted in browser storage.
+	drafts = $state<Record<string, string>>({});
+	pending_by_chat = $state<Record<string, PendingMessage[]>>({});
+	opening = $state(false);
+	scope_saving = $state(false);
+	action_error = $state<string | null>(null);
+	interrupt_requested = $state(false);
+
+	get pending(): PendingMessage[] {
+		return this.open_id ? (this.pending_by_chat[this.open_id] ?? []) : [];
+	}
+	set pending(items: PendingMessage[]) {
+		if (this.open_id) this.pending_by_chat[this.open_id] = items;
+	}
 	open_error = $state<string | null>(null);
 	/** The live stream is down; EventSource keeps retrying. */
 	stream_error = $state<string | null>(null);
@@ -105,11 +122,12 @@ class MateChats {
 		) {
 			return;
 		}
-		const pending = this.open_id === id ? this.pending : [];
+		const events = this.open_id === id ? this.events : [];
 		this.close();
-		this.pending = pending;
+		this.events = events;
 		const generation = this.#generation;
 		this.open_id = id;
+		this.opening = true;
 		this.open_error = null;
 		try {
 			const detail = await api.mateChat(id);
@@ -125,6 +143,8 @@ class MateChats {
 			if (this.#generation === generation) {
 				this.open_error = errorMessage(error);
 			}
+		} finally {
+			if (this.#generation === generation) this.opening = false;
 		}
 	}
 
@@ -135,10 +155,13 @@ class MateChats {
 		this.#source = null;
 		this.open_id = null;
 		this.events = [];
-		this.pending = [];
 		this.open_error = null;
 		this.stream_error = null;
 		this.interrupting = false;
+		this.interrupt_requested = false;
+		this.action_error = null;
+		this.scope_saving = false;
+		this.opening = false;
 	}
 
 	/**
@@ -171,28 +194,31 @@ class MateChats {
 			return;
 		}
 		const item: PendingMessage = { message_id, text: message, at: new Date().toISOString() };
-		this.pending = [...this.pending.filter((p) => p.message_id !== message_id), item];
+		this.pending_by_chat[id] = [
+			...(this.pending_by_chat[id] ?? []).filter((p) => p.message_id !== message_id),
+			item
+		];
 		try {
 			const result = await api.sendMateMessage(id, { text: message, message_id });
-			if (this.open_id !== id) {
-				return;
-			}
 			if (result.events !== undefined) {
-				this.#add(result.events);
-				this.pending = this.pending.filter((p) => p.message_id !== message_id);
+				if (this.open_id === id) this.#add(result.events);
+				this.pending_by_chat[id] = (this.pending_by_chat[id] ?? []).filter(
+					(p) => p.message_id !== message_id
+				);
 			} else if (result.event_id !== undefined) {
 				const event_id = result.event_id;
-				if (this.events.some((event) => event.id === event_id)) {
-					this.pending = this.pending.filter((p) => p.message_id !== message_id);
+				if (this.open_id === id && this.events.some((event) => event.id === event_id)) {
+					this.pending_by_chat[id] = (this.pending_by_chat[id] ?? []).filter(
+						(p) => p.message_id !== message_id
+					);
 				} else {
-					this.pending = this.pending.map((p) =>
+					this.pending_by_chat[id] = (this.pending_by_chat[id] ?? []).map((p) =>
 						p.message_id === message_id ? { ...p, event_id } : p
 					);
 				}
 			}
 		} catch (error) {
-			if (this.open_id !== id) return;
-			this.pending = this.pending.map((p) =>
+			this.pending_by_chat[id] = (this.pending_by_chat[id] ?? []).map((p) =>
 				p.message_id === message_id ? { ...p, error: errorMessage(error) } : p
 			);
 		}
@@ -208,13 +234,28 @@ class MateChats {
 
 	/** Stop the agent's current turn. */
 	async interrupt(id: string) {
+		if (this.interrupting || this.interrupt_requested) return;
+		const generation = this.#generation;
+		const terminal_id = lastTerminalId(this.events);
+		const had_active_turn = isWorking(this.events);
+		this.action_error = null;
 		this.interrupting = true;
 		try {
 			await api.interruptMate(id);
+			// Pending sends may fail without a terminal event, and a turn may
+			// finish before this POST replies. Only latch the observed active turn.
+			if (
+				generation === this.#generation &&
+				had_active_turn &&
+				isWorking(this.events) &&
+				lastTerminalId(this.events) === terminal_id
+			)
+				this.interrupt_requested = true;
 		} catch (error) {
-			this.stream_error = errorMessage(error);
+			if (generation === this.#generation)
+				this.action_error = 'Could not stop the turn. ' + errorMessage(error);
 		} finally {
-			this.interrupting = false;
+			if (generation === this.#generation) this.interrupting = false;
 		}
 	}
 
@@ -225,16 +266,25 @@ class MateChats {
 	 * @param scope - Project id, or null for every project.
 	 */
 	async setScope(id: string, scope: string | null) {
+		if (this.scope_saving) return;
+		const generation = this.#generation;
+		this.scope_saving = true;
+		this.action_error = null;
 		try {
 			this.#upsertChat((await api.updateMateChat(id, { scope })).chat);
 		} catch (error) {
-			this.open_error = errorMessage(error);
+			if (generation === this.#generation)
+				this.action_error = 'Scope was not changed. ' + errorMessage(error);
+		} finally {
+			if (generation === this.#generation) this.scope_saving = false;
 		}
 	}
 
 	/** Delete a chat; with a runner, its session stops too. Throws when it could not. */
 	async remove(id: string) {
 		await api.deleteMateChat(id);
+		delete this.drafts[id];
+		delete this.pending_by_chat[id];
 		this.chats = this.chats.filter((chat) => chat.id !== id);
 		if (this.open_id === id) {
 			this.close();
@@ -279,12 +329,16 @@ class MateChats {
 		source.onerror = () => {
 			if (this.#source !== source) return;
 			if (source.readyState === EventSource.CLOSED) {
-				this.stream_error = 'The live chat stream closed. Reopen the chat to retry.';
+				this.stream_error = 'The live chat stream closed. Reconnect to catch up.';
+			} else {
+				this.stream_error = 'Connection lost. Reconnecting automatically…';
 			}
 		};
 	}
 
 	#add(incoming: MateEvent[]) {
+		if (incoming.some((event) => event.type === 'result' || event.type === 'error'))
+			this.interrupt_requested = false;
 		const before = this.events.length;
 		this.events = mergeEvents(this.events, incoming);
 		const ids = new Set(this.events.map((event) => event.id));

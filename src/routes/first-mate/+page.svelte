@@ -57,7 +57,7 @@
 	const thread_open = $derived(thread_id !== null && thread_project !== null && agent.visible);
 	const selected = $derived(missions.find((mission) => mission.id === thread_id));
 	const active_count = $derived(missions.filter((mission) => isBusyStatus(mission.status)).length);
-	const is_open = $derived(thread_open || chat !== undefined);
+	const is_open = $derived(thread_open || chat_id !== null);
 	const mounted = $derived(mate_chats.loaded);
 	const can_chat = $derived(mate_chats.can_chat);
 	const mate_reason = $derived(mate_chats.status?.reason);
@@ -136,7 +136,7 @@
 		starting = true;
 		try {
 			const id = await mate_chats.start(text, scope);
-			draft = '';
+			if (draft.trim() === text.trim()) draft = '';
 			await goto(chatHref(id));
 		} catch (error) {
 			toast.error('Could not start the chat', { description: errorMessage(error) });
@@ -158,12 +158,9 @@
 		if (!chat) {
 			return;
 		}
-		try {
-			await mate_chats.remove(chat.id);
-			closeOpen();
-		} catch (error) {
-			toast.error('Could not delete the chat', { description: errorMessage(error) });
-		}
+		const id = chat.id;
+		await mate_chats.remove(id);
+		if (chat_id === id) closeOpen();
 	}
 
 	async function newChat() {
@@ -206,7 +203,7 @@
 
 <div class="wrap is-wide mate" class:is-open={is_open}>
 	<aside class="mate-rail" aria-label="Chats" bind:this={rail_el}>
-		<button class="btn new-chat" type="button" onclick={() => void newChat()}>
+		<button class="btn new-chat" type="button" disabled={!can_chat} onclick={() => void newChat()}>
 			<PlusIcon size={14} strokeWidth={1.6} aria-hidden="true" /> New chat
 			<span class="kbd" aria-hidden="true">n</span>
 		</button>
@@ -215,10 +212,15 @@
 			<h2 class="caps rail-hd" id="mate-chats-hd">
 				Chats <span class="n">{mate_chats.chats.length}</span>
 			</h2>
-			{#if mounted && mate_reason === 'admin_only'}
+			{#if !mounted}
+				<p class="hint" role="status">Loading chats…</p>
+			{:else if mounted && mate_reason === 'admin_only'}
 				<p class="hint">First Mate answers admins only for now.</p>
 			{:else if mate_chats.list_error}
 				<p class="hint" role="alert">{mate_chats.list_error}</p>
+				<button class="btn btn-sm" type="button" onclick={() => void mate_chats.load()}
+					>Retry chats</button
+				>
 			{:else if mounted && mate_chats.chats.length === 0}
 				<p class="hint">Your chats appear here.</p>
 			{:else}
@@ -324,15 +326,34 @@
 				{/key}
 			</div>
 		{:else if chat}
-			<MateChatView
-				{chat}
-				focus_key={app_state.first_mate_focus_tick}
-				onback={closeOpen}
-				ondelete={() => void deleteChat()}
-			/>
-		{:else if !chat_id || mounted}
+			{#key chat.id}
+				<MateChatView
+					{chat}
+					focus_key={app_state.first_mate_focus_tick}
+					onback={closeOpen}
+					ondelete={deleteChat}
+				/>
+			{/key}
+		{:else if chat_id}
 			<div class="start">
-				<p class="eyebrow">First Mate</p>
+				<h1 class="h1">
+					{mate_chats.opening || !mounted ? 'Loading conversation…' : 'Conversation unavailable'}
+				</h1>
+				<p role="status">
+					{mate_chats.open_error ??
+						(mate_reason === 'admin_only'
+							? 'First Mate is for admins for now.'
+							: 'Choose a chat from the list or return to your chats.')}
+				</p>
+				{#if can_chat}<button
+						class="btn"
+						type="button"
+						onclick={() => void mate_chats.open(chat_id)}>Retry conversation</button
+					>{/if}
+				<button class="btn btn-ghost" type="button" onclick={closeOpen}>Back to chats</button>
+			</div>
+		{:else}
+			<div class="start">
 				<h1 class="h1">What do you want to know?</h1>
 				<p class="sub">
 					Ask about the work in your Beads projects: what's ready, what's stalled, what changed,
@@ -346,13 +367,19 @@
 					placeholder="Ask about your projects…"
 					rows={4}
 					submit_label="Ask"
-					disabled={mounted && !can_chat}
-					reason={mate_reason === 'admin_only' ? 'First Mate is for admins for now' : undefined}
+					disabled={!mounted || !can_chat}
+					reason={!mounted
+						? 'Loading First Mate…'
+						: mate_reason === 'admin_only'
+							? 'First Mate is for admins for now'
+							: !can_chat
+								? 'First Mate is unavailable. Retry loading chats.'
+								: undefined}
 					busy={starting}
 					onsend={(text) => void startChat(text)}
 				>
 					{#snippet controls()}
-						<MateContextSelect bind:value={scope} />
+						<MateContextSelect bind:value={scope} disabled={starting || !can_chat} />
 						<button
 							class="btn btn-sm btn-ghost"
 							type="button"
@@ -367,7 +394,11 @@
 				<ol class="starters" aria-label="Starting points">
 					{#each STARTERS as starter, index (starter)}
 						<li>
-							<button type="button" onclick={() => useStarter(starter)}>
+							<button
+								type="button"
+								disabled={!can_chat || starting}
+								onclick={() => useStarter(starter)}
+							>
 								<span class="n mono-num">{String(index + 1).padStart(2, '0')}</span>
 								<span>{starter}</span>
 							</button>
@@ -384,10 +415,9 @@
 						</p>
 					{:else if mate_chats.connected}
 						<p>
-							<strong>One agent, a crew behind it.</strong>
-							First Mate is one long-lived agent. It starts workers, watches them, and reports back when
-							something is done or needs you{#if mate_chats.status?.reachable === false}; the runner
-								is not answering right now{/if}.
+							<strong>Runner configured.</strong>
+							Messages go to the configured runner. Available actions depend on its setup{#if mate_chats.status?.reachable === false};
+								the runner is not answering right now{/if}.
 						</p>
 					{:else}
 						<p>
@@ -493,6 +523,10 @@
 		line-height: 1.4;
 		overflow-wrap: anywhere;
 	}
+	.mate-row:is(:focus-visible, [aria-current='page']) .row-ti {
+		-webkit-line-clamp: unset;
+		line-clamp: unset;
+	}
 	.row-ti .dot {
 		margin-right: 4px;
 	}
@@ -531,11 +565,6 @@
 		max-width: 76ch;
 		margin: 0 auto;
 		padding: clamp(var(--s-5), 9vh, 96px) 0 var(--s-6);
-	}
-	.eyebrow {
-		margin: 0 0 var(--s-2);
-		font-size: var(--t-sm);
-		color: var(--tx-dim);
 	}
 	.start .h1 {
 		margin: 0 0 var(--s-2);
