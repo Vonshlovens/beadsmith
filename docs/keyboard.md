@@ -180,9 +180,11 @@ here, and `S` / `f s` save a search: a deliberate difference.
 ## First Mate
 
 `/first-mate` is a chat: a rail of chats (and agent threads, when an agent
-runner is configured) beside one conversation. No model is connected yet, so
-replies are placeholders and chats stay in the browser's local storage. The
-commands stay on `⌘K`, and every composer has a **Commands** button.
+runner is configured) beside one conversation. With a mate runner configured,
+an admin's chat is one long-lived agent that runs a crew and reports back
+([first-mate.md](first-mate.md)); without one, replies are placeholders.
+Chats are kept on the server. The commands stay on `⌘K`, and every composer
+has a **Commands** button.
 
 | Keys      | Does                           |
 | --------- | ------------------------------ |

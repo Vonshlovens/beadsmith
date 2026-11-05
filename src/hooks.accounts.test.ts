@@ -222,6 +222,21 @@ describe('member', () => {
 		}
 	});
 
+	it('is refused First Mate chats, reads included', async () => {
+		for (const [method, path] of [
+			['GET', '/api/mate/chats'],
+			['POST', '/api/mate/chats'],
+			['GET', '/api/mate/chats/mc_1'],
+			['DELETE', '/api/mate/chats/mc_1'],
+			['GET', '/api/mate/chats/mc_1/events'],
+			['POST', '/api/mate/chats/mc_1/messages'],
+			['POST', '/api/mate/chats/mc_1/interrupt']
+		]) {
+			const { response } = await run({ path, method, cookie: member_cookie });
+			expect(response.status, `${method} ${path}`).toBe(403);
+		}
+	});
+
 	it('may not launch, cancel, or steer agents', async () => {
 		for (const path of [
 			'/api/projects/p1/dispatch',

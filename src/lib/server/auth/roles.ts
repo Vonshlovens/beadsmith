@@ -61,8 +61,12 @@ export function roleCan(role: AccountRole | undefined, permission: Permission): 
 	return roles[role].authorize(permission).success;
 }
 
-/** Admin-only for every method, reads included (the todo list is private to admins). */
-const ADMIN_PREFIXES = ['/console', '/api/console', '/api/todos'];
+/**
+ * Admin-only for every method, reads included: the todo list is private to
+ * admins, and First Mate chats drive an agent that can change Beads across
+ * projects (`/api/mate/status` stays readable so members see why).
+ */
+const ADMIN_PREFIXES = ['/console', '/api/console', '/api/todos', '/api/mate/chats'];
 const DISPATCH_PATTERN = /^\/api\/projects\/[^/]+\/dispatch(?:\/|$)/;
 /** Mutations a member may make: their own session/password, the shared theme, a re-scan. */
 const MEMBER_MUTATIONS = ['/api/auth/', '/api/settings/theme', '/api/projects/refresh'];
