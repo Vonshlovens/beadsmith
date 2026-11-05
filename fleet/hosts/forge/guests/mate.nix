@@ -1,12 +1,12 @@
 # Guest `mate`: the Beads sandbox First Mate will talk to
 # (specs/decisions/0015-scoped-agent-sandboxes.md). For now it is a minimal
-# NixOS under Firecracker: a read-only store disk, one writable volume, a
-# routed tap, and SSH from the host. No agent, no credentials: none may ever
-# be put in this image, its environment or its volume (rule 6 of ADR-0015).
+# NixOS under Firecracker with a read-only store, persistent agent volume,
+# and host-controlled SSH. Real model and signing credentials stay on the host
+# (rule 6 of ADR-0015 and ADR-0016).
 #
 # `net` and `stateDir` come from ../microvms.nix, which owns the addressing.
 { net, stateDir }:
-{ pkgs, ... }:
+{ pkgs, lib, ... }:
 let
   # Where agent state lives. The only writable disk that survives a restart;
   # the root filesystem is rebuilt from the store disk on every boot.
@@ -44,6 +44,10 @@ in
   # `i8042.nopnp`, so the driver probes the legacy IRQ, fails, and a stop
   # kills the guest without a shutdown (losing unsynced writes on the
   # volume). The later parameter wins.
+  boot.initrd.systemd.services.initrd-nixos-activation.serviceConfig = {
+    StandardOutput = lib.mkForce "journal+console";
+    StandardError = lib.mkForce "journal+console";
+  };
   boot.kernelParams = [ "i8042.nopnp=0" ];
 
   # Static, IPv4 only. The host routes and NATs; see ../microvms.nix.
@@ -68,6 +72,20 @@ in
     hashedPassword = "!";
     openssh.authorizedKeys.keys = [ net.controlKey ];
   };
+  users.users.agent = {
+    isNormalUser = true;
+    linger = true;
+    home = "${stateMount}/home";
+    createHome = true;
+    openssh.authorizedKeys.keys = [ net.runnerKey ];
+  };
+  systemd.tmpfiles.rules = [
+    "d ${stateMount}/home 0700 agent users -"
+    "d ${stateMount}/home/work 0700 agent users -"
+    "L+ ${stateMount}/home/work/AGENTS.md - - - - /etc/agent-instructions"
+    "L+ ${stateMount}/home/work/CLAUDE.md - - - - /etc/agent-instructions"
+  ];
+  environment.etc.agent-instructions.text = "You are First Mate, a Beads assistant. This sandbox currently has model access only. Do not claim Beads or repository access. Ask the operator when a requested action needs unavailable access. Never seek credentials or bypass network boundaries.\n";
   services.openssh = {
     enable = true;
     settings = {
@@ -75,6 +93,11 @@ in
       PasswordAuthentication = false;
       KbdInteractiveAuthentication = false;
       X11Forwarding = false;
+      AllowTcpForwarding = false;
+      AllowAgentForwarding = false;
+      PermitTunnel = false;
+      ClientAliveInterval = 15;
+      ClientAliveCountMax = 2;
     };
     # The host key lives on the volume, so it stays the same across restarts
     # and the host can pin it.
@@ -91,6 +114,33 @@ in
   environment.systemPackages = with pkgs; [
     curl
     git
+    ripgrep
+    beadsmith-nodejs
+    (writeShellScriptBin "mate-supervise" ''
+      # Transient services must not depend on the SSH or user-manager PATH.
+      export PATH=/run/current-system/sw/bin
+      export XDG_RUNTIME_DIR=/run/user/$(id -u)
+      export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus
+      exec ${systemd}/bin/systemd-run --user --quiet --pipe --wait --collect \
+        --service-type=exec --property=KillMode=control-group \
+        --property=TimeoutStopSec=2s --property=SendSIGKILL=yes \
+        --setenv=PATH="$PATH" \
+        --working-directory="$PWD" \
+        ${beadsmith-nodejs}/bin/node ${./chat-supervisor.mjs} "$@"
+    '')
+    (writeShellScriptBin "mate-claude" ''
+      exec /run/current-system/sw/bin/mate-supervise \
+        /run/current-system/sw/bin/mate-claude-inner "$@"
+    '')
+    (writeShellScriptBin "mate-claude-inner" ''
+      export HOME=${stateMount}/home
+      export ANTHROPIC_BASE_URL=http://${net.hostAddress}:${toString net.modelProxyPort}
+      export CLAUDE_CODE_OAUTH_TOKEN=guest-placeholder
+      export DISABLE_TELEMETRY=1 DISABLE_ERROR_REPORTING=1
+      export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1
+      unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
+      exec ${claude-code}/bin/claude "$@"
+    '')
   ];
 
   # The store disk is read-only; nothing in the guest builds or installs.

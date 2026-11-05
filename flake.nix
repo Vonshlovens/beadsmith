@@ -12,6 +12,14 @@
       url = "github:microvm-nix/microvm.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # The Claude Code subscription pool on forge (fleet/hosts/forge/underclass.nix).
+    # devenv only serves underclass's own dev shell; pointing it at this flake
+    # keeps devenv's inputs out of the lock.
+    underclass = {
+      url = "github:ghuntley/underclass";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.devenv.follows = "";
+    };
   };
 
   outputs =
@@ -20,6 +28,7 @@
       nixpkgs,
       sops-nix,
       microvm,
+      underclass,
     }:
     let
       lib = nixpkgs.lib;
@@ -70,7 +79,10 @@
       # The agent-worker laptop (fleet/hosts/forge): `nixos-rebuild switch
       # --flake .#forge`, run on the machine itself. Only forge hosts microVM
       # guests, so only forge imports microvm.nix's host module.
-      nixosConfigurations.forge = hostSystem "forge" [ microvm.nixosModules.host ];
+      nixosConfigurations.forge = hostSystem "forge" [
+        microvm.nixosModules.host
+        underclass.nixosModules.default
+      ];
 
       packages = forSystems (
         pkgs:
