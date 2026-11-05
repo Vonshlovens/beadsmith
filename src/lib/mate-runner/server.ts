@@ -165,7 +165,8 @@ export function createRunnerHandler(options: RunnerOptions) {
 		if (!agent.running) await reserveSlot(chat_id);
 		agent.prepare();
 		const previousScope = log.meta!.scope;
-		const nextScope = typeof scope === 'string' ? scope : null;
+		// Omission keeps the current project; only an explicit null clears it.
+		const nextScope = typeof scope === 'string' || scope === null ? scope : previousScope;
 		log.setMeta({ ...log.meta!, scope: nextScope });
 		const { event } = log.appendUser(prompt, message_id);
 		agent.send(prompt, previousScope === nextScope ? undefined : nextScope);
