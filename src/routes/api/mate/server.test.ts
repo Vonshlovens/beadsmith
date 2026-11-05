@@ -126,8 +126,6 @@ async function readFrames(
 	return frames;
 }
 
-const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
-
 describe('GET /api/mate/status', () => {
 	it('says why a viewer is not connected', async () => {
 		expect(await (await call(STATUS)).json()).toEqual({ connected: false, reason: 'unconfigured' });
@@ -274,8 +272,7 @@ describe('with a runner', () => {
 
 		const stored = await store.listEvents(chat.id, { limit: 10 });
 		expect(stored.map((event) => event.id)).toEqual(['e000001', 'e000002', 'e000003', 'e000004']);
-		await tick();
-		expect(fake.listeners(chat.id)).toBe(0);
+		await vi.waitFor(() => expect(fake.listeners(chat.id)).toBe(0));
 	});
 
 	it('catches up from the last stored runner event, and replays after Last-Event-ID', async () => {
@@ -368,12 +365,15 @@ describe('with a runner', () => {
 		const chat = await createChat();
 		const response = await call(EVENTS, { id: chat.id });
 		const reader = response.body!.getReader();
-		await reader.read();
-		await tick();
-		expect(fake.listeners(chat.id)).toBe(1);
-		await reader.cancel();
-		await tick();
-		expect(fake.listeners(chat.id)).toBe(0);
+		try {
+			// The first frame is local retry guidance, sent before async stored
+			// replay and runner connection. It does not signal a live listener.
+			await reader.read();
+			await vi.waitFor(() => expect(fake.listeners(chat.id)).toBe(1));
+		} finally {
+			await reader.cancel();
+		}
+		await vi.waitFor(() => expect(fake.listeners(chat.id)).toBe(0));
 	});
 
 	it('interrupts and deletes on the runner', async () => {
