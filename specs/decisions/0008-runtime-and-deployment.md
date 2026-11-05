@@ -164,3 +164,7 @@ Shipped:
 Related: [0003](./0003-dolt-read-plane.md) (reader credential, never
 start a local Dolt), [0005](./0005-bind-policy-and-cloudflare-access.md)
 (loopback bind + tunnel).
+
+The initial persistent chat runtime and host credential boundary are defined in
+[ADR-0016](0016-first-mate-worker-runtime.md). This does not activate repository
+dispatch, Dolt access, or terminal relay.

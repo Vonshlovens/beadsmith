@@ -78,3 +78,7 @@ from one flake.
 runs the script on every pull request and push to `main`, so the scan no
 longer depends on one machine having working scanners. The private denylist
 stays out of the repository and out of CI.
+
+The initial persistent chat runtime and host credential boundary are defined in
+[ADR-0016](0016-first-mate-worker-runtime.md). This does not activate repository
+dispatch, Dolt access, or terminal relay.

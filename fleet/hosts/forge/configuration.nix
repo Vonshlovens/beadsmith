@@ -17,6 +17,7 @@
     ./power.nix
     # Firecracker microVM guests (the `mate` Beads sandbox).
     ./microvms.nix
+    ./runtime.nix
     # ./nvidia.nix is not imported: no NVIDIA device enumerates on PCI (the
     # model normally ships one, so it may be off in the BIOS). Import it
     # once `lspci` shows the GPU, with its real bus ids.

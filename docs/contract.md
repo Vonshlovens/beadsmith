@@ -369,3 +369,13 @@ At minimum, tests must demonstrate:
 6. Once the terminal relay exists, it refuses members and any machine that
    is not a registered sandbox, stores and logs no relayed bytes, and records
    every attach and take-over.
+
+### Initial First Mate runtime
+
+[ADR-0016](../specs/decisions/0016-first-mate-worker-runtime.md) defines the
+first persistent Claude Code guest. The host runner uses signed requests over
+tailnet HTTPS; the web integration must enforce admin and chat ownership.
+Model and signing credentials remain on the host. The guest proxy admits only
+the Anthropic message surface, with no administration endpoints. This is a
+sanitized MissionEvent stream, not raw terminal relay. Dolt access, repository
+workers and production app activation are separate acceptance gates.
