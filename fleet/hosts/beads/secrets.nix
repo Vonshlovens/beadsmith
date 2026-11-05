@@ -60,6 +60,10 @@ in
       beads-web-better-auth-secret = beadsWeb;
       # BDX_SECRET_KEY_FILE: 32 bytes as base64 or hex.
       beads-web-master-key = beadsWeb;
+      # Shared HMAC key for the separately deployed First Mate runner.
+      beads-web-mate-runner-secret = beadsWeb;
+      # Identifying HTTPS origin; keep its value outside the public Nix source.
+      beads-web-mate-runner-url = beadsWeb;
       # Cloudflare Access settings, today in /etc/beads-web/beads-web.env.
       # Not secrets as such, but the owner supplies them (docs/operations/host-beads.md).
       beads-web-cf-access-issuer = root;
@@ -78,6 +82,7 @@ in
         BDX_CF_ACCESS_ISSUER=${config.sops.placeholder.beads-web-cf-access-issuer}
         BDX_CF_ACCESS_AUDIENCE=${config.sops.placeholder.beads-web-cf-access-audience}
         BDX_CF_ACCESS_ALLOWED_EMAILS=${config.sops.placeholder.beads-web-cf-access-allowed-emails}
+        BDX_MATE_RUNNER_URL=${config.sops.placeholder.beads-web-mate-runner-url}
       '';
       restartUnits = [ "beadsmith.service" ];
     };

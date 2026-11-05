@@ -9,6 +9,8 @@
 { pkgs, ... }:
 let
   readerPassword = "vm-test-reader-password";
+  runnerSigningValue = "not-a-real-secret-vm-test-mate-runner-only";
+  runnerSigningFile = pkgs.writeText "mate-runner-test-secret" runnerSigningValue;
 in
 {
   name = "beadsmith";
@@ -56,6 +58,7 @@ in
           BDX_DISPATCH_PROVIDER = "none";
         };
         credentials.dolt-password = "${pkgs.writeText "dolt-password" readerPassword}";
+        credentials.mate-runner-secret = "${runnerSigningFile}";
       };
       systemd.services.beadsmith = {
         after = [ "dolt.service" ];
@@ -93,6 +96,12 @@ in
             "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4321/healthz"
         ).strip()
         assert code == "204", f"/healthz returned {code}"
+
+    with subtest("First Mate signing key is a systemd credential"):
+        environment = machine.succeed("systemctl show beadsmith.service -p Environment --value")
+        assert "BDX_MATE_RUNNER_SECRET_FILE=/run/credentials/beadsmith.service/mate-runner-secret" in environment
+        assert "${runnerSigningValue}" not in environment
+        machine.succeed("cmp /run/credentials/beadsmith.service/mate-runner-secret ${runnerSigningFile}")
 
     with subtest("Beadsmith's reader sees the project bd made"):
         tables = machine.succeed(

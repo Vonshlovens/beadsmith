@@ -21,6 +21,7 @@ let
     dolt-password = "BEADS_DOLT_PASSWORD_FILE";
     better-auth-secret = "BETTER_AUTH_SECRET_FILE";
     master-key = "BDX_SECRET_KEY_FILE";
+    mate-runner-secret = "BDX_MATE_RUNNER_SECRET_FILE";
   };
 in
 {

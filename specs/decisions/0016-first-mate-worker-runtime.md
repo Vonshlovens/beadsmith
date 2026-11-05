@@ -62,7 +62,7 @@ empty pool proves transport and failure handling, not model success.
 
 This change does not implement Dolt proxying, Beads access inside the guest,
 repository workers, sandbox registration, raw terminal relay, OAuth MCP, or
-production web-app activation. No database or repository authority is implied
+production web-app acceptance. No database or repository authority is implied
 by a running agent. The initial instructions tell the agent those limits.
 
 ## Alternatives considered
@@ -85,3 +85,9 @@ See [`runtime.nix`](../../fleet/hosts/forge/runtime.nix),
 [Operations](../../docs/operations/host-forge.md) describes credential handling,
 onboarding, activation and rollback. Deployment and owner acceptance must be
 recorded separately from source implementation.
+
+The production application configuration supplies the runner origin from sops
+and the shared signing key through a systemd credential. Admin and owner checks
+remain in the application; guest SSH and model credentials stay on the worker
+host. Deploying this configuration does not certify successful model turns or
+browser acceptance.
