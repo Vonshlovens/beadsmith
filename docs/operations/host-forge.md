@@ -46,6 +46,15 @@ runner handles `/v1/...` and signatures cover the full path and query.
 The app requires HTTPS; certificate failure is a deployment
 blocker, not a reason to weaken that requirement.
 
+The production web host reads its runner origin from the encrypted
+`beads-web-mate-runner-url` setting in `fleet/secrets/beads.yaml`. Its
+`beads-web-mate-runner-secret` must match `mate-runner-secret` in
+`fleet/secrets/forge.yaml`. The application receives the key as a systemd
+credential through `BDX_MATE_RUNNER_SECRET_FILE`; neither the secret value nor
+the private origin belongs in plain Nix source. Key rotation must update and
+restart both services. The web host needs tailnet HTTPS access to the runner;
+it does not receive guest SSH or model credentials.
+
 Inspect `underclass`, `mate-model-proxy`, `mate-runner`, `microvm@mate` and
 `microvm-guest-firewall` services. Verify signed health, unsigned and stale
 request rejection, forbidden proxy paths, empty-pool handling, and network

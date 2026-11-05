@@ -42,8 +42,9 @@ reality**. Search `src/` before treating a spec as implemented.
   status. Comment uses the File checkout
   ([ADR-0006](decisions/0006-durable-agent-dispatch.md)).
 - The first Claude Code guest and host runner are implemented in
-  [ADR-0016](decisions/0016-first-mate-worker-runtime.md). Model enrollment and
-  production app activation are separate gates. Remaining target: **agents run in scoped sandboxes**. A beads sandbox
+  [ADR-0016](decisions/0016-first-mate-worker-runtime.md). The production app
+  configuration connects through its signed HTTPS contract; model and browser
+  acceptance remain separate gates. Remaining target: **agents run in scoped sandboxes**. A beads sandbox
   (the orchestrator) holds per-project Dolt grants and asks for repository
   work through dispatch; a repo sandbox reaches one repository. Model and
   repository keys stay outside sandboxes, behind a proxy. Beadsmith may
