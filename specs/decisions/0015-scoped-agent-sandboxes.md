@@ -184,12 +184,12 @@ question. It stays the view for members and for providers without a relay.
 Not shipped. Today the only provider is the webhook runner and Beadsmith
 holds no sandbox connection.
 
-The first sandbox VM exists, empty: `mate` on the fleet host `forge`
+The first sandbox VM is `mate` on the fleet host `forge`
 ([`fleet/hosts/forge/microvms.nix`](../../fleet/hosts/forge/microvms.nix)),
 a Firecracker microVM (microvm.nix) meant to become the beads sandbox. It
 has a routed tap of its own, no bridge; a host nftables table drops its
 traffic to private, tailnet, link-local and other guests' addresses and to
-the host itself, and lets it reach the internet until the key proxy exists.
+the host itself except the scoped model proxy, and permits public IPv4 egress.
 The host controls it over SSH with a key that never leaves the host. It
 holds no real credential. ADR-0016 adds Claude Code and its host proxy.
 
