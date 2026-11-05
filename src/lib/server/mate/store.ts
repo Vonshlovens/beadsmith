@@ -74,8 +74,8 @@ export interface MateStore {
 		origin: MateEventOrigin
 	): Promise<MateEvent[]>;
 	/**
-	 * The chat's most recent `limit` events, oldest first; only those after
-	 * `after` when that id is stored (all of them otherwise).
+	 * The chat's most recent `limit` events, oldest first; with `after`, the next
+	 * `limit` events instead (from the beginning for an unknown cursor).
 	 */
 	listEvents(chat_id: string, options: { after?: string; limit: number }): Promise<MateEvent[]>;
 	/** The newest event id that came from the runner: the catch-up cursor. */
@@ -336,7 +336,7 @@ export function createMateStore(client: Client, now: () => Date = () => new Date
 			const result = await client.execute({
 				sql: `SELECT ${EVENT_COLUMNS} FROM (
 						SELECT ${EVENT_COLUMNS} FROM mate_events
-						WHERE chat_id = ? AND seq > ? ORDER BY seq DESC LIMIT ?
+						WHERE chat_id = ? AND seq > ? ORDER BY seq ${options.after === undefined ? 'DESC' : 'ASC'} LIMIT ?
 					) ORDER BY seq`,
 				args: [chat_id, after_seq, options.limit]
 			});

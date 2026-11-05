@@ -1,5 +1,5 @@
 import { createClient } from '@libsql/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_MESSAGE_CHARS, UNWIRED_REPLY, type MateEvent } from '#lib/mate.js';
 import { readEnv } from '#lib/server/env.js';
 import { createMateRunner, setMateRunner } from '#lib/server/mate/runner.js';
@@ -306,6 +306,45 @@ describe('with a runner', () => {
 		).toBe(400);
 	});
 
+	it('does not skip events stored by another tab during replay', async () => {
+		const chat = await createChat();
+		await call(SEND, { id: chat.id, body: { text: 'hi' } });
+		fake.end_after_replay = true;
+		await readFrames(await call(EVENTS, { id: chat.id }), 10);
+		const list = store.listEvents.bind(store);
+		vi.spyOn(store, 'listEvents').mockImplementationOnce(async (...args) => {
+			const snapshot = await list(...args);
+			const id = fake.emit(chat.id, { type: 'assistant', text: 'concurrent reply' });
+			await store.appendEvents(
+				chat.id,
+				[{ type: 'assistant', id, text: 'concurrent reply' }],
+				'runner'
+			);
+			return snapshot;
+		});
+		const frames = await readFrames(await call(EVENTS, { id: chat.id }), 10);
+		expect(frames.map((f) => f.id)).toEqual(['e000001', 'e000002']);
+	});
+
+	it('replays every missed event across the replay page boundary', async () => {
+		const chat = await createChat();
+		const events = Array.from({ length: 2003 }, (_, n) => ({
+			type: 'assistant' as const,
+			id: `e${n}`,
+			text: 'reply'
+		}));
+		await store.appendEvents(chat.id, events, 'runner');
+		fake.end_after_replay = true;
+		const frames = await readFrames(
+			await call(EVENTS, {
+				id: chat.id,
+				headers: { 'last-event-id': 'e0' }
+			}),
+			3000
+		);
+		expect(frames.map((f) => f.id)).toEqual(events.slice(1).map((e) => e.id));
+	});
+
 	it('reports a runner failure as a runner_error frame', async () => {
 		const chat = await createChat();
 		fake.failNext('/events', 500, { error: 'session store down' });
@@ -314,6 +353,15 @@ describe('with a runner', () => {
 		expect(JSON.parse(frames[0]!.data)).toEqual({
 			message: 'The mate runner refused to stream the chat (HTTP 500): session store down'
 		});
+	});
+
+	it('does not open a runner stream for an already cancelled request', async () => {
+		const chat = await createChat();
+		const ac = new AbortController();
+		ac.abort();
+		const frames = await readFrames(await call(EVENTS, { id: chat.id, signal: ac.signal }), 1);
+		expect(frames).toEqual([]);
+		expect(fake.requests).toEqual([]);
 	});
 
 	it('closing the browser stream closes the runner stream', async () => {

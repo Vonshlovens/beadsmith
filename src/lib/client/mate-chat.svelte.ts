@@ -47,6 +47,7 @@ class MateChats {
 	stream_error = $state<string | null>(null);
 	interrupting = $state(false);
 
+	#generation = 0;
 	#source: EventSource | null = null;
 	#loading: Promise<void> | null = null;
 
@@ -96,24 +97,32 @@ class MateChats {
 	 * @param id - Chat id.
 	 */
 	async open(id: string) {
-		if (this.open_id === id) {
+		if (
+			this.open_id === id &&
+			!this.open_error &&
+			!this.stream_error &&
+			this.#source?.readyState !== EventSource.CLOSED
+		) {
 			return;
 		}
+		const pending = this.open_id === id ? this.pending : [];
 		this.close();
+		this.pending = pending;
+		const generation = this.#generation;
 		this.open_id = id;
 		this.open_error = null;
 		try {
 			const detail = await api.mateChat(id);
-			if (this.open_id !== id) {
+			if (this.#generation !== generation) {
 				return;
 			}
-			this.events = mergeEvents(this.events, detail.events);
+			this.#add(detail.events);
 			this.#upsertChat(detail.chat);
 			if (this.connected) {
 				this.#follow(id);
 			}
 		} catch (error) {
-			if (this.open_id === id) {
+			if (this.#generation === generation) {
 				this.open_error = errorMessage(error);
 			}
 		}
@@ -121,6 +130,7 @@ class MateChats {
 
 	/** Stop following the open chat. The agent keeps working on the runner. */
 	close() {
+		this.#generation += 1;
 		this.#source?.close();
 		this.#source = null;
 		this.open_id = null;
@@ -181,6 +191,7 @@ class MateChats {
 				}
 			}
 		} catch (error) {
+			if (this.open_id !== id) return;
 			this.pending = this.pending.map((p) =>
 				p.message_id === message_id ? { ...p, error: errorMessage(error) } : p
 			);
@@ -234,11 +245,14 @@ class MateChats {
 		const last = this.events.at(-1)?.id;
 		const query = last === undefined ? '' : `?${new URLSearchParams({ after: last })}`;
 		const source = new EventSource(`/api/mate/chats/${encodeURIComponent(id)}/events${query}`);
+		this.#source?.close();
 		this.#source = source;
 		source.onopen = () => {
+			if (this.#source !== source) return;
 			this.stream_error = null;
 		};
 		source.onmessage = (message: MessageEvent<string>) => {
+			if (this.#source !== source) return;
 			let data: unknown;
 			try {
 				data = JSON.parse(message.data);
@@ -252,6 +266,7 @@ class MateChats {
 			this.#add([{ ...data, at: typeof at === 'string' ? at : new Date().toISOString() }]);
 		};
 		source.addEventListener('runner_error', (message) => {
+			if (this.#source !== source) return;
 			let text = 'The mate runner is unavailable.';
 			try {
 				const parsed = JSON.parse((message as MessageEvent<string>).data) as { message?: unknown };
@@ -262,6 +277,7 @@ class MateChats {
 			this.stream_error = `${text} Retrying…`;
 		});
 		source.onerror = () => {
+			if (this.#source !== source) return;
 			if (source.readyState === EventSource.CLOSED) {
 				this.stream_error = 'The live chat stream closed. Reopen the chat to retry.';
 			}

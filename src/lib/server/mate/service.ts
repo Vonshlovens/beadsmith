@@ -148,6 +148,8 @@ export function mateEventStream(options: MateStreamOptions): ReadableStream<Uint
 			};
 			if (signal.aborted) {
 				ac.abort();
+				close();
+				return;
 			} else {
 				signal.addEventListener('abort', stop, { once: true });
 			}
@@ -157,14 +159,16 @@ export function mateEventStream(options: MateStreamOptions): ReadableStream<Uint
 			void (async () => {
 				try {
 					push(`retry: ${RETRY_MS}\n\n`);
-					const stored = await store.listEvents(chat.id, {
-						after: options.after,
-						limit: MAX_REPLAY_EVENTS
-					});
-					for (const event of stored) {
-						push(frame(event));
-					}
+					// Capture before replay: another tab may append while we read. A
+					// cursor read afterwards could skip events this browser never saw.
 					const cursor = await store.lastRunnerEventId(chat.id);
+					let after = options.after;
+					while (!ac.signal.aborted) {
+						const stored = await store.listEvents(chat.id, { after, limit: MAX_REPLAY_EVENTS });
+						for (const event of stored) push(frame(event));
+						if (stored.length < MAX_REPLAY_EVENTS) break;
+						after = stored.at(-1)!.id;
+					}
 					await runner.streamEvents(
 						chat.id,
 						cursor,

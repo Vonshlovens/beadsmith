@@ -112,7 +112,14 @@
 				<li class="chat-event">No model is connected yet. Replies are placeholders.</li>
 			{/if}
 			{#if mate_chats.open_error}
-				<li class="chat-event err" role="alert">{mate_chats.open_error}</li>
+				<li class="chat-event err" role="alert">
+					{mate_chats.open_error}
+					<button
+						class="btn btn-sm btn-ghost"
+						type="button"
+						onclick={() => void mate_chats.open(chat.id)}>Retry</button
+					>
+				</li>
 			{/if}
 			{#each bubbles as bubble (bubble.id)}
 				<li
@@ -202,7 +209,14 @@
 				</li>
 			{/if}
 			{#if mate_chats.stream_error}
-				<li class="chat-event err" role="status">{mate_chats.stream_error}</li>
+				<li class="chat-event err" role="status">
+					{mate_chats.stream_error}
+					<button
+						class="btn btn-sm btn-ghost"
+						type="button"
+						onclick={() => void mate_chats.open(chat.id)}>Reconnect</button
+					>
+				</li>
 			{/if}
 		</ol>
 	</div>
