@@ -4,9 +4,10 @@ let
   node = pkgs.beadsmith-nodejs;
   source = pkgs.runCommand "mate-runner-source" {} ''
     mkdir -p $out/scripts $out/src/lib
-    cp ${../../..}/scripts/{mate-runner.ts,ts-resolve.mjs} $out/scripts/
-    cp -r ${../../..}/src/lib/mate-runner $out/src/lib/
-    cp ${../../..}/src/lib/mission-events.ts $out/src/lib/
+    cp ${../../../scripts/mate-runner.ts} $out/scripts/mate-runner.ts
+    cp ${../../../scripts/ts-resolve.mjs} $out/scripts/ts-resolve.mjs
+    cp -r ${../../../src/lib/mate-runner} $out/src/lib/
+    cp ${../../../src/lib/mission-events.ts} $out/src/lib/
     echo '{"type":"module"}' > $out/package.json
   '';
   knownHosts = pkgs.writeText "mate-known-hosts" "${net.guestAddress} ${net.hostKey}\n";
