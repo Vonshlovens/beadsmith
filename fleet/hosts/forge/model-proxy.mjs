@@ -2,13 +2,16 @@
 // headers, bodies, or upstream errors: any of them can contain credentials.
 import { createServer, request } from 'node:http';
 import { readFileSync } from 'node:fs';
-import { Transform } from 'node:stream';
+import { Transform, pipeline } from 'node:stream';
 const key = readFileSync(process.env.PROXY_KEY_FILE, 'utf8').trim();
 if (key.length < 32) throw new Error('Proxy credential is invalid');
 const allowed = new Set(['/v1/messages', '/v1/messages/count_tokens']);
 const requestHeaders =
 	/^(content-type|accept|user-agent|x-app|anthropic-[a-z-]+|x-stainless-[a-z-]+|x-claude-code-session-id)$/;
 createServer((req, res) => {
+	// A transport failure belongs to this request, never to the whole proxy.
+	req.on('error', () => res.destroy());
+	res.on('error', () => req.destroy());
 	if (req.method !== 'POST' || !allowed.has(req.url.split('?')[0])) {
 		res.writeHead(404).end();
 		return;
@@ -57,13 +60,15 @@ createServer((req, res) => {
 					done();
 				}
 			});
-			reply.pipe(scrub).pipe(res);
-			reply.on('error', () => res.destroy());
+			// Tear down every stream on failure, including the transform and
+			// downstream response. Do not log errors that may contain credentials.
+			pipeline(reply, scrub, res, () => {});
 		}
 	);
 	upstream.on('error', () => {
-		if (!res.headersSent) res.writeHead(502);
-		res.end();
+		if (res.destroyed) return;
+		if (res.headersSent) res.destroy();
+		else res.writeHead(502).end();
 	});
 	req.on('aborted', () => upstream.destroy());
 	res.on('close', () => upstream.destroy());

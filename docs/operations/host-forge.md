@@ -63,7 +63,10 @@ integration. Dolt access and repository workers remain unimplemented here.
 `fleet/hosts/forge/guest-lifecycle.test.mjs` runs against a deployed guest and
 uses temporary host runners on loopback ports 18787 and 18788. It does not use
 model credentials or change the production runner configuration. The fixture
-starts two generations of detached descendants which ignore SIGTERM.
+resolves `git`, `curl`, `rg`, `ls` and `bash` by name inside the supervised
+service, then starts two generations of detached descendants which ignore
+SIGTERM. The supervisor explicitly supplies the system tool PATH rather than
+depending on the SSH login or user-manager environment.
 
 From the host checkout, install the fixture using `sudo mate-ssh`:
 

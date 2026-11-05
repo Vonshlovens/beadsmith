@@ -117,11 +117,14 @@ in
     ripgrep
     beadsmith-nodejs
     (writeShellScriptBin "mate-supervise" ''
+      # Transient services must not depend on the SSH or user-manager PATH.
+      export PATH=/run/current-system/sw/bin
       export XDG_RUNTIME_DIR=/run/user/$(id -u)
       export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus
       exec ${systemd}/bin/systemd-run --user --quiet --pipe --wait --collect \
         --service-type=exec --property=KillMode=control-group \
         --property=TimeoutStopSec=2s --property=SendSIGKILL=yes \
+        --setenv=PATH="$PATH" \
         --working-directory="$PWD" \
         ${beadsmith-nodejs}/bin/node ${./chat-supervisor.mjs} "$@"
     '')
