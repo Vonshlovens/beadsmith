@@ -79,7 +79,12 @@
 		void mate_chats.events.length;
 		void mate_chats.pending.length;
 		void working;
-		if (untrack(() => follow_latest)) void tick().then(jumpToLatest);
+		if (untrack(() => follow_latest)) {
+			void tick().then(() => {
+				// The reader may have scrolled away while the new activity rendered.
+				if (follow_latest) log_el?.scrollTo({ top: log_el.scrollHeight });
+			});
+		}
 	});
 
 	$effect(() => {
