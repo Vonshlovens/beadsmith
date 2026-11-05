@@ -176,7 +176,7 @@ describe('mate runner', () => {
 		expect(await res.json()).toEqual({ event_id: 'e000000001' });
 		const events = await readEvents('chat1', 3);
 		expect(events).toEqual([
-			{ type: 'user', id: 'e000000001', text: 'hello' },
+			{ type: 'user', id: 'e000000001', text: 'hello', message_id: 'm1' },
 			{ type: 'assistant', id: 'e000000002', text: 'echo: hello' },
 			{ type: 'result', id: 'e000000003', status: 'succeeded', text: 'echo: hello', duration_ms: 5 }
 		]);
