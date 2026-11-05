@@ -36,6 +36,8 @@ beforeEach(() => {
 	vi.stubGlobal('EventSource', FakeSource);
 	FakeSource.instances = [];
 	chats.close();
+	chats.pending_by_chat = {};
+	chats.drafts = {};
 	chats.status = { connected: true, reachable: true };
 	vi.spyOn(api, 'mateChat').mockResolvedValue({ chat, events: [] });
 });
@@ -147,4 +149,82 @@ it('settles only the matching message identity before a send response, including
 	expect(chats.pending.map((item) => item.message_id)).toEqual(['second']);
 	acknowledgeSecond({ event_id: 'e2' });
 	await second;
+});
+
+it('retains failed sends and drafts across chat navigation without mixing them', async () => {
+	await chats.open(chat.id);
+	chats.drafts[chat.id] = 'unfinished thought';
+	vi.spyOn(api, 'sendMateMessage').mockRejectedValue(new Error('offline'));
+	await chats.send(chat.id, 'keep me', 'retained');
+	await chats.open('mc_other');
+	expect(chats.pending).toEqual([]);
+	expect(chats.drafts.mc_other).toBeUndefined();
+	await chats.open(chat.id);
+	expect(chats.drafts[chat.id]).toBe('unfinished thought');
+	expect(chats.pending[0]).toMatchObject({ message_id: 'retained', text: 'keep me' });
+});
+
+it('records a late send failure for its original chat', async () => {
+	await chats.open(chat.id);
+	let reject!: (error: Error) => void;
+	vi.spyOn(api, 'sendMateMessage').mockImplementation(
+		() =>
+			new Promise((_, no) => {
+				reject = no;
+			})
+	);
+	const sent = chats.send(chat.id, 'hello', 'late');
+	await chats.open('mc_other');
+	reject(new Error('offline'));
+	await sent;
+	expect(chats.pending).toEqual([]);
+	await chats.open(chat.id);
+	expect(chats.pending[0]?.error).toBeTruthy();
+});
+
+it('keeps the transcript while reconnecting and after a failed refresh', async () => {
+	await chats.open(chat.id);
+	FakeSource.instances[0]!.onmessage!({
+		data: JSON.stringify({ type: 'assistant', id: 'e1', text: 'keep reading' })
+	});
+	FakeSource.instances[0]!.close();
+	vi.mocked(api.mateChat).mockRejectedValueOnce(new Error('offline'));
+	await chats.open(chat.id);
+	expect(chats.events[0]?.id).toBe('e1');
+	expect(chats.open_error).toBeTruthy();
+	expect(chats.opening).toBe(false);
+});
+
+it('reports transient stream loss and clears the notice when connected', async () => {
+	await chats.open(chat.id);
+	const source = FakeSource.instances[0]!;
+	source.readyState = 0;
+	source.onerror!();
+	expect(chats.stream_error).toContain('Reconnecting');
+	source.onopen!();
+	expect(chats.stream_error).toBeNull();
+});
+
+it('keeps saved scope on failure without treating it as a failed transcript load', async () => {
+	await chats.open(chat.id);
+	vi.spyOn(api, 'updateMateChat').mockRejectedValueOnce(new Error('offline'));
+	await chats.setScope(chat.id, 'd_another');
+	expect(chats.get(chat.id)?.scope).toBeNull();
+	expect(chats.action_error).toContain('Scope was not changed');
+	expect(chats.open_error).toBeNull();
+	expect(chats.scope_saving).toBe(false);
+});
+
+it('acknowledges a stop request only until the terminal event arrives', async () => {
+	await chats.open(chat.id);
+	const source = FakeSource.instances[0]!;
+	source.onmessage!({ data: JSON.stringify({ type: 'assistant', id: 'e1', text: 'working' }) });
+	vi.spyOn(api, 'interruptMate').mockResolvedValue({ interrupted: true });
+	await chats.interrupt(chat.id);
+	expect(chats.interrupt_requested).toBe(true);
+	await chats.interrupt(chat.id);
+	expect(api.interruptMate).toHaveBeenCalledTimes(1);
+	source.onmessage!({ data: JSON.stringify({ type: 'result', id: 'e2', status: 'cancelled' }) });
+	expect(chats.interrupt_requested).toBe(false);
+	expect(chats.working).toBe(false);
 });

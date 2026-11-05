@@ -10,7 +10,7 @@
 	import { MAX_MESSAGE_CHARS } from '#lib/client/mate-chat.js';
 
 	interface Props {
-		value: string;
+		value: string | undefined;
 		/** Accessible name for the textarea. */
 		label: string;
 		placeholder?: string;
@@ -46,12 +46,13 @@
 		class: class_name = ''
 	}: Props = $props();
 
-	const can_send = $derived(!disabled && !busy && value.trim().length > 0);
+	const hint_id = $props.id();
+	const can_send = $derived(!disabled && !busy && (value ?? '').trim().length > 0);
 
 	function submit(event?: SubmitEvent) {
 		event?.preventDefault();
 		if (can_send) {
-			onsend(value.trim());
+			onsend((value ?? '').trim());
 		}
 	}
 
@@ -72,6 +73,7 @@
 		{rows}
 		maxlength={MAX_MESSAGE_CHARS}
 		aria-label={label}
+		aria-describedby={hint_id}
 		placeholder={disabled ? '' : placeholder}
 		{disabled}
 		onkeydown={onKeydown}></textarea>
@@ -79,15 +81,15 @@
 		{@render controls?.()}
 		<span class="spacer"></span>
 		{#if disabled && reason}
-			<span class="why">{reason}</span>
+			<span id={hint_id} class="why">{reason}</span>
 		{:else}
-			<span class="hint-keys" aria-hidden="true"
+			<span id={hint_id} class="hint-keys"
 				><span class="kbd">⏎</span> send <span class="kbd">⇧⏎</span> new line</span
 			>
 		{/if}
 		{@render actions?.()}
 		<button class="btn btn-sm btn-primary send" type="submit" disabled={!can_send}>
-			{submit_label}
+			{busy ? 'Sending…' : submit_label}
 			<ArrowUpIcon size={13} strokeWidth={2} aria-hidden="true" />
 		</button>
 	</div>
@@ -163,7 +165,7 @@
 	}
 	@media (pointer: coarse) {
 		.composer-ft :global(.btn-sm) {
-			height: 32px;
+			min-height: 44px;
 		}
 	}
 </style>

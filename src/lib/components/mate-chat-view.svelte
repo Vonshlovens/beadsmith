@@ -6,7 +6,7 @@
 	 * compact chips, thinking folds away, errors sit inline. Stop interrupts
 	 * the agent's current turn; the session keeps running.
 	 */
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
 	import CommandIcon from '@lucide/svelte/icons/command';
 	import SquareIcon from '@lucide/svelte/icons/square';
@@ -24,12 +24,16 @@
 		/** Bump to focus the composer. */
 		focus_key?: number;
 		onback: () => void;
-		ondelete: () => void;
+		ondelete: () => Promise<void>;
 	}
 
 	let { chat, focus_key = 0, onback, ondelete }: Props = $props();
 
-	let text = $state('');
+	let confirming_delete = $state(false);
+	let deleting = $state(false);
+	let delete_error = $state<string | null>(null);
+	let delete_button = $state<HTMLButtonElement | null>(null);
+	let follow_latest = $state(true);
 	let textarea = $state<HTMLTextAreaElement | null>(null);
 	let log_el = $state<HTMLDivElement | null>(null);
 
@@ -62,27 +66,53 @@
 		return out;
 	}
 
-	// Keep the newest message in view.
+	function jumpToLatest() {
+		follow_latest = true;
+		log_el?.scrollTo({ top: log_el.scrollHeight });
+	}
+	function trackScroll() {
+		if (log_el) follow_latest = log_el.scrollHeight - log_el.scrollTop - log_el.clientHeight < 64;
+	}
+
+	// Follow activity only while the reader is already at the bottom.
 	$effect(() => {
 		void mate_chats.events.length;
 		void mate_chats.pending.length;
 		void working;
-		void tick().then(() => log_el?.scrollTo({ top: log_el.scrollHeight }));
+		if (untrack(() => follow_latest)) void tick().then(jumpToLatest);
 	});
 
 	$effect(() => {
 		void focus_key;
 		void chat.id;
-		void tick().then(() => textarea?.focus());
+		if (!mate_chats.opening) void tick().then(() => textarea?.focus({ preventScroll: true }));
 	});
+
+	async function deleteChat() {
+		if (deleting) return;
+		deleting = true;
+		delete_error = null;
+		try {
+			await ondelete();
+		} catch {
+			delete_error = 'Could not delete this chat. It has been kept; try again.';
+		} finally {
+			deleting = false;
+		}
+	}
+	function cancelDelete() {
+		confirming_delete = false;
+		void tick().then(() => delete_button?.focus());
+	}
 
 	function send(message: string) {
 		void mate_chats.send(chat.id, message);
-		text = '';
+		mate_chats.drafts[chat.id] = '';
+		void tick().then(jumpToLatest);
 	}
 </script>
 
-<section class="chat" aria-label="Chat">
+<section class="chat" aria-label={chat.title}>
 	<header class="chat-col chat-hd">
 		<button
 			class="btn btn-sm btn-ghost btn-icon back"
@@ -103,11 +133,45 @@
 				{bubbles.length === 1 ? 'message' : 'messages'}
 			</p>
 		</div>
-		<button class="btn btn-sm btn-ghost" type="button" onclick={ondelete}>Delete</button>
+		<button
+			bind:this={delete_button}
+			class="btn btn-sm btn-ghost"
+			type="button"
+			aria-expanded={confirming_delete}
+			onclick={() => (confirming_delete = !confirming_delete)}>Delete chat</button
+		>
 	</header>
 
-	<div class="chat-scroll" bind:this={log_el}>
-		<ol class="chat-log chat-col" aria-live="polite">
+	{#if confirming_delete}
+		<div class="chat-col delete-confirm">
+			<p>Delete this chat and stop its session? Its saved messages will be removed.</p>
+			{#if delete_error}<p class="err" role="alert">{delete_error}</p>{/if}
+			<button
+				class="btn btn-sm btn-danger"
+				type="button"
+				disabled={deleting}
+				onclick={() => void deleteChat()}>{deleting ? 'Deleting…' : 'Delete permanently'}</button
+			>
+			<button class="btn btn-sm btn-ghost" type="button" disabled={deleting} onclick={cancelDelete}
+				>Keep chat</button
+			>
+		</div>
+	{/if}
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable transcript needs keyboard scrolling.) -->
+	<div
+		class="chat-scroll"
+		bind:this={log_el}
+		onscroll={trackScroll}
+		tabindex="0"
+		role="region"
+		aria-label="Conversation, oldest first"
+	>
+		<ol class="chat-log chat-col" aria-live="polite" aria-busy={mate_chats.opening}>
+			{#if mate_chats.opening}
+				<li class="chat-event" role="status">Loading conversation…</li>
+			{:else if !mate_chats.open_error && bubbles.length === 0 && mate_chats.pending.length === 0}
+				<li class="chat-event">No messages yet. Send a message to start this conversation.</li>
+			{/if}
 			{#if !connected}
 				<li class="chat-event">No model is connected yet. Replies are placeholders.</li>
 			{/if}
@@ -117,7 +181,7 @@
 					<button
 						class="btn btn-sm btn-ghost"
 						type="button"
-						onclick={() => void mate_chats.open(chat.id)}>Retry</button
+						onclick={() => void mate_chats.open(chat.id)}>Retry loading</button
 					>
 				</li>
 			{/if}
@@ -156,7 +220,7 @@
 											{#if tool.kind === 'tool'}
 												<li class="tool" class:is-running={tool.status === 'running'}>
 													<code>{tool.name}</code>
-													<span class="sr-only">, {tool.status}</span>
+													<span class="tool-status"> · {tool.status}</span>
 												</li>
 											{/if}
 										{/each}
@@ -180,7 +244,13 @@
 				<li class="chat-msg is-you" class:is-failed={item.error !== undefined}>
 					<div class="chat-role">
 						<span>You</span>
-						<span class="st">{item.error ? 'not sent' : 'sending'}</span>
+						<span class="st"
+							>{item.error
+								? 'send not confirmed'
+								: item.event_id
+									? 'accepted · awaiting transcript'
+									: 'sending'}</span
+						>
 					</div>
 					<p class="chat-body is-dim">{item.text}</p>
 					{#if item.error}
@@ -189,7 +259,7 @@
 							<button
 								class="btn btn-sm btn-ghost"
 								type="button"
-								onclick={() => mate_chats.retry(chat.id, item)}>Retry</button
+								onclick={() => mate_chats.retry(chat.id, item)}>Retry send</button
 							>
 							<button
 								class="btn btn-sm btn-ghost"
@@ -222,10 +292,31 @@
 	</div>
 
 	<div class="chat-col compose-dock">
+		{#if !follow_latest}
+			<button class="btn btn-sm btn-ghost" type="button" onclick={jumpToLatest}
+				>Jump to latest</button
+			>
+		{/if}
+		<p class="compose-status dim xs" role="status">
+			{#if mate_chats.scope_saving}Saving scope…
+			{:else if mate_chats.interrupt_requested}Stop requested. Waiting for the turn to finish.
+			{:else}Scope applies to your next message.{/if}
+		</p>
+		{#if mate_chats.action_error}
+			<p class="err" role="alert">{mate_chats.action_error}</p>
+		{/if}
 		<ChatComposer
-			bind:value={text}
+			bind:value={mate_chats.drafts[chat.id]}
 			bind:textarea
 			label="Message First Mate"
+			disabled={mate_chats.opening || !!mate_chats.open_error || mate_chats.scope_saving}
+			reason={mate_chats.opening
+				? 'Loading conversation…'
+				: mate_chats.scope_saving
+					? 'Saving scope…'
+					: mate_chats.open_error
+						? 'Load the conversation before sending.'
+						: undefined}
 			placeholder={working ? 'Add to what it is doing…' : 'Ask a follow-up…'}
 			rows={2}
 			onsend={send}
@@ -233,6 +324,7 @@
 			{#snippet controls()}
 				<MateContextSelect
 					value={chat.scope}
+					disabled={mate_chats.scope_saving || mate_chats.opening}
 					onchange={(scope) => void mate_chats.setScope(chat.id, scope)}
 				/>
 				<button
@@ -249,12 +341,16 @@
 					<button
 						class="btn btn-sm btn-danger"
 						type="button"
-						disabled={mate_chats.interrupting}
+						disabled={mate_chats.interrupting || mate_chats.interrupt_requested}
 						onclick={() => void mate_chats.interrupt(chat.id)}
 						title="Interrupt the current turn; the session keeps running"
 					>
 						<SquareIcon size={12} strokeWidth={1.6} />
-						{mate_chats.interrupting ? 'Stopping…' : 'Stop'}
+						{mate_chats.interrupting
+							? 'Requesting stop…'
+							: mate_chats.interrupt_requested
+								? 'Stop requested'
+								: 'Stop turn'}
 					</button>
 				{/if}
 			{/snippet}
@@ -267,6 +363,7 @@
 		display: flex;
 		flex-direction: column;
 		min-height: 0;
+		min-width: 0;
 		height: 100%;
 	}
 	.chat-col {
@@ -330,6 +427,21 @@
 		border-color: var(--line-3);
 		color: var(--tx-hi);
 	}
+	.tool {
+		overflow-wrap: anywhere;
+		min-width: 0;
+		max-width: 100%;
+	}
+	.tool-status {
+		font-size: var(--t-xs);
+	}
+	.delete-confirm {
+		padding-bottom: var(--s-3);
+		font-size: var(--t-sm);
+	}
+	.compose-status {
+		margin: var(--s-2) 0;
+	}
 	.tool code {
 		font-family: var(--font-mono);
 		font-size: var(--t-xs);
@@ -354,6 +466,12 @@
 	.pr {
 		margin: 0;
 		font-size: var(--t-sm);
+	}
+	@media (pointer: coarse) {
+		.chat :global(.btn-sm),
+		.thinking summary {
+			min-height: 44px;
+		}
 	}
 	@media (min-width: 901px) {
 		.back {
