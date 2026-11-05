@@ -7,10 +7,20 @@
       url = "github:Mic92/sops-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Firecracker microVM guests on forge (fleet/hosts/forge/microvms.nix).
+    microvm = {
+      url = "github:microvm-nix/microvm.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
-    { self, nixpkgs, sops-nix }:
+    {
+      self,
+      nixpkgs,
+      sops-nix,
+      microvm,
+    }:
     let
       lib = nixpkgs.lib;
       systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
@@ -58,8 +68,9 @@
       # deploy it: its age key is in the repo.
       nixosConfigurations.beads-vm = hostSystem "beads" [ ./fleet/hosts/beads/vm-test.nix ];
       # The agent-worker laptop (fleet/hosts/forge): `nixos-rebuild switch
-      # --flake .#forge`, run on the machine itself.
-      nixosConfigurations.forge = hostSystem "forge" [ ];
+      # --flake .#forge`, run on the machine itself. Only forge hosts microVM
+      # guests, so only forge imports microvm.nix's host module.
+      nixosConfigurations.forge = hostSystem "forge" [ microvm.nixosModules.host ];
 
       packages = forSystems (
         pkgs:
