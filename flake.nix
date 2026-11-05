@@ -57,6 +57,9 @@
       # The same host with throwaway secrets and DHCP, for a boot test. Never
       # deploy it: its age key is in the repo.
       nixosConfigurations.beads-vm = hostSystem "beads" [ ./fleet/hosts/beads/vm-test.nix ];
+      # The agent-worker laptop (fleet/hosts/forge): `nixos-rebuild switch
+      # --flake .#forge`, run on the machine itself.
+      nixosConfigurations.forge = hostSystem "forge" [ ];
 
       packages = forSystems (
         pkgs:
@@ -113,6 +116,7 @@
         // lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
           # The whole host closure, app included, builds.
           beads-toplevel = self.nixosConfigurations.beads.config.system.build.toplevel;
+          forge-toplevel = self.nixosConfigurations.forge.config.system.build.toplevel;
         }
       );
 
