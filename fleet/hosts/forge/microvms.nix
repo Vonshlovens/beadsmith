@@ -117,9 +117,11 @@ let
       serviceConfig.ExecStop = [
         ""
         (pkgs.writeShellScript "microvm-stop-${name}" ''
+          # A failed request does not prove the VM stopped. Always wait for
+          # its process, leaving a stuck guest to systemd's stop timeout.
           ${pkgs.curl}/bin/curl -sf --unix-socket ${stateDir}/${name}/${vm.config.config.microvm.socket} \
             -X PUT http://localhost/actions \
-            -d '{ "action_type": "SendCtrlAltDel" }' || exit 0
+            -d '{ "action_type": "SendCtrlAltDel" }' || true
           while ${pkgs.coreutils}/bin/kill -0 "$MAINPID" 2>/dev/null; do
             ${pkgs.coreutils}/bin/sleep 0.5
           done
