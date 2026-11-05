@@ -31,7 +31,7 @@ export interface SshAgentConfig {
  */
 export function scopePrompt(scope: string): string {
 	const database = scope.startsWith('d_') ? scope.slice(2) : scope;
-	return `This chat is about the Beads project whose Dolt database is "${database}". Start there unless the user asks about other projects.`;
+	return `This chat is about the Beads project whose Dolt database is "${database}". This is the initial scope; follow scope changes supplied with later user messages. Start there unless the user asks about other projects.`;
 }
 
 /** Claude Code arguments for one long-lived chat process. */

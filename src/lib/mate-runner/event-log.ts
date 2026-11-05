@@ -9,6 +9,8 @@ import {
 	existsSync,
 	mkdirSync,
 	readFileSync,
+	renameSync,
+	truncateSync,
 	rmSync,
 	writeFileSync
 } from 'node:fs';
@@ -24,6 +26,7 @@ export interface ChatMeta {
 	scope: string | null;
 	/** Claude Code has created the session, so later processes `--resume` it. */
 	started: boolean;
+	pending?: number;
 	created_at: string;
 }
 
@@ -57,7 +60,11 @@ export class ChatLog {
 			this.#meta = JSON.parse(readFileSync(this.#meta_path, 'utf8')) as ChatMeta;
 		}
 		if (existsSync(this.#events_path)) {
-			for (const line of readFileSync(this.#events_path, 'utf8').split('\n')) {
+			const bytes = readFileSync(this.#events_path);
+			const end = bytes.lastIndexOf(10) + 1;
+			// Remove an incomplete tail before appending, or it would swallow the next event.
+			if (end < bytes.length) truncateSync(this.#events_path, end);
+			for (const line of bytes.subarray(0, end).toString('utf8').split('\n')) {
 				if (line.length === 0) continue;
 				try {
 					const event: unknown = JSON.parse(line);
@@ -67,6 +74,20 @@ export class ChatLog {
 				}
 			}
 		}
+		const last = this.#events.at(-1);
+		if (
+			(this.#meta?.pending ?? 0) > 0 ||
+			(last !== undefined && last.type !== 'result' && last.type !== 'error')
+		) {
+			// Delivery across a crashed process boundary is ambiguous. Never silently
+			// replay potentially side-effecting work; surface the uncertainty instead.
+			this.append({
+				type: 'error',
+				message:
+					'The runner restarted during a turn. Its outcome is unknown; check the work before sending another message.'
+			});
+			if (this.#meta !== undefined) this.setMeta({ ...this.#meta, pending: 0 });
+		}
 	}
 
 	get meta(): ChatMeta | undefined {
@@ -74,15 +95,16 @@ export class ChatLog {
 	}
 
 	setMeta(meta: ChatMeta): void {
+		writeFileSync(`${this.#meta_path}.tmp`, JSON.stringify(meta), { mode: 0o600, flush: true });
+		renameSync(`${this.#meta_path}.tmp`, this.#meta_path);
 		this.#meta = meta;
-		writeFileSync(this.#meta_path, JSON.stringify(meta), { mode: 0o600 });
 	}
 
 	append(draft: MissionEventDraft): MissionEvent {
 		const last = this.#events.at(-1);
 		const seq = (last === undefined ? 0 : (eventSeq(last.id) ?? this.#events.length)) + 1;
 		const event = { ...draft, id: eventId(seq) } as MissionEvent;
-		appendFileSync(this.#events_path, `${JSON.stringify(event)}\n`, { mode: 0o600 });
+		appendFileSync(this.#events_path, `${JSON.stringify(event)}\n`, { mode: 0o600, flush: true });
 		this.#events.push(event);
 		for (const listener of this.#listeners) listener(event);
 		return event;
@@ -93,6 +115,13 @@ export class ChatLog {
 	 * request with the same id returns the event recorded the first time and
 	 * `created: false`, so the prompt is not sent to the agent twice.
 	 */
+	user(message_id: string): MissionEvent | undefined {
+		return this.#events.find(
+			(event) =>
+				event.type === 'user' && (event as { message_id?: unknown }).message_id === message_id
+		);
+	}
+
 	appendUser(text: string, message_id: string): { event: MissionEvent; created: boolean } {
 		const existing = this.#events.find(
 			(event) =>
