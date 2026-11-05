@@ -12,6 +12,7 @@ import { ChatStore } from '../../../src/lib/mate-runner/event-log.ts';
 import { createRunnerHandler } from '../../../src/lib/mate-runner/server.ts';
 import { sshSpawner } from '../../../src/lib/mate-runner/spawn.ts';
 import { signRequest } from '../../../src/lib/mate-runner/signature.ts';
+const fixtureSecret = 'a'.repeat(32);
 const ssh = sshSpawner({
 	target: 'agent@10.100.0.2',
 	identity_file: '/var/lib/mate-runner/ssh/agent_ed25519',
@@ -36,7 +37,7 @@ keeper.stderr.resume();
 const dir = mkdtempSync(join(tmpdir(), 'guest-lifecycle-'));
 const processes = new Map();
 const handler = createRunnerHandler({
-	secret: 'fixture-secret-with-at-least-32-characters',
+	secret: fixtureSecret,
 	store: new ChatStore(dir),
 	max_live_sessions: 1,
 	spawn: (launch) => {
@@ -54,13 +55,7 @@ async function request(method, path, input, port = 18787) {
 		method,
 		headers: {
 			'x-beadsmith-timestamp': ts,
-			'x-beadsmith-signature': signRequest(
-				'fixture-secret-with-at-least-32-characters',
-				ts,
-				method,
-				path,
-				body
-			)
+			'x-beadsmith-signature': signRequest(fixtureSecret, ts, method, path, body)
 		},
 		...(body ? { body } : {})
 	});
@@ -101,7 +96,7 @@ try {
 	const stopped = await launch('stop');
 	await handler.close();
 	await gone(stopped, 'runner close hook');
-	writeFileSync(join(dir, 'secret'), 'fixture-secret-with-at-least-32-characters', { mode: 0o600 });
+	writeFileSync(join(dir, 'secret'), fixtureSecret, { mode: 0o600 });
 	const runner = spawn(
 		process.execPath,
 		[
