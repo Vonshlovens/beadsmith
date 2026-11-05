@@ -1,6 +1,6 @@
 # 0004. Service-local SQLite
 
-Date: 2026-08-11 (updated 2026-08-25, 2026-10-17, 2026-10-17 accounts, 2026-10-28 provider-neutral dispatch, 2026-10-28 todos)
+Date: 2026-08-11 (updated 2026-08-25, 2026-10-17, 2026-10-17 accounts, 2026-10-28 provider-neutral dispatch, 2026-10-28 todos, 2026-11-05 First Mate chats)
 
 ## Status
 
@@ -37,7 +37,7 @@ sqlite-core). The runtime does not run drizzle-kit push or migrate.
 `src/lib/server/state/db.ts` opens `file:${stateDir}/state.db` and applies
 `CREATE TABLE IF NOT EXISTS` for the known tables.
 
-Today the database has nine application tables plus four account tables:
+Today the database has twelve application tables plus four account tables:
 
 - `settings` — key/value application preferences. The shipped key is
   `ui.theme` (`system` | `light` | `dark`); `dispatch.armed` is the global
@@ -72,6 +72,16 @@ Today the database has nine application tables plus four account tables:
   not Beads issues; urgency is derived from priority and due date
   (`src/lib/todos/urgency.ts`) and never stored. `/api/todos` is admin-only,
   reads included. No separate ADR: this is another table in the same file.
+- `mate_chats`, `mate_events` — First Mate chats: owner account id, title,
+  optional project scope, the mate runner `session_id` (a UUID kept for the
+  chat's life, never sent to the browser), and the ordered MissionEvents
+  Beadsmith relayed for the chat, keyed by the runner's event id, with
+  compact fields only (text; tool name and status, never arguments or
+  output; truncated thinking; result status, duration, PR link). `origin`
+  separates runner events from placeholder replies written without a
+  runner. Application-owned rows, not Beads issues; the runner is the
+  durable log of the session ([`docs/first-mate.md`](../../docs/first-mate.md)).
+  No separate ADR: two more tables in the same file.
 - `auth_user`, `auth_session`, `auth_account`, `auth_verification` —
   Better Auth accounts, sessions, sign-in methods (password as a scrypt hash),
   and short-lived verification values ([0011](./0011-accounts-and-roles.md)).
@@ -138,7 +148,7 @@ Shipped:
   `src/lib/server/dispatch/tackle-maps.ts`,
   `src/lib/server/dispatch/file-maps.ts`, and
   `src/lib/server/dispatch/service.ts`. Tests:
-  `src/lib/server/state/db.test.ts` (the five-table allowlist),
+  `src/lib/server/state/db.test.ts` (the table allowlist),
   `src/lib/server/dispatch/store.test.ts`,
   `src/lib/server/dispatch/policy.test.ts`,
   `src/lib/server/dispatch/tackle-maps.test.ts`, and
@@ -146,6 +156,10 @@ Shipped:
 - Todos: `src/lib/server/todos/store.ts` (`TODO_SCHEMA_SQL`, `createTodoStore`),
   `src/routes/api/todos/`, `src/lib/todos/urgency.ts`. Tests alongside, plus
   the member 403 cases in `src/hooks.accounts.test.ts`.
+- First Mate chats: `src/lib/server/mate/store.ts` (`MATE_SCHEMA_SQL`,
+  `createMateStore`), `getMateStore` in `src/lib/server/state/db.ts`,
+  `src/routes/api/mate/`. Tests: `src/lib/server/mate/store.test.ts`,
+  `src/routes/api/mate/server.test.ts`.
 - Contract: `docs/contract.md` (read policy: local state must never hold a
   Dolt password or replace Dolt as the source of issues).
 - Operator: `README.md`, `docs/server-deployment.md`.

@@ -5,6 +5,7 @@ import type { FileCheckoutMapping } from './dispatch/file-maps.js';
 import { parseGitHubRepositoryUrl, parseGitRef } from './dispatch/repositories.js';
 import type { TackleRepositoryMapping } from './dispatch/repositories.js';
 import { normalizeEndpoint } from './backup/s3.js';
+import { CHAT_ID_PATTERN, MAX_MESSAGE_CHARS, MESSAGE_ID_PATTERN } from '#lib/mate.js';
 
 /** Zod validation shared by the active, read-only HTTP surface. */
 
@@ -378,3 +379,39 @@ export const todo_filters_schema = z
 	})
 	.strict()
 	.refine((value) => Object.keys(value.filters).length <= 50, 'at most 50 saved searches');
+
+// --- First Mate chats ----------------------------------------
+
+export const mate_chat_id_schema = z.string().regex(CHAT_ID_PATTERN, 'invalid chat id');
+
+const mate_title_schema = z.string().trim().min(1).max(200);
+
+/** Body of `POST /api/mate/chats`. */
+export const create_mate_chat_schema = z
+	.object({
+		title: mate_title_schema.optional(),
+		scope: project_id_schema.nullable().default(null)
+	})
+	.strict();
+
+/** Body of `PATCH /api/mate/chats/:id`; at least one field. */
+export const update_mate_chat_schema = z
+	.object({
+		title: mate_title_schema.optional(),
+		scope: project_id_schema.nullable().optional()
+	})
+	.strict()
+	.refine((value) => Object.keys(value).length > 0, 'no fields to update');
+
+/** Body of `POST /api/mate/chats/:id/messages`. */
+export const mate_message_schema = z
+	.object({
+		text: z.string().trim().min(1).max(MAX_MESSAGE_CHARS),
+		message_id: z.string().regex(MESSAGE_ID_PATTERN, 'invalid message id').optional()
+	})
+	.strict();
+
+/** A runner event id, as `?after=` or Last-Event-ID. */
+export const mate_event_id_schema = z
+	.string()
+	.regex(/^[A-Za-z0-9._:-]{1,128}$/, 'invalid event id');

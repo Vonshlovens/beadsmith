@@ -23,8 +23,8 @@ reality**. Search `src/` before treating a spec as implemented.
   `SELECT`/`SHOW` and four sanitized failure classes
   ([ADR-0003](decisions/0003-dolt-read-plane.md)).
 - Service-local SQLite holds **theme settings, dispatch records, safety
-  policy, operator-edited Tackle mappings, optional File checkout maps, and
-  accounts**, never issue rows
+  policy, operator-edited Tackle mappings, optional File checkout maps,
+  admin todos, First Mate chats, and accounts**, never issue rows
   ([ADR-0004](decisions/0004-service-local-sqlite.md)).
 - HTTP bind policy requires a Dolt host, and a non-loopback bind requires
   accounts. Cloudflare Access is an optional outer layer; one allowlisted
@@ -51,6 +51,13 @@ reality**. Search `src/` before treating a spec as implemented.
   It never connects to a personal device; agents there reach Beadsmith
   through an OAuth-authorized MCP server instead
   ([ADR-0015](decisions/0015-scoped-agent-sandboxes.md)).
+- **First Mate** is a chat with one long-lived orchestrator agent on a
+  separately deployed mate runner, after
+  [firstmate](https://github.com/kunchenguid/firstmate): admin-only, chats
+  private to their owner and stored in `state.db`, messages and events
+  relayed over a signed HTTP + SSE contract as the sanitized MissionEvent
+  union ([`docs/first-mate.md`](../docs/first-mate.md)). Without a runner it
+  answers with a placeholder.
 - Deployment is **one root `compose.yaml` + `.env`** (bridge with token,
   or host network on loopback), GHCR images, Dolt always separate.
   Tailscale is for Cloud Agent VMs, not the app image
@@ -95,7 +102,7 @@ Follow the `architecture` skill at
 | [decisions/README.md](decisions/README.md) | — | Decision index |
 | [0001-remote-sql-control-plane.md](decisions/0001-remote-sql-control-plane.md) | [`src/lib/product.ts`](../src/lib/product.ts), [`src/lib/server/discovery.ts`](../src/lib/server/discovery.ts) | Server over remote Dolt; no local workspaces |
 | [0003-dolt-read-plane.md](decisions/0003-dolt-read-plane.md) | [`src/lib/server/dolt/client.ts`](../src/lib/server/dolt/client.ts) | Read-only Dolt SQL client |
-| [0004-service-local-sqlite.md](decisions/0004-service-local-sqlite.md) | [`src/lib/server/state/schema.ts`](../src/lib/server/state/schema.ts) | App settings, dispatch, policy, Tackle maps, File checkouts, admin todos |
+| [0004-service-local-sqlite.md](decisions/0004-service-local-sqlite.md) | [`src/lib/server/state/schema.ts`](../src/lib/server/state/schema.ts), [`src/lib/server/mate/store.ts`](../src/lib/server/mate/store.ts) | App settings, dispatch, policy, Tackle maps, File checkouts, admin todos, First Mate chats |
 | [0005-bind-policy-and-cloudflare-access.md](decisions/0005-bind-policy-and-cloudflare-access.md) | [`src/hooks.server.ts`](../src/hooks.server.ts), [`src/lib/server/env.ts`](../src/lib/server/env.ts) | Bind policy, Access, session |
 | [0006-durable-agent-dispatch.md](decisions/0006-durable-agent-dispatch.md) | [`src/lib/server/dispatch/`](../src/lib/server/dispatch/) | File/Tackle/comment persist-then-launch |
 | [0008-runtime-and-deployment.md](decisions/0008-runtime-and-deployment.md) | [`compose.yaml`](../compose.yaml), [`package.json`](../package.json), [`flake.nix`](../flake.nix) | Node/SvelteKit runtime; Compose production; Nix-built image |
@@ -119,7 +126,7 @@ live in [`src/app.css`](../src/app.css).
 | [`src/routes/ready/`](../src/routes/ready/) | Cross-project Ready deck |
 | [`src/routes/todos/`](../src/routes/todos/), [`src/lib/todos/`](../src/lib/todos/) | Admin todo agenda: local capture parser, due-date columns, derived urgency; `/api/todos/:id/route` files a todo through File dispatch ([`src/lib/server/todos/route.ts`](../src/lib/server/todos/route.ts)) |
 | [`src/lib/components/first-mate.svelte`](../src/lib/components/first-mate.svelte) | Command palette (⌘K); also hosts the agent dialog and keyboard host |
-| [`src/routes/first-mate/`](../src/routes/first-mate/) | Agent console: threads beside the conversation, palette when none is open |
+| [`src/routes/first-mate/`](../src/routes/first-mate/), [`src/lib/server/mate/`](../src/lib/server/mate/) | First Mate: server-side chats with the mate runner's agent beside agent threads, palette when none is open |
 | [`src/lib/components/agent-dialog.svelte`](../src/lib/components/agent-dialog.svelte), [`agent-thread.svelte`](../src/lib/components/agent-thread.svelte) | Issue → agent (Discuss, Elaborate, Close, Tackle) and the provider-agnostic thread |
 | [`src/lib/client/hotkeys.ts`](../src/lib/client/hotkeys.ts) | Keyboard map ([`docs/keyboard.md`](../docs/keyboard.md)) |
 | [`src/routes/p/[id]/+page.svelte`](../src/routes/p/[id]/+page.svelte) | Dense issue table and board |
@@ -133,6 +140,7 @@ live in [`src/app.css`](../src/app.css).
 | [`docs/contract.md`](../docs/contract.md) | Product/security contract (invariants) |
 | [`docs/public-access.md`](../docs/public-access.md) | Access + catalog/membership (target vs interim) |
 | [`docs/file-tackle-dispatch.md`](../docs/file-tackle-dispatch.md) | File/Tackle launch path |
+| [`docs/first-mate.md`](../docs/first-mate.md) | First Mate chats and the mate runner contract v1 |
 | [`docs/keyboard.md`](../docs/keyboard.md) | Keyboard shortcuts |
 | [`docs/agent-access.md`](../docs/agent-access.md) | Service-token read principal; operator activation remains |
 | [`docs/server-deployment.md`](../docs/server-deployment.md) | VPS topology |

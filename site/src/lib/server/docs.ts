@@ -69,6 +69,14 @@ export const DOCS: DocEntry[] = [
 			'Sending an issue to an agent: what Beadsmith records, and the signed webhook a runner receives.'
 	},
 	{
+		slug: 'first-mate',
+		path: 'docs/first-mate.md',
+		group: 'Use it',
+		title: 'First Mate',
+		summary:
+			'Chatting with one long-lived agent that runs a crew, and the signed contract its runner implements.'
+	},
+	{
 		slug: 'agent-access',
 		path: 'docs/agent-access.md',
 		group: 'Use it',

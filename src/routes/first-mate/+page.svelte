@@ -4,11 +4,14 @@
 	 * chats (and agent threads, when a runner is configured) and one
 	 * conversation column. A new chat starts from the question screen.
 	 *
-	 * The chat is not wired to a model yet; see src/lib/client/mate-chat.ts.
+	 * Chats are kept on the server and answered by one long-lived agent on the
+	 * mate runner (docs/first-mate.md); without a runner they get a
+	 * placeholder, and members are told First Mate is for admins for now.
 	 * Agent threads are real: `?thread=&project=` opens a mission as before.
 	 * The command palette stays on ⌘K, reachable from every composer.
 	 */
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
+	import { toast } from 'svelte-sonner';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
@@ -35,7 +38,7 @@
 	/** How often the thread list re-reads missions while one is working. */
 	const LIST_POLL_MS = 8000;
 
-	let mounted = $state(false);
+	let starting = $state(false);
 	let draft = $state(page.url.searchParams.get('q') ?? '');
 	let scope = $state<string | null>(currentProject()?.id ?? null);
 	let start_input = $state<HTMLTextAreaElement | null>(null);
@@ -55,11 +58,28 @@
 	const selected = $derived(missions.find((mission) => mission.id === thread_id));
 	const active_count = $derived(missions.filter((mission) => isBusyStatus(mission.status)).length);
 	const is_open = $derived(thread_open || chat !== undefined);
+	const mounted = $derived(mate_chats.loaded);
+	const can_chat = $derived(mate_chats.can_chat);
+	const mate_reason = $derived(mate_chats.status?.reason);
 
 	$effect(() => {
-		mate_chats.load();
-		mounted = true;
+		void mate_chats.load();
 	});
+
+	// Follow the open chat's events; leaving the page stops following (the
+	// agent keeps working on the runner).
+	$effect(() => {
+		const id = chat_id;
+		const allowed = can_chat;
+		untrack(() => {
+			if (id !== null && allowed) {
+				void mate_chats.open(id);
+			} else if (id === null) {
+				mate_chats.close();
+			}
+		});
+	});
+	$effect(() => () => mate_chats.close());
 
 	async function loadMissions(signal?: AbortSignal) {
 		try {
@@ -109,10 +129,20 @@
 		);
 	}
 
-	function startChat(text: string) {
-		const id = mate_chats.start(text, scope);
-		draft = '';
-		void goto(chatHref(id));
+	async function startChat(text: string) {
+		if (starting) {
+			return;
+		}
+		starting = true;
+		try {
+			const id = await mate_chats.start(text, scope);
+			draft = '';
+			await goto(chatHref(id));
+		} catch (error) {
+			toast.error('Could not start the chat', { description: errorMessage(error) });
+		} finally {
+			starting = false;
+		}
 	}
 
 	function useStarter(text: string) {
@@ -124,11 +154,16 @@
 		void goto(FIRST_MATE_PATH, { reset: false });
 	}
 
-	function deleteChat() {
-		if (chat) {
-			mate_chats.remove(chat.id);
+	async function deleteChat() {
+		if (!chat) {
+			return;
 		}
-		closeOpen();
+		try {
+			await mate_chats.remove(chat.id);
+			closeOpen();
+		} catch (error) {
+			toast.error('Could not delete the chat', { description: errorMessage(error) });
+		}
 	}
 
 	async function newChat() {
@@ -180,7 +215,11 @@
 			<h2 class="caps rail-hd" id="mate-chats-hd">
 				Chats <span class="n">{mate_chats.chats.length}</span>
 			</h2>
-			{#if mounted && mate_chats.chats.length === 0}
+			{#if mounted && mate_reason === 'admin_only'}
+				<p class="hint">First Mate answers admins only for now.</p>
+			{:else if mate_chats.list_error}
+				<p class="hint" role="alert">{mate_chats.list_error}</p>
+			{:else if mounted && mate_chats.chats.length === 0}
 				<p class="hint">Your chats appear here.</p>
 			{:else}
 				<ul class="rail-list">
@@ -289,7 +328,7 @@
 				{chat}
 				focus_key={app_state.first_mate_focus_tick}
 				onback={closeOpen}
-				ondelete={deleteChat}
+				ondelete={() => void deleteChat()}
 			/>
 		{:else if !chat_id || mounted}
 			<div class="start">
@@ -307,7 +346,10 @@
 					placeholder="Ask about your projects…"
 					rows={4}
 					submit_label="Ask"
-					onsend={startChat}
+					disabled={mounted && !can_chat}
+					reason={mate_reason === 'admin_only' ? 'First Mate is for admins for now' : undefined}
+					busy={starting}
+					onsend={(text) => void startChat(text)}
 				>
 					{#snippet controls()}
 						<MateContextSelect bind:value={scope} />
@@ -334,14 +376,29 @@
 				</ol>
 
 				<div class="notes">
+					{#if mate_reason === 'admin_only'}
+						<p>
+							<strong>Admins only, for now.</strong>
+							First Mate runs an agent that can change Beads in every project, so only admins talk to
+							it.
+						</p>
+					{:else if mate_chats.connected}
+						<p>
+							<strong>One agent, a crew behind it.</strong>
+							First Mate is one long-lived agent. It starts workers, watches them, and reports back when
+							something is done or needs you{#if mate_chats.status?.reachable === false}; the runner
+								is not answering right now{/if}.
+						</p>
+					{:else}
+						<p>
+							<strong>Not connected yet.</strong>
+							No model answers yet: replies are placeholders. Your chats are kept for when one is.
+						</p>
+					{/if}
 					<p>
-						<strong>Not connected yet.</strong>
-						No model answers yet: replies are placeholders, and chats stay in this browser.
-					</p>
-					<p>
-						<strong>Reads only.</strong>
-						First Mate reads Beads; agents change it with bd. <span class="kbd">⌘K</span> runs a command
-						without a chat.
+						<strong>Changes go through bd.</strong>
+						First Mate and its crew change Beads with bd, never behind its back.
+						<span class="kbd">⌘K</span> runs a command without a chat.
 					</p>
 				</div>
 			</div>
