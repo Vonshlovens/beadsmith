@@ -32,6 +32,8 @@ interface MissionEventBase {
 export interface MissionUserEvent extends MissionEventBase {
 	type: 'user';
 	text: string;
+	/** Client message identity, so replay can settle a pending send before its POST returns. */
+	message_id?: string;
 }
 
 export interface MissionAssistantEvent extends MissionEventBase {
@@ -75,6 +77,7 @@ export type MissionEvent =
 
 const TOOL_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const EVENT_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+const MESSAGE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null;
@@ -126,7 +129,13 @@ export function isMissionEvent(value: unknown): value is MissionEvent {
 /** Drop unknown keys so a client never round-trips raw runner fields. */
 export function encodeMissionEvent(event: MissionEvent): MissionEvent {
 	switch (event.type) {
-		case 'user':
+		case 'user': {
+			const encoded: MissionUserEvent = { type: event.type, id: event.id, text: event.text };
+			if (typeof event.message_id === 'string' && MESSAGE_ID_PATTERN.test(event.message_id)) {
+				encoded.message_id = event.message_id;
+			}
+			return encoded;
+		}
 		case 'assistant':
 		case 'thinking':
 			return { type: event.type, id: event.id, text: event.text };
