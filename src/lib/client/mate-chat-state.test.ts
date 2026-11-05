@@ -247,3 +247,58 @@ it('does not apply a late stop acknowledgment to the following turn', async () =
 	await chats.interrupt(chat.id);
 	expect(api.interruptMate).toHaveBeenCalledTimes(2);
 });
+
+it.each(['before', 'after'] as const)(
+	'does not latch a pending send when its stop response arrives %s the failure',
+	async (response_order) => {
+		await chats.open(chat.id);
+		const source = FakeSource.instances[0]!;
+		let rejectSend!: (error: Error) => void;
+		vi.spyOn(api, 'sendMateMessage').mockImplementationOnce(
+			() => new Promise((_, reject) => (rejectSend = reject))
+		);
+		let acknowledgeStop!: (value: { interrupted: true }) => void;
+		vi.spyOn(api, 'interruptMate')
+			.mockResolvedValue({ interrupted: true })
+			.mockImplementationOnce(() => new Promise((resolve) => (acknowledgeStop = resolve)));
+		const sending = chats.send(chat.id, 'not yet admitted', 'failed-send');
+		const stopping = chats.interrupt(chat.id);
+		if (response_order === 'before') {
+			acknowledgeStop({ interrupted: true });
+			await stopping;
+		}
+		rejectSend(new Error('offline'));
+		await sending;
+		expect(chats.working).toBe(false);
+		expect(chats.interrupt_requested).toBe(false);
+		// No terminal event exists for the rejected send. A later turn must
+		// remain stoppable even if the earlier stop POST is still in flight.
+		source.onmessage!({ data: JSON.stringify({ type: 'assistant', id: 'next', text: 'working' }) });
+		if (response_order === 'after') {
+			acknowledgeStop({ interrupted: true });
+			await stopping;
+		}
+		expect(chats.interrupt_requested).toBe(false);
+		await chats.interrupt(chat.id);
+		expect(api.interruptMate).toHaveBeenCalledTimes(2);
+	}
+);
+
+it('keeps the stop acknowledgment for an active turn when a follow-up send fails', async () => {
+	await chats.open(chat.id);
+	const source = FakeSource.instances[0]!;
+	source.onmessage!({ data: JSON.stringify({ type: 'assistant', id: 'e1', text: 'working' }) });
+	let rejectSend!: (error: Error) => void;
+	vi.spyOn(api, 'sendMateMessage').mockImplementationOnce(
+		() => new Promise((_, reject) => (rejectSend = reject))
+	);
+	vi.spyOn(api, 'interruptMate').mockResolvedValue({ interrupted: true });
+	const sending = chats.send(chat.id, 'follow-up', 'failed-followup');
+	await chats.interrupt(chat.id);
+	rejectSend(new Error('offline'));
+	await sending;
+	expect(chats.working).toBe(true);
+	expect(chats.interrupt_requested).toBe(true);
+	source.onmessage!({ data: JSON.stringify({ type: 'result', id: 'e2', status: 'cancelled' }) });
+	expect(chats.interrupt_requested).toBe(false);
+});

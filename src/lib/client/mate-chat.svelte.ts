@@ -237,14 +237,17 @@ class MateChats {
 		if (this.interrupting || this.interrupt_requested) return;
 		const generation = this.#generation;
 		const terminal_id = lastTerminalId(this.events);
+		const had_active_turn = isWorking(this.events);
 		this.action_error = null;
 		this.interrupting = true;
 		try {
 			await api.interruptMate(id);
-			// The stream may finish this turn and start another before the POST replies.
+			// Pending sends may fail without a terminal event, and a turn may
+			// finish before this POST replies. Only latch the observed active turn.
 			if (
 				generation === this.#generation &&
-				this.working &&
+				had_active_turn &&
+				isWorking(this.events) &&
 				lastTerminalId(this.events) === terminal_id
 			)
 				this.interrupt_requested = true;
