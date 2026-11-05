@@ -44,6 +44,10 @@ in
   # `i8042.nopnp`, so the driver probes the legacy IRQ, fails, and a stop
   # kills the guest without a shutdown (losing unsynced writes on the
   # volume). The later parameter wins.
+  boot.initrd.systemd.services.initrd-nixos-activation.serviceConfig = {
+    StandardOutput = lib.mkForce "journal+console";
+    StandardError = lib.mkForce "journal+console";
+  };
   boot.kernelParams = [ "i8042.nopnp=0" ];
 
   # Static, IPv4 only. The host routes and NATs; see ../microvms.nix.
