@@ -24,6 +24,16 @@ export interface SshAgentConfig {
 	claude: string;
 }
 
+/**
+ * What the agent is told about the chat's scope. Beadsmith's project ids are
+ * `d_` plus the Dolt database name (docs/first-mate.md); the agent works with
+ * the database name, which is what `bd` and SQL use.
+ */
+export function scopePrompt(scope: string): string {
+	const database = scope.startsWith('d_') ? scope.slice(2) : scope;
+	return `This chat is about the Beads project whose Dolt database is "${database}". Start there unless the user asks about other projects.`;
+}
+
 /** Claude Code arguments for one long-lived chat process. */
 export function claudeArgs(launch: AgentLaunch): string[] {
 	const args = [
@@ -41,10 +51,7 @@ export function claudeArgs(launch: AgentLaunch): string[] {
 		launch.session_id
 	];
 	if (launch.scope !== null) {
-		args.push(
-			'--append-system-prompt',
-			`This chat is about the Beads project "${launch.scope}". Start there unless the user asks about other projects.`
-		);
+		args.push('--append-system-prompt', scopePrompt(launch.scope));
 	}
 	return args;
 }
