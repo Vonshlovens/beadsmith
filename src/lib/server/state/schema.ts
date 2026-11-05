@@ -1,4 +1,4 @@
-import { index, integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { index, integer, real, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core';
 
 /**
  * Service-local schema. Beads projects, workspace paths, and Dolt or agent
@@ -143,6 +143,51 @@ export const todoRouteIssues = sqliteTable('todo_route_issues', {
 	issueId: text('issue_id').notNull(),
 	reportedAt: text('reported_at').notNull()
 });
+
+/**
+ * First Mate chats: one account's conversation with one runner session
+ * (docs/first-mate.md). Keep in step with `MATE_SCHEMA_SQL` in `mate/store.ts`.
+ */
+export const mateChats = sqliteTable(
+	'mate_chats',
+	{
+		id: text('id').primaryKey(),
+		ownerId: text('owner_id').notNull(),
+		title: text('title').notNull(),
+		scope: text('scope'),
+		sessionId: text('session_id').notNull().unique(),
+		createdAt: text('created_at').notNull(),
+		updatedAt: text('updated_at').notNull()
+	},
+	(table) => [index('mate_chats_owner').on(table.ownerId, table.updatedAt)]
+);
+
+/**
+ * The MissionEvents seen for a chat, in order, with compact fields only:
+ * text, tool name and status, result metadata. Never tool arguments or
+ * output, prompts the runner adds, or credentials. `origin` is `runner` or
+ * `local` (placeholder replies written without a runner).
+ */
+export const mateEvents = sqliteTable(
+	'mate_events',
+	{
+		seq: integer('seq').primaryKey(),
+		chatId: text('chat_id')
+			.notNull()
+			.references(() => mateChats.id, { onDelete: 'cascade' }),
+		eventId: text('event_id').notNull(),
+		origin: text('origin').notNull(),
+		type: text('type').notNull(),
+		text: text('text'),
+		callId: text('call_id'),
+		toolName: text('tool_name'),
+		status: text('status'),
+		durationMs: integer('duration_ms'),
+		gitPrUrl: text('git_pr_url'),
+		at: text('at').notNull()
+	},
+	(table) => [unique('mate_events_chat_event').on(table.chatId, table.eventId)]
+);
 
 // --- Accounts (Better Auth, ADR-0011) ----------------------------------------
 // Property names are Better Auth's field names (the Drizzle adapter addresses

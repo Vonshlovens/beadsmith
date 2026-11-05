@@ -34,6 +34,7 @@ import type {
 } from '#lib/types.js';
 
 import type { Todo, TodoComment, TodoStatus } from '#lib/server/todos/store.js';
+import type { MateChat, MateChatDetail, MateSendResult, MateStatus } from '#lib/mate.js';
 
 const BASE_URL = '/api';
 
@@ -572,6 +573,55 @@ export const api = {
 			...init,
 			body: { text }
 		});
+	},
+
+	/** Whether First Mate answers this viewer (docs/first-mate.md). */
+	mateStatus(init?: RequestInitLike) {
+		return request<MateStatus>('GET', '/mate/status', init);
+	},
+
+	mateChats(init?: RequestInitLike) {
+		return request<{ chats: MateChat[] }>('GET', '/mate/chats', init);
+	},
+
+	createMateChat(body: { title?: string; scope: string | null }, init?: RequestInitLike) {
+		return request<{ chat: MateChat }>('POST', '/mate/chats', { ...init, body });
+	},
+
+	mateChat(id: string, init?: RequestInitLike) {
+		return request<MateChatDetail>('GET', `/mate/chats/${encodeURIComponent(id)}`, init);
+	},
+
+	updateMateChat(
+		id: string,
+		body: { title?: string; scope?: string | null },
+		init?: RequestInitLike
+	) {
+		return request<{ chat: MateChat }>('PATCH', `/mate/chats/${encodeURIComponent(id)}`, {
+			...init,
+			body
+		});
+	},
+
+	deleteMateChat(id: string, init?: RequestInitLike) {
+		return request<{ deleted: true }>('DELETE', `/mate/chats/${encodeURIComponent(id)}`, init);
+	},
+
+	/** `message_id` is generated once per message and reused on a retry. */
+	sendMateMessage(id: string, body: { text: string; message_id: string }, init?: RequestInitLike) {
+		return request<MateSendResult>('POST', `/mate/chats/${encodeURIComponent(id)}/messages`, {
+			...init,
+			body
+		});
+	},
+
+	/** Stop the agent's current turn; the session keeps running. */
+	interruptMate(id: string, init?: RequestInitLike) {
+		return request<{ interrupted: true }>(
+			'POST',
+			`/mate/chats/${encodeURIComponent(id)}/interrupt`,
+			init
+		);
 	},
 
 	deleteTodoComment(id: string, comment_id: string, init?: RequestInitLike) {

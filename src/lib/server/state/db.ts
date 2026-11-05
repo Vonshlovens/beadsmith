@@ -13,6 +13,7 @@ import { createTackleMapStore, type TackleMapStore } from '../dispatch/tackle-ma
 import { BACKUP_SCHEMA_SQL, createBackupStore, type BackupStore } from '../backup/store.js';
 import { AUTH_SCHEMA_SQL } from '../auth/store.js';
 import { createTodoStore, TODO_SCHEMA_SQL, type TodoStore } from '../todos/store.js';
+import { createMateStore, MATE_SCHEMA_SQL, type MateStore } from '../mate/store.js';
 import { getSecretBox } from '../secret-box.js';
 
 /**
@@ -70,6 +71,7 @@ export const STATE_SCHEMA_SQL: string[] = [
 	)`,
 	BACKUP_SCHEMA_SQL,
 	...TODO_SCHEMA_SQL,
+	...MATE_SCHEMA_SQL,
 	...AUTH_SCHEMA_SQL
 ];
 
@@ -150,6 +152,7 @@ let file_maps_promise: Promise<FileMapStore> | undefined;
 let policy_promise: Promise<DispatchPolicyStore> | undefined;
 let backup_promise: Promise<BackupStore> | undefined;
 let todo_promise: Promise<TodoStore> | undefined;
+let mate_promise: Promise<MateStore> | undefined;
 let state_ok = false;
 
 async function openStateClient(): Promise<Client> {
@@ -171,6 +174,7 @@ async function openStateClient(): Promise<Client> {
 			policy_promise = undefined;
 			backup_promise = undefined;
 			todo_promise = undefined;
+			mate_promise = undefined;
 			throw error;
 		});
 	}
@@ -238,6 +242,14 @@ export async function getTodoStore(): Promise<TodoStore> {
 	return todo_promise;
 }
 
+/** Open (once) the First Mate chat store on the same database. */
+export async function getMateStore(): Promise<MateStore> {
+	if (mate_promise === undefined) {
+		mate_promise = openStateClient().then((client) => createMateStore(client));
+	}
+	return mate_promise;
+}
+
 /** Whether the preference database opened successfully at least once. */
 export function stateDbHealthy(): boolean {
 	return state_ok;
@@ -254,6 +266,7 @@ export function setStateStore(store: StateStore | undefined): void {
 		policy_promise = undefined;
 		backup_promise = undefined;
 		todo_promise = undefined;
+		mate_promise = undefined;
 		state_ok = false;
 	} else {
 		state_ok = true;
@@ -288,4 +301,9 @@ export function setBackupStore(store: BackupStore | undefined): void {
 /** Replace the cached todo store (tests only). */
 export function setTodoStore(store: TodoStore | undefined): void {
 	todo_promise = store === undefined ? undefined : Promise.resolve(store);
+}
+
+/** Replace the cached First Mate chat store (tests only). */
+export function setMateStore(store: MateStore | undefined): void {
+	mate_promise = store === undefined ? undefined : Promise.resolve(store);
 }

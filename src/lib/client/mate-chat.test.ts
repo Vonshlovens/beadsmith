@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_CHATS, chatHref, chatTitle, parseStoredChats, type Chat } from './mate-chat';
+import type { MateEvent } from '#lib/mate.js';
+import { chatHref, chatTitle, groupMateEvents, isWorking, mergeEvents } from './mate-chat';
 
-function chat(id: string, updated_at: string): Chat {
-	return { id, title: id, scope: null, created_at: updated_at, updated_at, messages: [] };
+const AT = '2026-11-05T00:00:00.000Z';
+
+function ev(event: Record<string, unknown>): MateEvent {
+	return { at: AT, ...event } as MateEvent;
 }
 
 describe('chatTitle', () => {
@@ -27,35 +30,79 @@ describe('chatHref', () => {
 	});
 });
 
-describe('parseStoredChats', () => {
-	it('returns nothing for missing or broken storage', () => {
-		expect(parseStoredChats(null)).toEqual([]);
-		expect(parseStoredChats('{')).toEqual([]);
-		expect(parseStoredChats('{"a":1}')).toEqual([]);
-	});
-
-	it('drops malformed chats and messages', () => {
-		const raw = JSON.stringify([
-			{
-				...chat('a', '2026-10-01T00:00:00Z'),
-				messages: [
-					{ id: 'm1', role: 'you', text: 'hi', at: '2026-10-01T00:00:00Z' },
-					{ id: 'm2', role: 'robot', text: 'no', at: '2026-10-01T00:00:00Z' }
-				]
-			},
-			{ id: 'b' }
+describe('groupMateEvents', () => {
+	it('groups a turn into one bubble, with tool calls upserted', () => {
+		const bubbles = groupMateEvents([
+			ev({ type: 'user', id: 'e1', text: 'tackle it' }),
+			ev({ type: 'thinking', id: 'e2', text: 'hmm' }),
+			ev({ type: 'assistant', id: 'e3', text: 'On it.' }),
+			ev({ type: 'tool_call', id: 'e4', call_id: 'c1', name: 'Bash', status: 'running' }),
+			ev({ type: 'tool_call', id: 'e5', call_id: 'c1', name: 'Bash', status: 'completed' }),
+			ev({ type: 'assistant', id: 'e6', text: 'Spawned a worker.' }),
+			ev({ type: 'assistant', id: 'e7', text: 'It is running.' }),
+			ev({ type: 'result', id: 'e8', status: 'succeeded' })
 		]);
-		const chats = parseStoredChats(raw);
-		expect(chats.map((item) => item.id)).toEqual(['a']);
-		expect(chats[0]?.messages.map((item) => item.id)).toEqual(['m1']);
+		expect(bubbles.map((bubble) => bubble.role)).toEqual(['you', 'mate']);
+		const mate = bubbles[1]!;
+		expect(mate.id).toBe('e2');
+		expect(mate.result).toEqual({ status: 'succeeded' });
+		expect(mate.parts).toEqual([
+			{ kind: 'thinking', id: 'e2', text: 'hmm' },
+			{ kind: 'text', id: 'e3', text: 'On it.' },
+			{ kind: 'tool', id: 'e4', call_id: 'c1', name: 'Bash', status: 'completed' },
+			{ kind: 'text', id: 'e6', text: 'Spawned a worker.\n\nIt is running.' }
+		]);
 	});
 
-	it('sorts newest first and keeps the cap', () => {
-		const many = Array.from({ length: MAX_CHATS + 5 }, (_, index) =>
-			chat(`c${index}`, new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString())
-		);
-		const chats = parseStoredChats(JSON.stringify(many));
-		expect(chats).toHaveLength(MAX_CHATS);
-		expect(chats[0]?.id).toBe(`c${MAX_CHATS + 4}`);
+	it('starts a new bubble when the agent speaks unasked after a result', () => {
+		const bubbles = groupMateEvents([
+			ev({ type: 'user', id: 'e1', text: 'go' }),
+			ev({ type: 'assistant', id: 'e2', text: 'Started.' }),
+			ev({ type: 'result', id: 'e3', status: 'succeeded' }),
+			ev({ type: 'assistant', id: 'e4', text: 'PR ready, captain.' }),
+			ev({
+				type: 'result',
+				id: 'e5',
+				status: 'succeeded',
+				git_pr_url: 'https://github.com/o/r/pull/3'
+			})
+		]);
+		expect(bubbles.map((bubble) => bubble.id)).toEqual(['e1', 'e2', 'e4']);
+		expect(bubbles[2]!.result?.git_pr_url).toBe('https://github.com/o/r/pull/3');
+	});
+
+	it('shows a result text only when the turn said nothing else, and keeps errors inline', () => {
+		const bubbles = groupMateEvents([
+			ev({ type: 'result', id: 'e1', status: 'failed', text: 'Ran out of turns.' }),
+			ev({ type: 'error', id: 'e2', message: 'worker crashed' })
+		]);
+		expect(bubbles).toHaveLength(2);
+		expect(bubbles[0]!.parts).toEqual([{ kind: 'text', id: 'e1', text: 'Ran out of turns.' }]);
+		expect(bubbles[1]!.parts).toEqual([{ kind: 'error', id: 'e2', message: 'worker crashed' }]);
+	});
+});
+
+describe('isWorking', () => {
+	it('is true between a message and the next result', () => {
+		expect(isWorking([])).toBe(false);
+		const user = ev({ type: 'user', id: 'e1', text: 'go' });
+		expect(isWorking([user])).toBe(true);
+		expect(isWorking([user, ev({ type: 'result', id: 'e2', status: 'succeeded' })])).toBe(false);
+		expect(
+			isWorking([
+				user,
+				ev({ type: 'result', id: 'e2', status: 'succeeded' }),
+				ev({ type: 'tool_call', id: 'e3', call_id: 'c', name: 'Bash', status: 'running' })
+			])
+		).toBe(true);
+		expect(isWorking([user, ev({ type: 'error', id: 'e2', message: 'x' })])).toBe(false);
+	});
+});
+
+describe('mergeEvents', () => {
+	it('skips ids already in the log', () => {
+		const a = ev({ type: 'user', id: 'e1', text: 'a' });
+		const b = ev({ type: 'assistant', id: 'e2', text: 'b' });
+		expect(mergeEvents([a], [a, b, b]).map((event) => event.id)).toEqual(['e1', 'e2']);
 	});
 });
