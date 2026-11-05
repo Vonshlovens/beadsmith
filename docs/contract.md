@@ -134,10 +134,12 @@ The rules that keep those scopes real:
 - A sandbox is a machine, VM or microVM dedicated to one scope. Sandboxes of
   different scopes do not share a kernel. A laptop may host sandboxes in VMs
   and is itself still a personal device.
-- Sandboxes reach Beadsmith and Dolt over a private network (Tailscale or
-  WireGuard) whose policy enforces the same scopes: Beadsmith may reach
-  sandboxes, a sandbox reaches Dolt only with an account of its own,
+- Whatever carries the traffic (a private network, a sandbox provider's
+  authenticated API, an authenticated tunnel), the network enforces the same
+  scopes: Beadsmith may reach sandboxes, a sandbox reaches Dolt only with an
+  account of its own and Beadsmith only through its authenticated API,
   sandboxes do not reach each other, and nothing reaches a personal device.
+  Dolt is never an open public listener.
 - Model and repository keys stay outside the sandbox. A proxy outside it
   adds the key to each request, so the agent can use that access, within the
   proxy's rules, but cannot read, print or copy the key. The scoped Dolt
