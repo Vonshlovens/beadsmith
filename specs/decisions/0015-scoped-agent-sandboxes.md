@@ -182,7 +182,18 @@ question. It stays the view for members and for providers without a relay.
 ## Implementation notes
 
 Not shipped. Today the only provider is the webhook runner and Beadsmith
-holds no sandbox connection. Planned pieces, each in its own change:
+holds no sandbox connection.
+
+The first sandbox VM exists, empty: `mate` on the fleet host `forge`
+([`fleet/hosts/forge/microvms.nix`](../../fleet/hosts/forge/microvms.nix)),
+a Firecracker microVM (microvm.nix) meant to become the beads sandbox. It
+has a routed tap of its own, no bridge; a host nftables table drops its
+traffic to private, tailnet, link-local and other guests' addresses and to
+the host itself, and lets it reach the internet until the key proxy exists.
+The host controls it over SSH with a key that never leaves the host. It
+holds no credential and runs no agent yet.
+
+Planned pieces, each in its own change:
 
 - a sandbox registry in `state.db` (name, scope, repository for repo scope,
   connection target), admin console routes to manage it, and
