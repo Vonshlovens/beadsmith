@@ -70,6 +70,7 @@ in
   };
   users.users.agent = {
     isNormalUser = true;
+    linger = true;
     home = "${stateMount}/home";
     createHome = true;
     openssh.authorizedKeys.keys = [ net.runnerKey ];
@@ -91,6 +92,8 @@ in
       AllowTcpForwarding = false;
       AllowAgentForwarding = false;
       PermitTunnel = false;
+      ClientAliveInterval = 15;
+      ClientAliveCountMax = 2;
     };
     # The host key lives on the volume, so it stays the same across restarts
     # and the host can pin it.
@@ -109,7 +112,20 @@ in
     git
     ripgrep
     beadsmith-nodejs
+    (writeShellScriptBin "mate-supervise" ''
+      export XDG_RUNTIME_DIR=/run/user/$(id -u)
+      export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus
+      exec ${systemd}/bin/systemd-run --user --quiet --pipe --wait --collect \
+        --service-type=exec --property=KillMode=control-group \
+        --property=TimeoutStopSec=2s --property=SendSIGKILL=yes \
+        --working-directory="$PWD" \
+        ${beadsmith-nodejs}/bin/node ${./chat-supervisor.mjs} "$@"
+    '')
     (writeShellScriptBin "mate-claude" ''
+      exec /run/current-system/sw/bin/mate-supervise \
+        /run/current-system/sw/bin/mate-claude-inner "$@"
+    '')
+    (writeShellScriptBin "mate-claude-inner" ''
       export HOME=${stateMount}/home
       export ANTHROPIC_BASE_URL=http://${net.hostAddress}:${toString net.modelProxyPort}
       export CLAUDE_CODE_OAUTH_TOKEN=guest-placeholder
