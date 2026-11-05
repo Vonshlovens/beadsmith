@@ -33,6 +33,7 @@ export const MATE_SCHEMA_SQL: string[] = [
 		origin TEXT NOT NULL,
 		type TEXT NOT NULL,
 		text TEXT,
+		message_id TEXT,
 		call_id TEXT,
 		tool_name TEXT,
 		status TEXT,
@@ -120,7 +121,11 @@ function toEvent(value: unknown): MateEvent | undefined {
 	const at = String(r.at);
 	const text = optText(r.text);
 	switch (r.type) {
-		case 'user':
+		case 'user': {
+			if (text === undefined) return undefined;
+			const message_id = optText(r.message_id);
+			return { type: 'user', id, text, at, ...(message_id === undefined ? {} : { message_id }) };
+		}
 		case 'assistant':
 		case 'thinking':
 			return text === undefined ? undefined : { type: r.type, id, text, at };
@@ -160,6 +165,7 @@ function toEvent(value: unknown): MateEvent | undefined {
 
 type Columns = {
 	text: string | null;
+	message_id: string | null;
 	call_id: string | null;
 	tool_name: string | null;
 	status: string | null;
@@ -170,6 +176,7 @@ type Columns = {
 function columnsFor(event: MissionEvent): Columns {
 	const empty: Columns = {
 		text: null,
+		message_id: null,
 		call_id: null,
 		tool_name: null,
 		status: null,
@@ -178,6 +185,7 @@ function columnsFor(event: MissionEvent): Columns {
 	};
 	switch (event.type) {
 		case 'user':
+			return { ...empty, text: event.text, message_id: event.message_id ?? null };
 		case 'assistant':
 			return { ...empty, text: event.text };
 		case 'thinking':
@@ -204,7 +212,7 @@ function columnsFor(event: MissionEvent): Columns {
 }
 
 const EVENT_COLUMNS =
-	'seq, event_id, type, text, call_id, tool_name, status, duration_ms, git_pr_url, at';
+	'seq, event_id, type, text, message_id, call_id, tool_name, status, duration_ms, git_pr_url, at';
 
 export function createMateStore(client: Client, now: () => Date = () => new Date()): MateStore {
 	async function getChat(owner_id: string, id: string): Promise<StoredMateChat | undefined> {
@@ -293,14 +301,15 @@ export function createMateStore(client: Client, now: () => Date = () => new Date
 				const c = columnsFor(event);
 				const result = await client.execute({
 					sql: `INSERT OR IGNORE INTO mate_events
-						(chat_id, event_id, origin, type, text, call_id, tool_name, status, duration_ms, git_pr_url, at)
-						VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+						(chat_id, event_id, origin, type, text, message_id, call_id, tool_name, status, duration_ms, git_pr_url, at)
+						VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 					args: [
 						chat_id,
 						event.id,
 						origin,
 						event.type,
 						c.text,
+						c.message_id,
 						c.call_id,
 						c.tool_name,
 						c.status,

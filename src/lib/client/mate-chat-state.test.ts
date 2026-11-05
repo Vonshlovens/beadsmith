@@ -102,10 +102,49 @@ it('settles an in-flight send after reconnecting the same chat', async () => {
 	source.onerror!();
 	vi.mocked(api.mateChat).mockResolvedValue({
 		chat,
-		events: [{ type: 'user', id: 'e1', text: 'hello', at: '2026-01-01' }]
+		events: [
+			{ type: 'user', id: 'e1', text: 'hello', at: '2026-01-01', message_id: 'in-flight' },
+			{ type: 'result', id: 'e2', status: 'succeeded', at: '2026-01-01' }
+		]
 	});
 	await chats.open(chat.id);
+	expect(chats.pending).toEqual([]);
+	expect(chats.working).toBe(false);
 	acknowledge({ event_id: 'e1' });
 	await sent;
 	expect(chats.pending).toEqual([]);
+});
+
+it('settles only the matching message identity before a send response, including duplicate replay', async () => {
+	await chats.open(chat.id);
+	let rejectFirst!: (error: Error) => void;
+	let acknowledgeSecond!: (value: { event_id: string }) => void;
+	vi.spyOn(api, 'sendMateMessage')
+		.mockImplementationOnce(
+			() =>
+				new Promise((_, reject) => {
+					rejectFirst = reject;
+				})
+		)
+		.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					acknowledgeSecond = resolve;
+				})
+		);
+	const first = chats.send(chat.id, 'same text', 'first');
+	const second = chats.send(chat.id, 'same text', 'second');
+	const source = FakeSource.instances[0]!;
+	source.onmessage!({ data: JSON.stringify({ type: 'user', id: 'e1', text: 'same text' }) });
+	expect(chats.pending).toHaveLength(2);
+	source.onmessage!({
+		data: JSON.stringify({ type: 'user', id: 'e1', text: 'same text', message_id: 'first' })
+	});
+	expect(chats.events).toHaveLength(1);
+	expect(chats.pending.map((item) => item.message_id)).toEqual(['second']);
+	rejectFirst(new Error('response lost'));
+	await first;
+	expect(chats.pending.map((item) => item.message_id)).toEqual(['second']);
+	acknowledgeSecond({ event_id: 'e2' });
+	await second;
 });

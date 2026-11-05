@@ -287,11 +287,18 @@ class MateChats {
 	#add(incoming: MateEvent[]) {
 		const before = this.events.length;
 		this.events = mergeEvents(this.events, incoming);
+		const ids = new Set(this.events.map((event) => event.id));
+		const messages = new Set(
+			[...this.events, ...incoming].flatMap((event) =>
+				event.type === 'user' && event.message_id !== undefined ? [event.message_id] : []
+			)
+		);
+		this.pending = this.pending.filter(
+			(p) => !messages.has(p.message_id) && (p.event_id === undefined || !ids.has(p.event_id))
+		);
 		if (this.events.length === before) {
 			return;
 		}
-		const ids = new Set(this.events.map((event) => event.id));
-		this.pending = this.pending.filter((p) => p.event_id === undefined || !ids.has(p.event_id));
 		const chat = this.get(this.open_id);
 		const last = this.events.at(-1);
 		if (chat && last && last.at > chat.updated_at) {

@@ -80,7 +80,7 @@ export async function sendMateMessage(
 	const message_id = input.message_id ?? randomUUID();
 	if (runner === undefined) {
 		const events: MissionEvent[] = [
-			{ type: 'user', id: `local-${message_id}-u`, text: input.text },
+			{ type: 'user', id: `local-${message_id}-u`, text: input.text, message_id },
 			{ type: 'assistant', id: `local-${message_id}-a`, text: UNWIRED_REPLY },
 			{ type: 'result', id: `local-${message_id}-r`, status: 'succeeded' }
 		];

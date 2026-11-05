@@ -205,7 +205,14 @@ export function toMateEvent(frame: SseFrame, secret: string): MissionEvent | und
 			? { ...parsed, id: sse_id }
 			: parsed;
 	switch (event.type) {
-		case 'user':
+		case 'user': {
+			const text = cleanText(event.text, secret);
+			if (text.length === 0) return undefined;
+			const { message_id, ...user } = event;
+			return message_id !== undefined && (secret.length === 0 || !message_id.includes(secret))
+				? { ...user, text, message_id }
+				: { ...user, text };
+		}
 		case 'assistant':
 		case 'thinking': {
 			const text = cleanText(event.text, secret);

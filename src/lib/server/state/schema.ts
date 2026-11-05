@@ -179,6 +179,7 @@ export const mateEvents = sqliteTable(
 		origin: text('origin').notNull(),
 		type: text('type').notNull(),
 		text: text('text'),
+		messageId: text('message_id'),
 		callId: text('call_id'),
 		toolName: text('tool_name'),
 		status: text('status'),

@@ -51,6 +51,29 @@ describe('chats', () => {
 });
 
 describe('events', () => {
+	it('upgrades existing event tables without losing history and persists message identities', async () => {
+		const chat = await store.createChat('u1', { title: 't', scope: null });
+		await store.appendEvents(
+			chat.id,
+			[{ type: 'user', id: 'old', text: 'before upgrade' }],
+			'runner'
+		);
+		await client.execute('ALTER TABLE mate_events DROP COLUMN message_id');
+		await initStateSchema(client);
+		await initStateSchema(client);
+		await store.appendEvents(
+			chat.id,
+			[{ type: 'user', id: 'new', text: 'after upgrade', message_id: 'message-1' }],
+			'runner'
+		);
+		const events = await store.listEvents(chat.id, { limit: 10 });
+		expect(events).toMatchObject([
+			{ id: 'old', text: 'before upgrade' },
+			{ id: 'new', text: 'after upgrade', message_id: 'message-1' }
+		]);
+		expect(events[0]).not.toHaveProperty('message_id');
+	});
+
 	it('keeps order, skips repeats, and stores compact fields only', async () => {
 		const chat = await store.createChat('u1', { title: 't', scope: null });
 		const first = await store.appendEvents(

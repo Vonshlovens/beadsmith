@@ -139,6 +139,11 @@ recorded for this message.
 - `message_id` (1-64 characters of `[A-Za-z0-9_-]`) is unique per user
   message and reused on a retry. A repeat returns the same `202 { event_id }`
   and does not send the prompt to the agent again.
+  The runner also echoes it as `message_id` on the corresponding `user`
+  event. Beadsmith preserves it in stored events and replay, so the browser
+  can settle a pending message even before its POST response arrives. The
+  field is optional for older events; only the same bounded identifier
+  format is accepted.
 - `scope` is the opaque Beadsmith project id the chat is about (`d_` and the
   Dolt database name, which may itself contain underscores), or null for
   every project. It may change between messages.

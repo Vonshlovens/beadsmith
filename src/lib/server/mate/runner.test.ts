@@ -228,6 +228,16 @@ describe('readSseStream', () => {
 });
 
 describe('toMateEvent', () => {
+	it('preserves user correlation and strips a credential from that field', () => {
+		const user = { type: 'user', id: 'e1', text: 'hello' };
+		expect(
+			toMateEvent({ data: JSON.stringify({ ...user, message_id: 'message-1' }) }, 'secret')
+		).toEqual({ ...user, message_id: 'message-1' });
+		expect(
+			toMateEvent({ data: JSON.stringify({ ...user, message_id: 'secret' }) }, 'secret')
+		).toEqual(user);
+	});
+
 	it('drops anything that is not a MissionEvent', () => {
 		expect(toMateEvent({ data: 'not json' }, '')).toBeUndefined();
 		expect(toMateEvent({ data: '{"type":"shell","id":"e1"}' }, '')).toBeUndefined();
