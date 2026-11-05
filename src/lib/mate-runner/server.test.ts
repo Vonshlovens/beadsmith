@@ -63,8 +63,14 @@ class FakeAgent implements AgentProcess {
 		return true;
 	}
 
-	once(_event: 'exit', listener: (code: number | null) => void): unknown {
-		this.#exit.push(listener);
+	once(event: 'exit', listener: (code: number | null) => void): unknown;
+	once(event: 'error', listener: (error: Error) => void): unknown;
+	once(
+		event: string,
+		listener: ((code: number | null) => void) | ((error: Error) => void)
+	): unknown {
+		if (event === 'error') return this;
+		this.#exit.push(listener as (code: number | null) => void);
 		return this;
 	}
 }
@@ -73,13 +79,19 @@ let dir: string;
 let server: Server;
 let base: string;
 let agents: FakeAgent[];
+let handler: ReturnType<typeof createRunnerHandler>;
+let failSpawn = false;
 
 async function start(max_live_sessions = 3): Promise<void> {
 	agents = [];
-	const handler = createRunnerHandler({
+	handler = createRunnerHandler({
 		secret: SECRET,
 		store: new ChatStore(dir),
 		spawn: (launch) => {
+			if (failSpawn) {
+				failSpawn = false;
+				throw new Error('spawn failed');
+			}
 			const agent = new FakeAgent(launch);
 			agents.push(agent);
 			return agent;
@@ -237,6 +249,76 @@ describe('mate runner', () => {
 		expect((await fetch(`${base}${target}`, signed('DELETE', target))).status).toBe(204);
 		const fresh = await post('chat1', 'hi', 'm9', '00000000-0000-4000-8000-000000000000');
 		expect(await fresh.json()).toEqual({ event_id: 'e000000001' });
+	});
+
+	it('does not consume message ids on capacity rejection', async () => {
+		server.closeAllConnections();
+		await new Promise((resolve) => server.close(resolve));
+		await start(1);
+		await post('busy', 'hang', 'm1');
+		expect((await post('waiting', 'hello', 'm2')).status).toBe(503);
+		agents[0]!.emit({ type: 'result', subtype: 'success' });
+		expect((await post('waiting', 'hello', 'm2')).status).toBe(202);
+		expect((await readEvents('waiting', 3)).at(-1)).toMatchObject({
+			type: 'result',
+			status: 'succeeded'
+		});
+	});
+
+	it('ignores late output from a deleted process', async () => {
+		await post('chat1', 'hello', 'm1');
+		const old = agents[0]!;
+		const target = '/v1/mate/chats/chat1';
+		await fetch(`${base}${target}`, signed('DELETE', target));
+		old.emit({ type: 'assistant', message: { content: [{ type: 'text', text: 'stale' }] } });
+		expect(new ChatStore(dir).get('chat1').after(undefined)).toEqual([]);
+	});
+
+	it('treats unsolicited assistant activity as busy and interruptible', async () => {
+		await post('chat1', 'hello', 'm1');
+		agents[0]!.emit({
+			type: 'assistant',
+			message: { content: [{ type: 'text', text: 'reporting' }] }
+		});
+		await readEvents('chat1', 4);
+		const target = '/v1/mate/chats/chat1/interrupt';
+		await fetch(`${base}${target}`, signed('POST', target));
+		expect((await readEvents('chat1', 5)).at(-1)).toMatchObject({ status: 'cancelled' });
+	});
+
+	it('allows retry after a synchronous spawn failure', async () => {
+		failSpawn = true;
+		expect((await post('chat1', 'hello', 'm1')).status).toBe(500);
+		expect((await post('chat1', 'hello', 'm1')).status).toBe(202);
+		expect((await readEvents('chat1', 3)).at(-1)).toMatchObject({ status: 'succeeded' });
+	});
+
+	it('applies changed scope to the next message in the existing session', async () => {
+		await post('chat1', 'hello', 'm1');
+		const target = '/v1/mate/chats/chat1/messages';
+		const body = JSON.stringify({
+			session_id: SESSION,
+			message_id: 'm2',
+			prompt: 'next',
+			scope: 'd_other_project'
+		});
+		expect((await fetch(`${base}${target}`, signed('POST', target, body))).status).toBe(202);
+		const events = await readEvents('chat1', 6);
+		expect(events.at(-1)?.text).toContain('other_project');
+		expect(agents).toHaveLength(1);
+		expect(new ChatStore(dir).get('chat1').meta?.scope).toBe('d_other_project');
+	});
+
+	it('stops active sessions on shutdown and refuses new requests', async () => {
+		await post('chat1', 'hang', 'm1');
+		await handler.close();
+		expect(agents[0]!.stdin.writableEnded).toBe(true);
+		expect((await post('chat2', 'hello', 'm2')).status).toBe(503);
+	});
+
+	it('rejects reuse of an id for a different message', async () => {
+		await post('chat1', 'one', 'm1');
+		expect((await post('chat1', 'two', 'm1')).status).toBe(409);
 	});
 
 	it('rejects bad input', async () => {

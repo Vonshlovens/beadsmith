@@ -74,8 +74,10 @@ server.listen(Number(port), host, () => {
 	console.log(`mate-runner listening on ${host}:${port}`);
 });
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-	process.once(signal, () => {
+	process.once(signal, async () => {
 		server.close();
+		await handler.close();
+		server.closeAllConnections();
 		process.exit(0);
 	});
 }

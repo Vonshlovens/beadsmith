@@ -80,6 +80,18 @@ export function createRunnerHandler(options: RunnerOptions) {
 	const max_live = options.max_live_sessions ?? 3;
 	const heartbeat_ms = options.heartbeat_ms ?? HEARTBEAT_MS;
 	const sessions = new Map<string, AgentSession>();
+	if (!Number.isInteger(max_live) || max_live < 1) throw new Error('invalid session limit');
+	// Serialize mutations across awaits so eviction, deletion and admission cannot race.
+	let mutations: Promise<unknown> = Promise.resolve();
+	let closing = false;
+	function mutate(action: () => Promise<void>): Promise<void> {
+		const next = mutations.then(() => {
+			if (closing) throw new HttpError(503, 'The runner is shutting down.');
+			return action();
+		});
+		mutations = next.catch(() => undefined);
+		return next;
+	}
 
 	function session(chat_id: string): AgentSession {
 		let found = sessions.get(chat_id);
@@ -91,7 +103,7 @@ export function createRunnerHandler(options: RunnerOptions) {
 	}
 
 	/** Make room for one more live process, or refuse when every one is busy. */
-	function reserveSlot(chat_id: string): void {
+	async function reserveSlot(chat_id: string): Promise<void> {
 		const live = [...sessions.entries()].filter(([id, s]) => id !== chat_id && s.running);
 		if (live.length < max_live) return;
 		const idle = live
@@ -99,7 +111,7 @@ export function createRunnerHandler(options: RunnerOptions) {
 			.sort(([, a], [, b]) => a.last_active - b.last_active);
 		const oldest = idle[0];
 		if (oldest === undefined) throw new HttpError(503, 'Every agent session is busy.');
-		oldest[1].stop();
+		await oldest[1].stop();
 	}
 
 	async function postMessage(chat_id: string, body: string, res: ServerResponse): Promise<void> {
@@ -142,12 +154,21 @@ export function createRunnerHandler(options: RunnerOptions) {
 			throw new HttpError(409, 'This chat belongs to another session.');
 		}
 
-		const { event, created } = log.appendUser(prompt, message_id);
-		if (created) {
-			const agent = session(chat_id);
-			if (!agent.running) reserveSlot(chat_id);
-			agent.send(prompt);
+		const existing = log.user(message_id);
+		if (existing !== undefined) {
+			if (existing.type === 'user' && existing.text !== prompt)
+				throw new HttpError(409, 'message_id already has a different prompt.');
+			sendJson(res, 202, { event_id: existing.id });
+			return;
 		}
+		const agent = session(chat_id);
+		if (!agent.running) await reserveSlot(chat_id);
+		agent.prepare();
+		const previousScope = log.meta!.scope;
+		const nextScope = typeof scope === 'string' ? scope : null;
+		log.setMeta({ ...log.meta!, scope: nextScope });
+		const { event } = log.appendUser(prompt, message_id);
+		agent.send(prompt, previousScope === nextScope ? undefined : nextScope);
 		sendJson(res, 202, { event_id: event.id });
 	}
 
@@ -176,8 +197,9 @@ export function createRunnerHandler(options: RunnerOptions) {
 		res.once('close', close);
 	}
 
-	return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+	const handle = async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
 		try {
+			if (closing) throw new HttpError(503, 'The runner is shutting down.');
 			const method = req.method ?? 'GET';
 			const target = req.url ?? '/';
 			const body = method === 'GET' || method === 'DELETE' ? '' : await readBody(req);
@@ -209,16 +231,18 @@ export function createRunnerHandler(options: RunnerOptions) {
 			const action = match[2];
 
 			if (action === '/messages' && method === 'POST') {
-				await postMessage(chat_id, body, res);
+				await mutate(() => postMessage(chat_id, body, res));
 			} else if (action === '/events' && method === 'GET') {
 				streamEvents(chat_id, url.searchParams.get('after') ?? undefined, req, res);
 			} else if (action === '/interrupt' && method === 'POST') {
 				sessions.get(chat_id)?.interrupt();
 				sendJson(res, 202, { ok: true });
 			} else if (action === undefined && method === 'DELETE') {
-				sessions.get(chat_id)?.stop();
-				sessions.delete(chat_id);
-				options.store.remove(chat_id);
+				await mutate(async () => {
+					await sessions.get(chat_id)?.stop();
+					sessions.delete(chat_id);
+					options.store.remove(chat_id);
+				});
 				res.writeHead(204).end();
 			} else {
 				throw new HttpError(405, 'Method not allowed.');
@@ -235,4 +259,11 @@ export function createRunnerHandler(options: RunnerOptions) {
 			}
 		}
 	};
+	return Object.assign(handle, {
+		close: async () => {
+			closing = true;
+			await mutations;
+			await Promise.all([...sessions.values()].map((agent) => agent.stop()));
+		}
+	});
 }
