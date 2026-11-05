@@ -32,6 +32,10 @@ function newMessageId(): string {
 	return globalThis.crypto.randomUUID();
 }
 
+function lastTerminalId(events: MateEvent[]): string | undefined {
+	return events.findLast((event) => event.type === 'result' || event.type === 'error')?.id;
+}
+
 class MateChats {
 	status = $state<MateStatus | null>(null);
 	chats = $state<MateChat[]>([]);
@@ -232,11 +236,18 @@ class MateChats {
 	async interrupt(id: string) {
 		if (this.interrupting || this.interrupt_requested) return;
 		const generation = this.#generation;
+		const terminal_id = lastTerminalId(this.events);
 		this.action_error = null;
 		this.interrupting = true;
 		try {
 			await api.interruptMate(id);
-			if (generation === this.#generation && this.working) this.interrupt_requested = true;
+			// The stream may finish this turn and start another before the POST replies.
+			if (
+				generation === this.#generation &&
+				this.working &&
+				lastTerminalId(this.events) === terminal_id
+			)
+				this.interrupt_requested = true;
 		} catch (error) {
 			if (generation === this.#generation)
 				this.action_error = 'Could not stop the turn. ' + errorMessage(error);

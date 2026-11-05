@@ -228,3 +228,22 @@ it('acknowledges a stop request only until the terminal event arrives', async ()
 	expect(chats.interrupt_requested).toBe(false);
 	expect(chats.working).toBe(false);
 });
+
+it('does not apply a late stop acknowledgment to the following turn', async () => {
+	await chats.open(chat.id);
+	const source = FakeSource.instances[0]!;
+	source.onmessage!({ data: JSON.stringify({ type: 'assistant', id: 'e1', text: 'working' }) });
+	let acknowledge!: (value: { interrupted: true }) => void;
+	vi.spyOn(api, 'interruptMate')
+		.mockResolvedValue({ interrupted: true })
+		.mockImplementationOnce(() => new Promise((resolve) => (acknowledge = resolve)));
+	const stopping = chats.interrupt(chat.id);
+	source.onmessage!({ data: JSON.stringify({ type: 'result', id: 'e2', status: 'cancelled' }) });
+	source.onmessage!({ data: JSON.stringify({ type: 'assistant', id: 'e3', text: 'next turn' }) });
+	acknowledge({ interrupted: true });
+	await stopping;
+	expect(chats.working).toBe(true);
+	expect(chats.interrupt_requested).toBe(false);
+	await chats.interrupt(chat.id);
+	expect(api.interruptMate).toHaveBeenCalledTimes(2);
+});
