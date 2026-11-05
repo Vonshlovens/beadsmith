@@ -8,6 +8,10 @@ accepted. Amends [0006](./0006-durable-agent-dispatch.md): a beads sandbox
 may ask for repository work, and an admin may see an agent's raw terminal.
 Nothing in this decision is implemented yet.
 
+Amended 2026-11-05: rules 3 and 4 now state what the network must enforce
+instead of requiring a private network
+([amendment](#amendment-2026-11-05-network-rules-state-properties)).
+
 ## Context
 
 First Mate should show exactly what an agent CLI (Claude Code, Codex) reads
@@ -86,16 +90,20 @@ The rules that make these scopes real:
    carries more than one scope, or on a personal device, each sandbox is a VM
    or microVM, not a container. A laptop can host sandboxes this way; the
    laptop itself stays a personal device.
-3. Sandboxes reach Beadsmith and Dolt over a private network (Tailscale, or
-   WireGuard), and the network policy enforces the same scopes: Beadsmith may
-   reach sandboxes; a sandbox may reach Dolt only when it holds an account;
-   sandboxes do not reach each other; nothing reaches a personal device. A
-   misconfigured registration still cannot open a connection the network
-   refuses.
+3. Whatever carries the traffic, the network enforces the same scopes:
+   Beadsmith may reach sandboxes; a sandbox may reach Dolt only when it holds
+   an account, and Beadsmith only through its authenticated API; sandboxes do
+   not reach each other; nothing reaches a personal device. A misconfigured
+   registration still cannot open a connection the network refuses. Dolt is
+   never an open public listener: a sandbox reaches it over a private network
+   or an authenticated channel. A private network (Tailscale, WireGuard), a
+   sandbox provider's authenticated control API, or an authenticated tunnel
+   can each carry this; the implementation records which one it uses.
 4. The Beadsmith app image stays as it is ([0008](./0008-runtime-and-deployment.md)):
-   it reaches the private network through its host or a sidecar, not by
-   joining it itself. A credential for reaching sandboxes (an SSH key, or the
-   host's tailnet identity) lives outside `state.db`, like every other secret.
+   it does not join a private network itself; if one is needed, its host or
+   a sidecar joins. The credential Beadsmith uses to reach sandboxes (an SSH
+   key, the host's tailnet identity, or a sandbox provider's API key) lives
+   outside `state.db`, like every other secret.
 5. **Terminal relay.** An admin may open a sandbox's agent terminal from
    Beadsmith: the program's raw output, and, when the admin takes over, their
    keystrokes. It is admin-only and reaches only registered sandboxes.
@@ -194,12 +202,33 @@ holds no sandbox connection. Planned pieces, each in its own change:
 - the key proxy for model and repository access, or a sandbox host that
   provides one. Both agent CLIs can point at a proxy's base URL and carry a
   placeholder token;
-- private-network policy tags for each scope, declared with the fleet
-  ([0014](./0014-public-repo-nix-and-fleet.md)), the secrets kept in
-  `fleet/secrets/`;
+- network policy for each scope (tailnet tags, a sandbox provider's egress
+  rules, or tunnel access policies, whichever carries the traffic), declared
+  with the fleet ([0014](./0014-public-repo-nix-and-fleet.md)), the secrets
+  kept in `fleet/secrets/`;
 - the MCP server for personal devices, with its own ADR (OAuth server,
   tools, and how any write reaches Beads).
 
 The contract carries these rules as targets:
 [`docs/contract.md`](../../docs/contract.md#where-agents-run). The current
 architecture bullet is in [`specs/README.md`](../README.md).
+
+## Amendment (2026-11-05): network rules state properties
+
+As accepted, rule 3 required sandboxes to reach Beadsmith and Dolt over a
+private network (Tailscale or WireGuard), and rule 4 named an SSH key or the
+host's tailnet identity as Beadsmith's way in. That fits sandboxes on
+machines we run. It does not fit hosted sandbox providers well. They are
+normally reached through their own authenticated control API (commands,
+files and terminals over HTTPS), not over a network path into the sandbox,
+and some block outbound traffic to private address ranges, including the one
+Tailscale uses. A sandbox's way out can also be an HTTPS hostname behind an
+authenticated tunnel, with the provider's egress proxy adding the
+credential, so the sandbox holds none.
+
+The scopes and what the network must refuse are unchanged; only the
+mechanism is left open until a sandbox host ships. Opening Dolt to anything
+beyond loopback and the private network (an authenticated tunnel hostname,
+for example) also updates
+[`docs/server-deployment.md`](../../docs/server-deployment.md), which today
+keeps the Dolt listener loopback- or private-network-only.
