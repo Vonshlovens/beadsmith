@@ -41,7 +41,9 @@ its volume and pinned host key. Never delete or reformat the volume to upgrade.
 Enable tailnet HTTPS using `sudo tailscale serve --bg --https=443 http://127.0.0.1:8787`
 only after tailnet certificates are enabled. Inspect existing Serve configuration
 first and preserve unrelated routes. Do not use Funnel or bind the runner to
-LAN interfaces. The app requires HTTPS; certificate failure is a deployment
+LAN interfaces. Set `BDX_MATE_RUNNER_URL` to the HTTPS origin with **no path prefix**; the
+runner handles `/v1/...` and signatures cover the full path and query.
+The app requires HTTPS; certificate failure is a deployment
 blocker, not a reason to weaken that requirement.
 
 Inspect `underclass`, `mate-model-proxy`, `mate-runner`, `microvm@mate` and
@@ -55,3 +57,37 @@ The runner log and guest Claude state persist independently. Restarting the
 runner terminates its SSH children; a subsequent turn resumes from guest state.
 A running service alone does not certify successful resume or production app
 integration. Dolt access and repository workers remain unimplemented here.
+
+## Guest lifecycle smoke test
+
+`fleet/hosts/forge/guest-lifecycle.test.mjs` runs against a deployed guest and
+uses temporary host runners on loopback ports 18787 and 18788. It does not use
+model credentials or change the production runner configuration. The fixture
+starts two generations of detached descendants which ignore SIGTERM.
+
+From the host checkout, install the fixture using `sudo mate-ssh`:
+
+```sh
+sudo mate-ssh 'cat > /var/lib/agent/home/work/lifecycle-fake.mjs' < fleet/hosts/forge/guests/lifecycle-fake.mjs
+printf '%s\n' '#!/bin/sh' 'exec /run/current-system/sw/bin/mate-supervise /run/current-system/sw/bin/node /var/lib/agent/home/work/lifecycle-fake.mjs "$@"' | sudo mate-ssh 'cat > /var/lib/agent/home/work/lifecycle-fake; chmod 755 /var/lib/agent/home/work/lifecycle-fake'
+```
+
+Run with the pinned Node executable used by `mate-runner.service`, as root
+(the existing host SSH identity is required):
+
+```sh
+sudo node --import ./scripts/ts-resolve.mjs fleet/hosts/forge/guest-lifecycle.test.mjs
+```
+
+Substitute the service's absolute Node path if Node is not on the host PATH.
+The test checks delete, idle eviction, abrupt SSH client death, the runner close
+hook and runner process SIGTERM. It asserts no live fixture descendants remain
+and a separate chat survives each case. It removes its exact PID manifests and
+host state. Afterwards remove the two fixture files:
+
+```sh
+sudo mate-ssh 'rm -f /var/lib/agent/home/work/lifecycle-fake /var/lib/agent/home/work/lifecycle-fake.mjs'
+```
+
+This verifies process cleanup without an enrolled subscription. Claude's actual
+interrupt behavior and successful session resume still require model acceptance.

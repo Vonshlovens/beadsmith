@@ -21,7 +21,19 @@ host runner starts the official Claude Code CLI as a nonroot guest user over
 SSH with a pinned host key. One process serves each active chat through
 stream-json; persistent Claude session files support later resume. Runner event
 logs survive service restarts; active processes do not. KillMode=control-group
-stops SSH children with the host service.
+stops SSH children with the host service. Each guest launch is a separate
+transient user service, with a supervisor as its main process. The supervisor
+exits on transport stdin EOF/error or a termination signal; systemd then stops
+that service's entire cgroup, escalating to SIGKILL after two seconds. Detached
+tool descendants stay in the cgroup. Other chat services are not targeted.
+SSH client-alive probes (15 seconds, two missed replies) bound detection of
+silent transport loss; `systemd-run --wait` alone is not a cleanup guarantee.
+See the official [pipe semantics](https://www.freedesktop.org/software/systemd/man/latest/systemd-run.html),
+[cgroup kill policy](https://www.freedesktop.org/software/systemd/man/latest/systemd.kill.html)
+and [SSH client-alive settings](https://man.openbsd.org/sshd_config#ClientAliveInterval).
+This is lifecycle containment within one scope, not security isolation between
+chats sharing the guest user. A deliberately hostile process that controls that
+user's service manager is outside this cleanup guarantee.
 
 The runner binds loopback and accepts contract-v1 HMAC requests. Tailnet HTTPS
 is the external transport; TLS certificate enablement is an operational gate.
