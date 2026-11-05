@@ -6,7 +6,7 @@
 #                     pinned versions
 #   devenv test       pnpm install, then `pnpm run check` and `pnpm run test`
 #   git commit        Prettier on the staged files (pre-commit)
-#   git push          `pnpm run check` (pre-push)
+#   git push          `pnpm run check` and `scripts/public-scan.sh` (pre-push)
 { pkgs, lib, ... }:
 {
   overlays = [ (import ./nix/overlay.nix) ];
@@ -71,6 +71,28 @@
       enable = true;
       name = "pnpm run check";
       entry = "${pkgs.beadsmith-pnpm}/bin/pnpm run check";
+      language = "system";
+      pass_filenames = false;
+      always_run = true;
+      stages = [ "pre-push" ];
+    };
+    # The repository is public: scan what is about to be pushed (gitleaks,
+    # trufflehog, the private denylist when configured) so nobody has to
+    # remember to. The tools are the pinned ones, not the caller's PATH.
+    public-scan = {
+      enable = true;
+      name = "scripts/public-scan.sh";
+      entry = toString (
+        pkgs.writeShellScript "public-scan" ''
+          export PATH=${
+            lib.makeBinPath [
+              pkgs.beadsmith-gitleaks
+              pkgs.beadsmith-trufflehog
+            ]
+          }:$PATH
+          exec scripts/public-scan.sh --ref HEAD
+        ''
+      );
       language = "system";
       pass_filenames = false;
       always_run = true;
