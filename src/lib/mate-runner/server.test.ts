@@ -309,6 +309,26 @@ describe('mate runner', () => {
 		expect(new ChatStore(dir).get('chat1').meta?.scope).toBe('d_other_project');
 	});
 
+	it('preserves an omitted project scope and clears it only on explicit null', async () => {
+		await post('chat1', 'hello', 'm1');
+		const target = '/v1/mate/chats/chat1/messages';
+		const omitted = JSON.stringify({ session_id: SESSION, message_id: 'm2', prompt: 'next' });
+		expect((await fetch(`${base}${target}`, signed('POST', target, omitted))).status).toBe(202);
+		expect((await readEvents('chat1', 6)).at(-1)?.text).toBe('echo: next');
+		expect(new ChatStore(dir).get('chat1').meta?.scope).toBe('beads-web');
+
+		const cleared = JSON.stringify({
+			session_id: SESSION,
+			message_id: 'm3',
+			prompt: 'all',
+			scope: null
+		});
+		expect((await fetch(`${base}${target}`, signed('POST', target, cleared))).status).toBe(202);
+		expect((await readEvents('chat1', 9)).at(-1)?.text).toContain('every available Beads project');
+		expect(new ChatStore(dir).get('chat1').meta?.scope).toBeNull();
+		expect(agents).toHaveLength(1);
+	});
+
 	it('stops active sessions on shutdown and refuses new requests', async () => {
 		await post('chat1', 'hang', 'm1');
 		await handler.close();
