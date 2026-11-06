@@ -11,6 +11,7 @@
 	import brandMarkDark from '#lib/assets/beadsmith-mark.png';
 	import brandMarkLight from '#lib/assets/beadsmith-mark-light.png';
 	import touchIcon from '#lib/assets/beadsmith-touch-icon.png';
+	import ActivityDrawer from '#lib/components/activity-drawer.svelte';
 	import AppSidebar from '#lib/components/app-sidebar.svelte';
 	import FirstMate from '#lib/components/first-mate.svelte';
 	import TopBar from '#lib/components/top-bar.svelte';
@@ -24,6 +25,7 @@
 
 	$effect(() => {
 		app_state.loadRailPreference();
+		app_state.loadActivitySeen();
 		if (!signed_in) {
 			return;
 		}
@@ -76,6 +78,7 @@
 	</div>
 
 	<FirstMate />
+	<ActivityDrawer />
 {:else}
 	{@render children?.()}
 {/if}

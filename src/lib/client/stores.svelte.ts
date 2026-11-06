@@ -21,6 +21,8 @@ import type { AgentTarget } from '#lib/client/agent.js';
 import type { ResolvedTheme, StatusSnapshot, ThemePreference } from '#lib/types.js';
 
 const RAIL_KEY = 'bdui:rail-collapsed';
+/** When this browser last opened Recent changes (epoch ms), for the unseen marker. */
+const ACTIVITY_SEEN_KEY = 'bdui:activity-seen';
 const STATUS_INTERVAL_MS = 30_000;
 
 /** Shared, reactive UI state. */
@@ -36,6 +38,10 @@ class AppState {
 	first_mate_focus_tick = $state(0);
 	/** The `?` keyboard shortcut overlay. */
 	shortcuts_open = $state(false);
+	/** The Recent changes drawer opened from the top bar. Not persisted. */
+	activity_open = $state(false);
+	/** When this browser last closed Recent changes (epoch ms); 0 before the first time. */
+	activity_seen_at = $state(0);
 	/** The issue the agent dialog is about; null while it is closed. */
 	agent_target = $state<AgentTarget | null>(null);
 	/** Last project route visited, so `g i` works from cross-project pages. */
@@ -65,6 +71,35 @@ class AppState {
 			this.rail_collapsed = window.localStorage.getItem(RAIL_KEY) === '1';
 		} catch {
 			/* private mode or storage disabled — keep the default */
+		}
+	}
+
+	/** Read when Recent changes was last seen in this browser. */
+	loadActivitySeen() {
+		if (!browser) {
+			return;
+		}
+		try {
+			this.activity_seen_at = Number(window.localStorage.getItem(ACTIVITY_SEEN_KEY)) || 0;
+		} catch {
+			/* storage disabled: everything reads as unseen, which is harmless */
+		}
+	}
+
+	/**
+	 * Record that Recent changes has been read up to `at`.
+	 *
+	 * @param at - Epoch ms; defaults to now.
+	 */
+	markActivitySeen(at = Date.now()) {
+		this.activity_seen_at = at;
+		if (!browser) {
+			return;
+		}
+		try {
+			window.localStorage.setItem(ACTIVITY_SEEN_KEY, String(at));
+		} catch {
+			/* storage disabled */
 		}
 	}
 
@@ -159,11 +194,28 @@ class AppState {
 	/** Open the First Mate palette and close the overlay drawer if it is up. */
 	openFirstMate() {
 		this.closeDrawer();
+		this.closeActivity();
 		this.first_mate_open = true;
 	}
 
 	closeFirstMate() {
 		this.first_mate_open = false;
+	}
+
+	/** Close the Recent changes drawer, recording what it showed as seen. */
+	closeActivity() {
+		if (!this.activity_open) {
+			return;
+		}
+		this.activity_open = false;
+		this.markActivitySeen();
+	}
+
+	/** Open the Recent changes drawer; it replaces the palette and the rail drawer. */
+	openActivity() {
+		this.closeDrawer();
+		this.first_mate_open = false;
+		this.activity_open = true;
 	}
 
 	/** Focus the First Mate page input. Does not open the popup. */
@@ -179,6 +231,7 @@ class AppState {
 	openAgent(target: AgentTarget) {
 		this.closeDrawer();
 		this.first_mate_open = false;
+		this.closeActivity();
 		this.agent_target = target;
 	}
 

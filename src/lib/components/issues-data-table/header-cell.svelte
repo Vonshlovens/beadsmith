@@ -4,6 +4,10 @@
 	 * cycle; the grip is still ours because the title column absorbs slack
 	 * rather than sharing a pixel budget equally.
 	 */
+	import CaretUpDownIcon from 'phosphor-svelte/lib/CaretUpDownIcon';
+	import CaretDownIcon from 'phosphor-svelte/lib/CaretDownIcon';
+	import CaretUpIcon from 'phosphor-svelte/lib/CaretUpIcon';
+	import { tip } from '#lib/client/tooltip.js';
 	import {
 		COLUMN_LABELS,
 		isResizable,
@@ -32,11 +36,16 @@
 	type="button"
 	onclick={onSort}
 	aria-label="Sort by {COLUMN_LABELS[column]}"
-	title="Sort by {COLUMN_LABELS[column]}"
+	{@attach tip(`Sort by ${COLUMN_LABELS[column]}`)}
 >
 	<span class="hd-tx" aria-hidden="true">{label}</span>
 	<span class="arrow" aria-hidden="true">
-		{#if sorted === 'asc'}▲{:else if sorted === 'desc'}▼{:else}⇅{/if}
+		{#if sorted === 'asc'}<CaretUpIcon
+				size={10}
+				weight="bold"
+			/>{:else if sorted === 'desc'}<CaretDownIcon size={10} weight="bold" />{:else}<CaretUpDownIcon
+				size={10}
+			/>{/if}
 	</span>
 </button>
 {#if isResizable(column) && meta}

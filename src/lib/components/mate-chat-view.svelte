@@ -6,10 +6,11 @@
 	 * compact chips, thinking folds away, errors sit inline. Stop interrupts
 	 * the agent's current turn; the session keeps running.
 	 */
+	import { tip } from '#lib/client/tooltip.js';
 	import { tick, untrack } from 'svelte';
-	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
-	import CommandIcon from '@lucide/svelte/icons/command';
-	import SquareIcon from '@lucide/svelte/icons/square';
+	import ArrowLeftIcon from 'phosphor-svelte/lib/ArrowLeftIcon';
+	import CommandIcon from 'phosphor-svelte/lib/CommandIcon';
+	import SquareIcon from 'phosphor-svelte/lib/SquareIcon';
 	import ChatComposer from '#lib/components/chat-composer.svelte';
 	import MarkdownBody from '#lib/components/markdown-body.svelte';
 	import MateContextSelect from '#lib/components/mate-context-select.svelte';
@@ -153,15 +154,15 @@
 			class="btn btn-sm btn-ghost btn-icon back"
 			type="button"
 			aria-label="Back to chats"
-			title="Back (esc)"
+			{@attach tip('Back (esc)')}
 			onclick={onback}
 		>
-			<ArrowLeftIcon size={14} strokeWidth={1.4} />
+			<ArrowLeftIcon size={14} />
 		</button>
 		<div class="chat-ti">
 			<h1>{chat.title}</h1>
 			<p class="dim xs">
-				Started <time datetime={chat.created_at} title={absoluteStamp(chat.created_at)}
+				Started <time datetime={chat.created_at} {@attach tip(absoluteStamp(chat.created_at))}
 					>{relativeShort(chat.created_at)}</time
 				>
 				· {bubbles.length}
@@ -238,7 +239,7 @@
 						{#if bubble.result && RESULT_NOTE[bubble.result.status]}
 							<span class="st">{RESULT_NOTE[bubble.result.status]}</span>
 						{/if}
-						<time datetime={bubble.at} title={absoluteStamp(bubble.at)}
+						<time datetime={bubble.at} {@attach tip(absoluteStamp(bubble.at))}
 							>{relativeShort(bubble.at)}</time
 						>
 					</div>
@@ -372,10 +373,10 @@
 				<button
 					class="btn btn-sm btn-ghost"
 					type="button"
-					title="Commands (⌘K)"
+					{@attach tip('Commands (⌘K)')}
 					onclick={() => app_state.openFirstMate()}
 				>
-					<CommandIcon size={12} strokeWidth={1.6} aria-hidden="true" /> Commands
+					<CommandIcon size={12} aria-hidden="true" /> Commands
 				</button>
 			{/snippet}
 			{#snippet actions()}
@@ -385,9 +386,9 @@
 						type="button"
 						disabled={mate_chats.interrupting || mate_chats.interrupt_requested}
 						onclick={() => void mate_chats.interrupt(chat.id)}
-						title="Interrupt the current turn; the session keeps running"
+						{@attach tip('Interrupt the current turn; the session keeps running')}
 					>
-						<SquareIcon size={12} strokeWidth={1.6} />
+						<SquareIcon size={12} />
 						{mate_chats.interrupting
 							? 'Requesting stop…'
 							: mate_chats.interrupt_requested

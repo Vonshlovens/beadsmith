@@ -4,6 +4,7 @@
 	 * retention, optional passphrase, and recent runs. Secrets are write-only:
 	 * the API reports whether each is set, never its value.
 	 */
+	import SelectField from '#lib/components/select-field.svelte';
 	import { onDestroy, onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { api, errorMessage } from '#lib/client/api.js';
@@ -172,10 +173,13 @@
 				</label>
 				<label class="field">
 					<span class="lbl">Addressing</span>
-					<select class="select" bind:value={url_style}>
-						<option value="virtual-host">Virtual-host (bucket.host)</option>
-						<option value="path">Path (host/bucket)</option>
-					</select>
+					<SelectField
+						bind:value={url_style}
+						items={[
+							{ value: 'virtual-host', label: 'Virtual-host (bucket.host)' },
+							{ value: 'path', label: 'Path (host/bucket)' }
+						]}
+					/>
 				</label>
 				<label class="field">
 					<span class="lbl">Prefix</span>

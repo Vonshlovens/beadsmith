@@ -6,10 +6,11 @@
 	 * agent from the keyboard, opens a confirm modal to dispatch an agent; the
 	 * card stays put until Beads changes.
 	 */
+	import { tip } from '#lib/client/tooltip.js';
 	import { tick, untrack } from 'svelte';
 	import { browser } from '$app/env';
-	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
-	import PlusIcon from '@lucide/svelte/icons/plus';
+	import CaretDownIcon from 'phosphor-svelte/lib/CaretDownIcon';
+	import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
 	import BoardCard from '#lib/components/board-card.svelte';
 	import BoardDispatchDialog from '#lib/components/board-dispatch-dialog.svelte';
 	import { boardCreateHeading, groupBoardColumns } from '#lib/client/board.js';
@@ -430,14 +431,14 @@
 						{column.label}
 					</span>
 					<span class="count mono-num">{column.issues.length}</span>
-					<ChevronDownIcon class="caret" aria-hidden="true" />
+					<CaretDownIcon class="caret" aria-hidden="true" />
 				</button>
 				{#if can_create && !is_collapsed}
 					<button
 						class="board-col-new"
 						type="button"
 						aria-label={boardCreateHeading(column.status)}
-						title={boardCreateHeading(column.status)}
+						{@attach tip(boardCreateHeading(column.status))}
 						onclick={() => oncreate?.(column.status)}
 					>
 						<PlusIcon class="plus" aria-hidden="true" />

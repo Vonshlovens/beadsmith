@@ -5,22 +5,24 @@
 	 * and only three things may be red: a blocked badge, a P0 chip, and the
 	 * selected row's left edge.
 	 */
+	import CaretDownIcon from 'phosphor-svelte/lib/CaretDownIcon';
+	import { tip } from '#lib/client/tooltip.js';
 	import { untrack } from 'svelte';
 	import { browser } from '$app/env';
 	import { goto, refreshAll, replaceState, beforeNavigate } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
-	import ArchiveIcon from '@lucide/svelte/icons/archive';
-	import CircleDotIcon from '@lucide/svelte/icons/circle-dot';
-	import Columns3Icon from '@lucide/svelte/icons/columns-3';
-	import KanbanIcon from '@lucide/svelte/icons/kanban';
-	import ListIcon from '@lucide/svelte/icons/list';
-	import PanelRightIcon from '@lucide/svelte/icons/panel-right';
-	import PlusIcon from '@lucide/svelte/icons/plus';
-	import SearchIcon from '@lucide/svelte/icons/search';
-	import ShapesIcon from '@lucide/svelte/icons/shapes';
-	import SignalHighIcon from '@lucide/svelte/icons/signal-high';
-	import XIcon from '@lucide/svelte/icons/x';
+	import ArchiveIcon from 'phosphor-svelte/lib/ArchiveIcon';
+	import RecordIcon from 'phosphor-svelte/lib/RecordIcon';
+	import ColumnsIcon from 'phosphor-svelte/lib/ColumnsIcon';
+	import KanbanIcon from 'phosphor-svelte/lib/KanbanIcon';
+	import ListBulletsIcon from 'phosphor-svelte/lib/ListBulletsIcon';
+	import SidebarSimpleIcon from 'phosphor-svelte/lib/SidebarSimpleIcon';
+	import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
+	import MagnifyingGlassIcon from 'phosphor-svelte/lib/MagnifyingGlassIcon';
+	import ShapesIcon from 'phosphor-svelte/lib/ShapesIcon';
+	import CellSignalHighIcon from 'phosphor-svelte/lib/CellSignalHighIcon';
+	import XIcon from 'phosphor-svelte/lib/XIcon';
 	import EmptyState from '#lib/components/empty-state.svelte';
 	import FileIssueDialog from '#lib/components/file-issue-dialog.svelte';
 	import IssuesBoard from '#lib/components/issues-board.svelte';
@@ -258,7 +260,11 @@
 		list: 'Sortable table',
 		board: 'Columns by status'
 	};
-	const VIEW_ICONS = { parade: PanelRightIcon, list: ListIcon, board: KanbanIcon } as const;
+	const VIEW_ICONS = {
+		parade: SidebarSimpleIcon,
+		list: ListBulletsIcon,
+		board: KanbanIcon
+	} as const;
 
 	useHotkeys(() => [
 		...ISSUE_VIEWS.map((option, index) => ({
@@ -612,7 +618,7 @@
 
 <div class="wrap is-wide" class:is-grid={!is_board}>
 	<div class="filters" role="toolbar" aria-label="Filter issues">
-		<h1 class="proj" title={project?.dolt_database}>{project?.name ?? 'Issues'}</h1>
+		<h1 class="proj" {@attach tip(project?.dolt_database)}>{project?.name ?? 'Issues'}</h1>
 		<span class="meta" aria-live="polite">
 			{visible.length === issues.length ? issues.length : `${visible.length}/${issues.length}`}
 		</span>
@@ -627,10 +633,10 @@
 					aria-checked={view === option}
 					aria-label={VIEW_LABELS[option]}
 					aria-keyshortcuts={String(index + 1)}
-					title="{VIEW_LABELS[option]}: {VIEW_HINTS[option]} ({index + 1})"
+					{@attach tip(`${VIEW_LABELS[option]}: ${VIEW_HINTS[option]} (${index + 1})`)}
 					onclick={() => applyFilters({ view: option })}
 				>
-					<Icon size={14} strokeWidth={1.4} aria-hidden="true" />
+					<Icon size={14} mirrored={option === 'parade'} aria-hidden="true" />
 					<span class="view-tx">{VIEW_LABELS[option]}</span>
 				</button>
 			{/each}
@@ -646,9 +652,9 @@
 						aria-label="Status filter: {data.filters.status.length > 0
 							? data.filters.status.map((s) => s.replace('_', ' ')).join(', ')
 							: 'any'}"
-						title="Status"
+						{@attach tip('Status')}
 					>
-						<CircleDotIcon size={13} strokeWidth={1.4} aria-hidden="true" />
+						<RecordIcon size={13} aria-hidden="true" />
 						{#if data.filters.status.length > 0}
 							<span class="v">
 								{#each data.filters.status as option (option)}<i
@@ -658,7 +664,7 @@
 								{data.filters.status.length === 1 ? data.filters.status[0]?.replace('_', ' ') : ''}
 							</span>
 						{/if}
-						<span class="caret" aria-hidden="true">▾</span>
+						<span class="caret" aria-hidden="true"><CaretDownIcon size={11} weight="bold" /></span>
 					</button>
 				{/snippet}
 			</DropdownMenu.Trigger>
@@ -686,13 +692,13 @@
 						aria-label="Type filter: {data.filters.type.length > 0
 							? data.filters.type.join(', ')
 							: 'any'}"
-						title="Type"
+						{@attach tip('Type')}
 					>
-						<ShapesIcon size={13} strokeWidth={1.4} aria-hidden="true" />
+						<ShapesIcon size={13} aria-hidden="true" />
 						{#if data.filters.type.length > 0}
 							<span class="v">{data.filters.type.join(' · ')}</span>
 						{/if}
-						<span class="caret" aria-hidden="true">▾</span>
+						<span class="caret" aria-hidden="true"><CaretDownIcon size={11} weight="bold" /></span>
 					</button>
 				{/snippet}
 			</DropdownMenu.Trigger>
@@ -720,13 +726,13 @@
 						aria-label="Priority filter: {data.filters.priority.length > 0
 							? data.filters.priority.map((p) => `P${p}`).join(', ')
 							: 'any'}"
-						title="Priority"
+						{@attach tip('Priority')}
 					>
-						<SignalHighIcon size={13} strokeWidth={1.4} aria-hidden="true" />
+						<CellSignalHighIcon size={13} aria-hidden="true" />
 						{#if data.filters.priority.length > 0}
 							<span class="v">{data.filters.priority.map((p) => `P${p}`).join(' ')}</span>
 						{/if}
-						<span class="caret" aria-hidden="true">▾</span>
+						<span class="caret" aria-hidden="true"><CaretDownIcon size={11} weight="bold" /></span>
 					</button>
 				{/snippet}
 			</DropdownMenu.Trigger>
@@ -749,10 +755,12 @@
 			type="button"
 			aria-pressed={data.filters.include_closed}
 			aria-label="Include closed issues"
-			title={data.filters.include_closed ? 'Closed issues shown (x)' : 'Closed issues hidden (x)'}
+			{@attach tip(
+				data.filters.include_closed ? 'Closed issues shown (x)' : 'Closed issues hidden (x)'
+			)}
 			onclick={() => applyFilters({ include_closed: data.filters.include_closed ? '' : '1' })}
 		>
-			<ArchiveIcon size={13} strokeWidth={1.4} aria-hidden="true" />
+			<ArchiveIcon size={13} aria-hidden="true" />
 		</button>
 
 		<form
@@ -762,7 +770,7 @@
 				void applyFilters({ q: query.trim() });
 			}}
 		>
-			<SearchIcon size={13} strokeWidth={1.4} aria-hidden="true" />
+			<MagnifyingGlassIcon size={13} aria-hidden="true" />
 			<input
 				type="search"
 				placeholder="Filter"
@@ -781,13 +789,14 @@
 							class="filt {columns_customized ? 'is-on' : 'is-off'}"
 							type="button"
 							aria-label="Columns: {visible_columns.size} of {COLUMN_IDS.length}"
-							title="Columns"
+							{@attach tip('Columns')}
 						>
-							<Columns3Icon size={13} strokeWidth={1.4} aria-hidden="true" />
+							<ColumnsIcon size={13} aria-hidden="true" />
 							{#if visible_columns.size !== COLUMN_IDS.length}
 								<span class="v">{visible_columns.size}/{COLUMN_IDS.length}</span>
 							{/if}
-							<span class="caret" aria-hidden="true">▾</span>
+							<span class="caret" aria-hidden="true"><CaretDownIcon size={11} weight="bold" /></span
+							>
 						</button>
 					{/snippet}
 				</DropdownMenu.Trigger>
@@ -826,9 +835,9 @@
 				type="button"
 				onclick={clearFilters}
 				aria-label="Clear {active_filter_count} {active_filter_count === 1 ? 'filter' : 'filters'}"
-				title="Clear filters"
+				{@attach tip('Clear filters')}
 			>
-				<XIcon size={12} strokeWidth={1.6} aria-hidden="true" />{active_filter_count}
+				<XIcon size={12} aria-hidden="true" />{active_filter_count}
 			</button>
 		{/if}
 
@@ -841,11 +850,11 @@
 				aria-label="Sorted by {SORT_LABELS[sort.column]}, {sort.direction === 'asc'
 					? 'ascending'
 					: 'descending'}. Reset sort"
-				title="Reset sort"
+				{@attach tip('Reset sort')}
 			>
 				{sort.direction === 'asc' ? '↑' : '↓'}
 				{SORT_LABELS[sort.column]}
-				<XIcon size={12} strokeWidth={1.6} aria-hidden="true" />
+				<XIcon size={12} aria-hidden="true" />
 			</button>
 		{/if}
 		{#if file_enabled}
@@ -854,9 +863,9 @@
 				type="button"
 				onclick={() => openFile()}
 				aria-keyshortcuts="n"
-				title="File a new issue (n)"
+				{@attach tip('File a new issue (n)')}
 			>
-				<PlusIcon size={14} strokeWidth={1.6} aria-hidden="true" /><span class="file-tx">File</span>
+				<PlusIcon size={14} aria-hidden="true" /><span class="file-tx">File</span>
 			</button>
 		{/if}
 	</div>

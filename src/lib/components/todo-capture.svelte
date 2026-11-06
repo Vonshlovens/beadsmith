@@ -5,10 +5,13 @@
 	 * shows as chips before anything is created, so the parse is never a
 	 * surprise. Enter or ⌘/Ctrl+Enter submits; Esc clears, then leaves.
 	 */
+	import CaretRightIcon from 'phosphor-svelte/lib/CaretRightIcon';
+	import CaretLeftIcon from 'phosphor-svelte/lib/CaretLeftIcon';
+	import { tip } from '#lib/client/tooltip.js';
 	import { flip } from 'svelte/animate';
 	import { scale } from 'svelte/transition';
-	import PlusIcon from '@lucide/svelte/icons/plus';
-	import CalendarIcon from '@lucide/svelte/icons/calendar';
+	import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
+	import CalendarBlankIcon from 'phosphor-svelte/lib/CalendarBlankIcon';
 	import PriorityChip from '#lib/components/priority-chip.svelte';
 	import { dur, expand } from '#lib/client/motion.js';
 	import { addDays, dueLabel, nextWeekday, toDateOnly } from '#lib/todos/dates.js';
@@ -123,7 +126,7 @@
 			void submit();
 		}}
 	>
-		<PlusIcon size={14} strokeWidth={1.6} aria-hidden="true" />
+		<PlusIcon size={14} aria-hidden="true" />
 		<input
 			bind:this={input}
 			bind:value={text}
@@ -156,12 +159,12 @@
 						animate:flip={{ duration: dur(200) }}
 						in:scale={{ start: 0.8, duration: dur(200) }}
 						out:scale={{ start: 0.8, duration: dur(140) }}
-						title="{token.source} → {token.value}"
+						{@attach tip(`${token.source} → ${token.value}`)}
 					>
 						{#if token.kind === 'priority'}
 							<PriorityChip {priority} />
 						{:else if token.kind === 'due'}
-							<CalendarIcon size={11} strokeWidth={1.6} aria-hidden="true" />
+							<CalendarBlankIcon size={11} aria-hidden="true" />
 							{dueLabel(token.value, now)}
 							<span class="cap-iso mono-num">{token.value}</span>
 						{:else}
@@ -185,7 +188,7 @@
 						in:scale={{ start: 0.8, duration: dur(200) }}
 						out:scale={{ start: 0.8, duration: dur(140) }}
 					>
-						<CalendarIcon size={11} strokeWidth={1.6} aria-hidden="true" />
+						<CalendarBlankIcon size={11} aria-hidden="true" />
 						{dueLabel(final.due_at, now)}
 						<span class="cap-iso mono-num">{final.due_at}</span>
 					</span>
@@ -227,7 +230,7 @@
 						tabindex="-1"
 						aria-label="More urgent"
 						disabled={priority === 0}
-						onclick={() => stepPriority(-1)}>‹</button
+						onclick={() => stepPriority(-1)}><CaretLeftIcon size={12} weight="bold" /></button
 					>
 					<PriorityChip {priority} />
 					<button
@@ -236,7 +239,7 @@
 						tabindex="-1"
 						aria-label="Less urgent"
 						disabled={priority === 4}
-						onclick={() => stepPriority(1)}>›</button
+						onclick={() => stepPriority(1)}><CaretRightIcon size={12} weight="bold" /></button
 					>
 				</span>
 				<span class="cap-refine-hint"

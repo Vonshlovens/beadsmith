@@ -3,8 +3,13 @@
  *
  * Read queries (Ready, Missions, Go) never launch an agent. File and Tackle
  * reuse the dispatch dialogs; "Ask an agent" opens the issue agent dialog.
- * Missions open as threads on the First Mate page.
+ * Missions open as threads on the First Mate page. Actions are local to this
+ * browser (theme, rail, copy, the Recent changes drawer) or ordinary
+ * Beadsmith requests (add a todo, refresh projects, sign out); none of them
+ * launches an agent either.
  */
+import { dueLabel } from '#lib/todos/dates.js';
+import { parseCapture } from '#lib/todos/parse.js';
 
 export type FirstMateView = 'commands' | 'ready' | 'missions' | 'file-project' | 'tackle-pick';
 
@@ -15,7 +20,29 @@ export type FirstMateIntent =
 	| { kind: 'file' }
 	| { kind: 'tackle'; issue_id?: string };
 
-export type FirstMateGroup = 'Ask' | 'Dispatch' | 'Go';
+export type FirstMateGroup = 'Jump' | 'Recent' | 'Ask' | 'Dispatch' | 'Go' | 'Actions' | 'Search';
+
+/** Group order in the palette. */
+export const FIRST_MATE_GROUP_ORDER: FirstMateGroup[] = [
+	'Jump',
+	'Recent',
+	'Ask',
+	'Dispatch',
+	'Go',
+	'Actions',
+	'Search'
+];
+
+/** Palette actions that stay in the browser or make an ordinary request. */
+export type FirstMateLocalAction =
+	| 'activity'
+	| 'shortcuts'
+	| 'theme-light'
+	| 'theme-dark'
+	| 'theme-system'
+	| 'rail'
+	| 'refresh-projects'
+	| 'sign-out';
 
 export type FirstMateAction =
 	| { type: 'view'; view: Exclude<FirstMateView, 'commands'> }
@@ -23,7 +50,16 @@ export type FirstMateAction =
 	| { type: 'file'; project_id: string }
 	| { type: 'tackle'; project_id: string; issue_id: string; issue_title: string }
 	| { type: 'agent'; project_id: string; issue_id: string; issue_title: string }
-	| { type: 'pick_file_project' };
+	| { type: 'pick_file_project' }
+	| { type: 'local'; action: FirstMateLocalAction }
+	| { type: 'copy'; text: string; what: string }
+	| {
+			type: 'todo';
+			title: string;
+			priority: number;
+			due_at: string | null;
+			tags: string[];
+	  };
 
 export interface FirstMateCommand {
 	id: string;
@@ -34,6 +70,15 @@ export interface FirstMateCommand {
 	/** True for File, Tackle and Ask an agent. Ready/Missions/Go stay on GET. */
 	launches_agent: boolean;
 	action: FirstMateAction;
+	/** The key sequence that does the same thing outside the palette, e.g. `g t`. */
+	shortcut?: string;
+}
+
+/** An issue this browser opened lately (src/lib/client/recent-issues.ts). */
+export interface FirstMateRecentIssue {
+	project_id: string;
+	issue_id: string;
+	title: string;
 }
 
 export interface FirstMateProject {
@@ -56,6 +101,16 @@ export interface FirstMateContext {
 	/** True on `/first-mate`, where Go → First Mate would only reload the page. */
 	on_first_mate_page?: boolean;
 	projects: FirstMateProject[];
+	/** Admins see Todos and Console, and may add todos. */
+	is_admin?: boolean;
+	/** The stored theme preference, so the palette offers the other two. */
+	theme?: 'system' | 'light' | 'dark';
+	/** The desktop rail is collapsed. */
+	rail_collapsed?: boolean;
+	/** Absolute URL of the page under the palette, for Copy link. */
+	page_url?: string;
+	/** Newest first. */
+	recent_issues?: FirstMateRecentIssue[];
 }
 
 export interface FirstMateReadyIssue {
@@ -379,79 +434,373 @@ export function defaultCommands(ctx: FirstMateContext): FirstMateCommand[] {
 		});
 	}
 
-	if (!ctx.on_first_mate_page) {
-		commands.push({
-			id: 'go-first-mate',
+	const go = (
+		id: string,
+		title: string,
+		href: string,
+		keywords: string[],
+		shortcut?: string
+	): FirstMateCommand => {
+		return {
+			id,
 			group: 'Go',
-			title: 'First Mate',
-			hint: FIRST_MATE_PATH,
-			keywords: ['first mate', 'palette', 'officer', 'commands'],
+			title,
+			hint: href,
+			keywords,
 			launches_agent: false,
-			action: { type: 'navigate', href: FIRST_MATE_PATH }
-		});
-	}
+			action: { type: 'navigate', href },
+			...(shortcut ? { shortcut } : {})
+		};
+	};
 
+	if (ctx.current_project_id) {
+		const name = ctx.current_project_name ?? ctx.current_project_id;
+		commands.push(
+			go(
+				'go-issues',
+				`Issues in ${name}`,
+				`/p/${ctx.current_project_id}`,
+				['issues', 'list', 'parade', name],
+				'g i'
+			),
+			go(
+				'go-board',
+				`Board for ${name}`,
+				`/p/${ctx.current_project_id}?view=board`,
+				['board', 'kanban', 'columns', name],
+				'g b'
+			)
+		);
+	}
+	if (ctx.is_admin) {
+		commands.push(go('go-todos', 'Todos', '/todos', ['todos', 'agenda', 'home', 'tasks'], 'g t'));
+	}
+	if (!ctx.on_first_mate_page) {
+		commands.push(
+			go('go-first-mate', 'First Mate', FIRST_MATE_PATH, ['first mate', 'chat', 'ask'], 'g f')
+		);
+	}
 	commands.push(
-		{
-			id: 'go-ready',
-			group: 'Go',
-			title: 'Ready',
-			hint: '/ready',
-			keywords: ['ready', 'deck', 'unblocked'],
-			launches_agent: false,
-			action: { type: 'navigate', href: '/ready' }
-		},
-		{
-			id: 'go-missions',
-			group: 'Go',
-			title: 'Missions',
-			hint: '/missions',
-			keywords: ['missions', 'fleet'],
-			launches_agent: false,
-			action: { type: 'navigate', href: '/missions' }
-		},
-		{
-			id: 'go-projects',
-			group: 'Go',
-			title: 'Projects',
-			hint: '/',
-			keywords: ['projects', 'home', 'catalog'],
-			launches_agent: false,
-			action: { type: 'navigate', href: '/' }
-		},
-		{
-			id: 'go-activity',
-			group: 'Go',
-			title: 'Activity log',
-			hint: '/activity',
-			keywords: ['activity', 'events'],
-			launches_agent: false,
-			action: { type: 'navigate', href: '/activity' }
-		},
-		{
-			id: 'go-console',
-			group: 'Go',
-			title: 'Console',
-			hint: '/console',
-			keywords: ['console', 'operator', 'maps'],
-			launches_agent: false,
-			action: { type: 'navigate', href: '/console' }
-		}
+		go('go-ready', 'Ready', '/ready', ['ready', 'deck', 'unblocked'], 'g r'),
+		go('go-projects', 'Projects', '/projects', ['projects', 'catalog', 'databases'], 'g p'),
+		go('go-missions', 'Missions', '/missions', ['missions', 'fleet', 'agents', 'runs'], 'g m'),
+		go('go-activity', 'Activity log', '/activity', ['activity', 'events', 'history', 'log'], 'g a')
 	);
+	if (ctx.is_admin) {
+		commands.push(
+			go('go-console', 'Console', '/console', ['console', 'operator', 'maps', 'backups'], 'g c')
+		);
+	}
+	commands.push(go('go-account', 'Account', '/account', ['account', 'password', 'profile']));
 
 	for (const project of ctx.projects) {
-		commands.push({
-			id: `go-project-${project.id}`,
-			group: 'Go',
-			title: project.name,
-			hint: `/p/${project.id}`,
-			keywords: ['project', project.id, project.name],
-			launches_agent: false,
-			action: { type: 'navigate', href: `/p/${project.id}` }
-		});
+		if (project.id === ctx.current_project_id) {
+			continue;
+		}
+		commands.push(
+			go(`go-project-${project.id}`, project.name, `/p/${project.id}`, [
+				'project',
+				project.id,
+				project.name
+			])
+		);
 	}
 
-	return commands;
+	commands.push(...actionCommands(ctx));
+	return [...recentCommands(ctx), ...commands];
+}
+
+/**
+ * The browser-side actions: the drawer, theme, rail, copy, refresh, sign out.
+ *
+ * @param ctx - Route and preferences.
+ */
+export function actionCommands(ctx: FirstMateContext): FirstMateCommand[] {
+	const local = (
+		id: string,
+		title: string,
+		hint: string,
+		action: FirstMateLocalAction,
+		keywords: string[],
+		shortcut?: string
+	): FirstMateCommand => {
+		return {
+			id,
+			group: 'Actions',
+			title,
+			hint,
+			keywords,
+			launches_agent: false,
+			action: { type: 'local', action },
+			...(shortcut ? { shortcut } : {})
+		};
+	};
+	const rows: FirstMateCommand[] = [
+		local(
+			'act-activity',
+			'Recent changes',
+			'What changed lately, one line per issue',
+			'activity',
+			['recent', 'changes', 'activity', 'feed', 'what changed'],
+			'.'
+		),
+		local(
+			'act-shortcuts',
+			'Keyboard shortcuts',
+			'Every key this page answers',
+			'shortcuts',
+			['keys', 'keyboard', 'shortcuts', 'help', 'hotkeys'],
+			'?'
+		)
+	];
+	const theme = ctx.theme ?? 'system';
+	if (theme !== 'light') {
+		rows.push(
+			local('act-theme-light', 'Use the light theme', 'Paper and ink', 'theme-light', [
+				'theme',
+				'light',
+				'appearance'
+			])
+		);
+	}
+	if (theme !== 'dark') {
+		rows.push(
+			local('act-theme-dark', 'Use the dark theme', 'Onyx and cream', 'theme-dark', [
+				'theme',
+				'dark',
+				'appearance',
+				'night'
+			])
+		);
+	}
+	if (theme !== 'system') {
+		rows.push(
+			local(
+				'act-theme-system',
+				'Follow the system theme',
+				'Light or dark with your OS',
+				'theme-system',
+				['theme', 'auto', 'system', 'appearance']
+			)
+		);
+	}
+	rows.push(
+		local(
+			'act-rail',
+			ctx.rail_collapsed ? 'Expand the navigation rail' : 'Collapse the navigation rail',
+			'Sidebar width',
+			'rail',
+			['sidebar', 'rail', 'navigation', 'collapse', 'expand'],
+			'['
+		)
+	);
+	if (ctx.current_issue_id) {
+		rows.push({
+			id: 'act-copy-id',
+			group: 'Actions',
+			title: `Copy issue ID ${ctx.current_issue_id}`,
+			hint: 'For bd or a commit message',
+			keywords: ['copy', 'id', 'clipboard', ctx.current_issue_id],
+			launches_agent: false,
+			action: { type: 'copy', text: ctx.current_issue_id, what: 'Issue ID' }
+		});
+	}
+	if (ctx.page_url) {
+		rows.push({
+			id: 'act-copy-link',
+			group: 'Actions',
+			title: 'Copy a link to this page',
+			hint: 'With its filters',
+			keywords: ['copy', 'link', 'url', 'share', 'clipboard'],
+			launches_agent: false,
+			action: { type: 'copy', text: ctx.page_url, what: 'Link' }
+		});
+	}
+	rows.push(
+		local(
+			'act-refresh-projects',
+			'Refresh projects',
+			'Look for new or removed Beads databases',
+			'refresh-projects',
+			['refresh', 'rescan', 'projects', 'reload', 'databases']
+		),
+		local('act-sign-out', 'Sign out', 'End this session', 'sign-out', [
+			'sign out',
+			'log out',
+			'logout'
+		])
+	);
+	return rows;
+}
+
+/**
+ * Recently opened issues, newest first, minus the one already on screen.
+ *
+ * @param ctx - Carries the recent list and the current issue.
+ */
+export function recentCommands(ctx: FirstMateContext): FirstMateCommand[] {
+	const names = new Map(ctx.projects.map((project) => [project.id, project.name]));
+	return (ctx.recent_issues ?? [])
+		.filter((issue) => {
+			return !(
+				issue.issue_id === ctx.current_issue_id && issue.project_id === ctx.current_project_id
+			);
+		})
+		.filter((issue) => names.has(issue.project_id))
+		.slice(0, 5)
+		.map((issue) => {
+			const project_name = names.get(issue.project_id) ?? issue.project_id;
+			return {
+				id: `recent-${issue.project_id}-${issue.issue_id}`,
+				group: 'Recent' as const,
+				title: issue.title,
+				hint: `${issue.issue_id} · ${project_name}`,
+				keywords: [issue.issue_id, project_name, 'recent'],
+				launches_agent: false,
+				action: { type: 'navigate' as const, href: `/p/${issue.project_id}/i/${issue.issue_id}` }
+			};
+		});
+}
+
+const TODO_PREFIX = /^(?:add (?:a )?todo|new todo|todo)\s*:?\s+/i;
+
+/**
+ * Rows the typed text itself offers: jump to an issue ID, add a todo, search
+ * issues, or ask First Mate. Shown above (ID, todo) or below (search, ask)
+ * the matching commands.
+ *
+ * @param ctx - Projects and the current route.
+ * @param raw - Palette input.
+ * @param now - Reference time for todo dates.
+ */
+export function queryCommands(
+	ctx: FirstMateContext,
+	raw: string,
+	now: Date = new Date()
+): { lead: FirstMateCommand[]; tail: FirstMateCommand[] } {
+	const text = raw.trim();
+	const lead: FirstMateCommand[] = [];
+	const tail: FirstMateCommand[] = [];
+	if (text.length === 0) {
+		return { lead, tail };
+	}
+
+	// A bare issue ID: open it. Its prefix rarely names the project, so the
+	// project in view comes first, then any project a recent visit tied the
+	// prefix to, then the rest.
+	if (ISSUE_ID.test(text) && /\d/.test(text.slice(text.lastIndexOf('-') + 1))) {
+		const prefix = text.slice(0, text.lastIndexOf('-') + 1).toLowerCase();
+		const known = (ctx.recent_issues ?? []).find((issue) => {
+			return issue.issue_id.toLowerCase().startsWith(prefix);
+		})?.project_id;
+		const order = [...ctx.projects].sort((a, b) => {
+			const rank = (id: string) => {
+				if (id === known) return 0;
+				if (id === ctx.current_project_id) return 1;
+				return 2;
+			};
+			return rank(a.id) - rank(b.id);
+		});
+		for (const project of order.slice(0, known || ctx.current_project_id ? 1 : 4)) {
+			lead.push({
+				id: `jump-${project.id}-${text}`,
+				group: 'Jump',
+				title: `Open ${text}`,
+				hint: `in ${project.name}`,
+				keywords: [text],
+				launches_agent: false,
+				action: { type: 'navigate', href: `/p/${project.id}/i/${encodeURIComponent(text)}` }
+			});
+		}
+	}
+
+	// Only an admin gets the add-todo row; for anyone else "todo …" is
+	// ordinary text and still offers search and ask.
+	const todo = ctx.is_admin ? text.match(TODO_PREFIX) : null;
+	if (todo) {
+		const parsed = parseCapture(text.slice(todo[0].length), now);
+		if (parsed.title.length > 0) {
+			const details = parsed.tokens.map((token) => {
+				return token.kind === 'due' ? `due ${dueLabel(token.value, now)}` : token.value;
+			});
+			lead.push({
+				id: 'todo-add',
+				group: 'Jump',
+				title: `Add todo: ${parsed.title}`,
+				hint: details.length > 0 ? details.join(' · ') : `P${parsed.priority}, no date`,
+				keywords: [text],
+				launches_agent: false,
+				action: {
+					type: 'todo',
+					title: parsed.title,
+					priority: parsed.priority,
+					due_at: parsed.due_at,
+					tags: parsed.tags
+				}
+			});
+		}
+	}
+
+	const search_project =
+		ctx.projects.find((project) => project.id === ctx.current_project_id) ?? ctx.projects[0];
+	if (search_project && !todo) {
+		tail.push({
+			id: 'search-issues',
+			group: 'Search',
+			title: `Search issues for “${text}”`,
+			hint: `in ${search_project.name}`,
+			keywords: [text],
+			launches_agent: false,
+			action: {
+				type: 'navigate',
+				href: `/p/${search_project.id}?q=${encodeURIComponent(text)}`
+			}
+		});
+	}
+	if (!todo) {
+		tail.push({
+			id: 'ask-chat',
+			group: 'Search',
+			title: `Ask First Mate: “${text}”`,
+			hint: 'Opens a chat with this question',
+			keywords: [text],
+			launches_agent: false,
+			action: { type: 'navigate', href: firstMatePageHref(text, null) }
+		});
+	}
+	return { lead, tail };
+}
+
+/**
+ * Everything the command list shows for a query: what the text offers, the
+ * matching commands, then search and ask.
+ *
+ * @param ctx - Route and allow flags.
+ * @param query - Palette input.
+ * @param now - Reference time for todo dates.
+ */
+export function paletteRows(
+	ctx: FirstMateContext,
+	query: string,
+	now: Date = new Date()
+): FirstMateCommand[] {
+	const matched = filterCommands(defaultCommands(ctx), query);
+	const { lead, tail } = queryCommands(ctx, query, now);
+	return sortByGroup([...lead, ...matched, ...tail]);
+}
+
+/**
+ * Rows in palette group order, keeping their order within a group, so the
+ * order the arrow keys walk is the order on screen.
+ *
+ * @param rows - Any order.
+ */
+export function sortByGroup(rows: FirstMateCommand[]): FirstMateCommand[] {
+	const rank = (row: FirstMateCommand) => FIRST_MATE_GROUP_ORDER.indexOf(row.group);
+	return rows
+		.map((row, index) => ({ row, index }))
+		.sort((a, b) => rank(a.row) - rank(b.row) || a.index - b.index)
+		.map((entry) => entry.row);
 }
 
 /**

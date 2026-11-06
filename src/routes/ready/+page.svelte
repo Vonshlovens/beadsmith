@@ -1,7 +1,8 @@
 <script lang="ts">
 	/** Cross-project Ready deck: control-plane equivalent of `bd ready`. */
+	import { tip } from '#lib/client/tooltip.js';
 	import { refreshAll } from '$app/navigation';
-	import BotIcon from '@lucide/svelte/icons/bot';
+	import RobotIcon from 'phosphor-svelte/lib/RobotIcon';
 	import EmptyState from '#lib/components/empty-state.svelte';
 	import IssueId from '#lib/components/issue-id.svelte';
 	import PageHeader from '#lib/components/page-header.svelte';
@@ -121,7 +122,7 @@
 			description="Unblocked open issues from every project show up here."
 		>
 			{#snippet actions()}
-				<a class="btn btn-sm" href="/">Open projects</a>
+				<a class="btn btn-sm" href="/projects">Open projects</a>
 			{/snippet}
 		</EmptyState>
 	{:else}
@@ -130,14 +131,16 @@
 				<li class="rd-row" data-ready="{issue.project_id}:{issue.id}">
 					<PriorityChip priority={issue.priority} />
 					<IssueId id={issue.id} href="/p/{issue.project_id}/i/{issue.id}" abbreviate />
-					<a class="rd-ti" href="/p/{issue.project_id}/i/{issue.id}" title={issue.title}
+					<a class="rd-ti" href="/p/{issue.project_id}/i/{issue.id}" {@attach tip(issue.title)}
 						>{issue.title}</a
 					>
-					<a class="rd-proj" href="/p/{issue.project_id}" title="Project {issue.project_name}"
-						>{issue.project_name}</a
+					<a
+						class="rd-proj"
+						href="/p/{issue.project_id}"
+						{@attach tip(`Project ${issue.project_name}`)}>{issue.project_name}</a
 					>
 					<span class="rd-ty"><TypeChip type={issue.issue_type} /></span>
-					<span class="rd-when mono-num" title={issue.updated_at}
+					<span class="rd-when mono-num" {@attach tip(issue.updated_at)}
 						>{relativeShort(issue.updated_at)}</span
 					>
 					{#if agent_visible}
@@ -145,10 +148,10 @@
 							class="btn btn-sm btn-ghost btn-icon rd-act"
 							type="button"
 							aria-label="Ask an agent about {issue.id}"
-							title="Agent (a)"
+							{@attach tip('Agent (a)')}
 							onclick={() => ask(issue)}
 						>
-							<BotIcon size={14} strokeWidth={1.4} />
+							<RobotIcon size={14} />
 						</button>
 					{/if}
 				</li>

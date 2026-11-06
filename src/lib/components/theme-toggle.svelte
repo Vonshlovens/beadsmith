@@ -5,6 +5,7 @@
 	 * *preference*, not the resolved theme, so `auto` stays distinguishable
 	 * from whichever theme it currently resolves to.
 	 */
+	import { tip } from '#lib/client/tooltip.js';
 	import { app_state } from '#lib/client/stores.svelte.js';
 	import { themeToggleLabel } from '#lib/client/theme.js';
 
@@ -16,7 +17,7 @@
 	class="foot-ctl"
 	type="button"
 	aria-label={label}
-	title={label}
+	{@attach tip(label)}
 	onclick={() => app_state.cycleTheme()}
 >
 	[{word}]

@@ -5,17 +5,25 @@
 	 * File and Tackle dialogs stay with the host, because the palette dialog
 	 * unmounts this component when it closes.
 	 */
+	import CaretLeftIcon from 'phosphor-svelte/lib/CaretLeftIcon';
+	import { tip } from '#lib/client/tooltip.js';
 	import { tick, untrack, type Snippet } from 'svelte';
 	import { page } from '$app/state';
-	import BotIcon from '@lucide/svelte/icons/bot';
+	import RobotIcon from 'phosphor-svelte/lib/RobotIcon';
+	import { refreshAll } from '$app/navigation';
+	import { toast } from 'svelte-sonner';
 	import { api, errorMessage } from '#lib/client/api.js';
+	import { auth, authErrorMessage } from '#lib/client/auth.js';
+	import { loadRecentIssues, type RecentIssue } from '#lib/client/recent-issues.js';
 	import { agentAvailability } from '#lib/client/agent.js';
 	import { app_state } from '#lib/client/stores.svelte.js';
 	import {
 		catalogFetchForView,
-		defaultCommands,
+		FIRST_MATE_GROUP_ORDER,
 		fileProjectRows,
 		filterCommands,
+		paletteRows,
+		sortByGroup,
 		findReadyIssue,
 		missionRows,
 		parseFirstMateQuery,
@@ -27,7 +35,12 @@
 		type FirstMateReadyIssue,
 		type FirstMateView
 	} from '#lib/client/first-mate.js';
-	import { currentProject, projectList, statusSnapshot } from '#lib/client/projects.svelte.js';
+	import {
+		currentProject,
+		currentViewer,
+		projectList,
+		statusSnapshot
+	} from '#lib/client/projects.svelte.js';
 
 	interface Props {
 		variant: 'palette' | 'page';
@@ -46,6 +59,8 @@
 		onTackle: (t: { project_id: string; issue_id: string; issue_title: string }) => void;
 		/** Page writes this back to the URL. */
 		onStateChange?: (s: { query: string; view: FirstMateView | null }) => void;
+		/** The palette closes after a local action; the page has nothing to close. */
+		onClose?: () => void;
 	}
 
 	let {
@@ -59,7 +74,8 @@
 		onNavigate,
 		onFile,
 		onTackle,
-		onStateChange
+		onStateChange,
+		onClose
 	}: Props = $props();
 
 	const on_auth = $derived(page.url.pathname === '/auth');
@@ -92,6 +108,8 @@
 	let ready_issues = $state<FirstMateReadyIssue[]>([]);
 	let missions = $state<FirstMateMission[]>([]);
 	let input_el: HTMLInputElement | null = $state(null);
+	let recent_issues = $state<RecentIssue[]>([]);
+	let working = $state(false);
 	let list_el: HTMLDivElement | null = $state(null);
 
 	const intent = $derived(parseFirstMateQuery(query));
@@ -102,16 +120,25 @@
 		current_project_id: project?.id,
 		current_project_name: project?.name,
 		current_issue_id: page.params.issue_id,
-		current_issue_title: undefined as string | undefined,
+		current_issue_title: recent_issues.find((issue) => {
+			return issue.issue_id === page.params.issue_id && issue.project_id === project?.id;
+		})?.title,
 		dispatch_enabled,
 		file_allowed,
 		tackle_allowed,
 		agent_visible: agentAvailability(statusSnapshot(), project?.allow).visible,
 		on_first_mate_page: variant === 'page',
-		projects: mate_projects
+		projects: mate_projects,
+		is_admin: currentViewer()?.role === 'admin',
+		theme: app_state.theme,
+		rail_collapsed: app_state.rail_collapsed,
+		page_url: variant === 'palette' ? page.url.href : undefined,
+		recent_issues
 	});
 
-	const rows = $derived.by((): FirstMateCommand[] => {
+	const rows = $derived.by(() => sortByGroup(viewRows()));
+
+	function viewRows(): FirstMateCommand[] {
 		if (view === 'ready') {
 			return filterCommands(readyRows(ready_issues, 'open', tackle_by_project), remainder);
 		}
@@ -155,16 +182,13 @@
 			}
 			return filterCommands(fileProjectRows(mate_projects), remainder);
 		}
-		return filterCommands(defaultCommands(command_ctx), query);
-	});
+		return paletteRows(command_ctx, query);
+	}
 
 	const groups = $derived.by(() => {
-		const order: FirstMateCommand['group'][] = ['Ask', 'Dispatch', 'Go'];
-		return order
-			.map((group) => {
-				return { group, items: rows.filter((row) => row.group === group) };
-			})
-			.filter((entry) => entry.items.length > 0);
+		return FIRST_MATE_GROUP_ORDER.map((group) => {
+			return { group, items: rows.filter((row) => row.group === group) };
+		}).filter((entry) => entry.items.length > 0);
 	});
 
 	const active_index = $derived(rows.length === 0 ? 0 : Math.min(selected, rows.length - 1));
@@ -197,7 +221,7 @@
 		if (view === 'file-project') {
 			return 'Pick a project to file in…';
 		}
-		return "What's ready? File, tackle, ask, go…";
+		return 'Go to a page or issue ID, run a command, ask…';
 	});
 	const palette_hint = $derived(refreshing ? 'Refreshing…' : '');
 	const hotkey_label = $derived(
@@ -207,6 +231,12 @@
 
 	$effect(() => {
 		onStateChange?.({ query, view: view === 'commands' ? null : view });
+	});
+
+	$effect(() => {
+		if (active) {
+			recent_issues = loadRecentIssues();
+		}
 	});
 
 	$effect(() => {
@@ -339,6 +369,97 @@
 				issue_id: action.issue_id,
 				issue_title: action.issue_title
 			});
+			return;
+		}
+		if (action.type === 'copy') {
+			try {
+				await navigator.clipboard.writeText(action.text);
+				toast.success(`${action.what} copied`, { description: action.text });
+			} catch {
+				toast.error(`Could not copy the ${action.what.toLowerCase()}`, {
+					description: 'The browser refused clipboard access.'
+				});
+			}
+			onClose?.();
+			return;
+		}
+		if (action.type === 'todo') {
+			if (working) return;
+			working = true;
+			try {
+				await api.createTodo({
+					title: action.title,
+					priority: action.priority,
+					due_at: action.due_at,
+					tags: action.tags
+				});
+				query = '';
+				toast.success('Todo added', {
+					description: action.title,
+					action: { label: 'Open todos', onClick: () => void onNavigate('/todos') }
+				});
+				if (page.url.pathname === '/todos') await refreshAll();
+				onClose?.();
+			} catch (error) {
+				toast.error('Could not add the todo', { description: errorMessage(error) });
+			} finally {
+				working = false;
+			}
+			return;
+		}
+		if (action.type === 'local') {
+			await runLocal(action.action);
+		}
+	}
+
+	async function runLocal(
+		action: Extract<FirstMateCommand['action'], { type: 'local' }>['action']
+	) {
+		switch (action) {
+			case 'activity':
+				app_state.openActivity();
+				return;
+			case 'shortcuts':
+				onClose?.();
+				app_state.shortcuts_open = true;
+				return;
+			case 'theme-light':
+			case 'theme-dark':
+			case 'theme-system':
+				void app_state.setTheme(
+					action === 'theme-light' ? 'light' : action === 'theme-dark' ? 'dark' : 'system'
+				);
+				onClose?.();
+				return;
+			case 'rail':
+				app_state.toggleRailForViewport();
+				onClose?.();
+				return;
+			case 'refresh-projects':
+				if (working) return;
+				working = true;
+				try {
+					await api.refreshProjects();
+					await refreshAll();
+					toast.success('Projects refreshed', { description: `${projectList().length} projects` });
+					onClose?.();
+				} catch (error) {
+					toast.error('Could not refresh projects', { description: errorMessage(error) });
+				} finally {
+					working = false;
+				}
+				return;
+			case 'sign-out':
+				if (working) return;
+				working = true;
+				try {
+					await auth.signOut();
+					window.location.assign('/auth');
+				} catch (error) {
+					working = false;
+					toast.error('Could not sign out', { description: authErrorMessage(error) });
+				}
+				return;
 		}
 	}
 
@@ -412,7 +533,9 @@
 	{#if variant === 'page'}
 		{#if view !== 'commands'}
 			<div class="crumb">
-				<button class="crumb-back" type="button" onclick={showAllCommands}>‹ All commands</button>
+				<button class="crumb-back" type="button" onclick={showAllCommands}
+					><CaretLeftIcon size={11} weight="bold" aria-hidden="true" /> All commands</button
+				>
 				<span aria-hidden="true">·</span>
 				{@render title(heading)}
 			</div>
@@ -460,9 +583,18 @@
 					>
 						<span class="row-title">{row.title}</span>
 						<span class="row-hint">{row.hint}</span>
+						{#if row.shortcut}
+							<span class="row-keys" aria-label="shortcut {row.shortcut}">
+								{#each row.shortcut.split(' ') as key, at (at)}<kbd class="kbd">{key}</kbd>{/each}
+							</span>
+						{/if}
 						{#if row.launches_agent}
-							<span class="row-agent" title="Launches an agent" aria-label="launches an agent">
-								<BotIcon size={13} strokeWidth={1.4} />
+							<span
+								class="row-agent"
+								{@attach tip('Launches an agent')}
+								aria-label="launches an agent"
+							>
+								<RobotIcon size={13} />
 							</span>
 						{/if}
 					</button>
@@ -593,6 +725,15 @@
 		flex: none;
 		align-self: center;
 		color: var(--em-400);
+	}
+	.row-keys {
+		flex: none;
+		align-self: center;
+		display: inline-flex;
+		gap: 3px;
+	}
+	.row-keys .kbd {
+		font-family: var(--font);
 	}
 	.empty-row {
 		padding: var(--s-5);

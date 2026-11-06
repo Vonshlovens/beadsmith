@@ -6,11 +6,12 @@
 	 * thread polls status and the reply lands when the run finishes. A runner
 	 * that cannot take follow-ups gets a disabled composer that says so.
 	 */
+	import { tip } from '#lib/client/tooltip.js';
 	import { untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
-	import GitPullRequestIcon from '@lucide/svelte/icons/git-pull-request';
-	import SquareIcon from '@lucide/svelte/icons/square';
+	import ArrowSquareOutIcon from 'phosphor-svelte/lib/ArrowSquareOutIcon';
+	import GitPullRequestIcon from 'phosphor-svelte/lib/GitPullRequestIcon';
+	import SquareIcon from 'phosphor-svelte/lib/SquareIcon';
 	import ChatComposer from '#lib/components/chat-composer.svelte';
 	import MarkdownBody from '#lib/components/markdown-body.svelte';
 	import MissionLiveStream from '#lib/components/mission-live-stream.svelte';
@@ -195,7 +196,9 @@
 			<span class="verb">{missionVerb(mission)}</span>
 			<MissionStatus status={mission.status} />
 			{#if mission.duration_ms !== undefined && !busy}
-				<span class="faint mono-num" title="Run time">{formatElapsed(mission.duration_ms)}</span>
+				<span class="faint mono-num" {@attach tip('Run time')}
+					>{formatElapsed(mission.duration_ms)}</span
+				>
 			{/if}
 			<span class="spacer"></span>
 			{#if mission.git_pr_url}
@@ -205,9 +208,9 @@
 					target="_blank"
 					rel="noopener noreferrer"
 					aria-label="Open the pull request"
-					title="Pull request"
+					{@attach tip('Pull request')}
 				>
-					<GitPullRequestIcon size={14} strokeWidth={1.4} />
+					<GitPullRequestIcon size={14} />
 				</a>
 			{/if}
 			{#if run_url}
@@ -217,9 +220,9 @@
 					target="_blank"
 					rel="noopener noreferrer"
 					aria-label="Open the run on the agent runner"
-					title="Open the run"
+					{@attach tip('Open the run')}
 				>
-					<ExternalLinkIcon size={14} strokeWidth={1.4} />
+					<ArrowSquareOutIcon size={14} />
 				</a>
 			{/if}
 		</header>
@@ -242,7 +245,7 @@
 						{#if turn.status && turn.status !== 'succeeded'}
 							<span class="st">{turn.status}</span>
 						{/if}
-						<time datetime={turn.created_at} title={absoluteStamp(turn.created_at)}
+						<time datetime={turn.created_at} {@attach tip(absoluteStamp(turn.created_at))}
 							>{relativeShort(turn.created_at)}</time
 						>
 					</div>
@@ -298,9 +301,9 @@
 					type="button"
 					disabled={cancelling}
 					onclick={cancel}
-					title="Stop the run"
+					{@attach tip('Stop the run')}
 				>
-					<SquareIcon size={12} strokeWidth={1.6} />
+					<SquareIcon size={12} />
 					{cancelling ? 'Stopping…' : 'Stop'}
 				</button>
 			{/if}

@@ -1,5 +1,6 @@
 <script lang="ts">
 	/** Priority chip with a weighted left edge. P0 is the only one that borrows ember. */
+	import { tip } from '#lib/client/tooltip.js';
 	import { priorityClass, priorityName } from '#lib/client/format.js';
 
 	interface Props {
@@ -11,7 +12,7 @@
 
 <span
 	class="prio {priorityClass(priority)}"
-	title="Priority {priority ?? '—'} · {priorityName(priority)}"
+	{@attach tip(`Priority ${priority ?? '—'} · ${priorityName(priority)}`)}
 >
 	P{priority ?? '—'}
 </span>

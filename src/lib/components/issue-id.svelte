@@ -3,6 +3,7 @@
 	 * The id chip: the project prefix recedes, the short suffix people say out
 	 * loud stays bright.
 	 */
+	import { tip } from '#lib/client/tooltip.js';
 	import { splitIssueId } from '#lib/client/format.js';
 
 	interface Props {
@@ -20,7 +21,10 @@
 </script>
 
 {#if href}
-	<a class="id{strong ? ' id-strong' : ''}" {href} title={id}>{prefix}<b>{parts.suffix}</b></a>
+	<a class="id{strong ? ' id-strong' : ''}" {href} {@attach tip(id)}
+		>{prefix}<b>{parts.suffix}</b></a
+	>
 {:else}
-	<span class="id{strong ? ' id-strong' : ''}" title={id}>{prefix}<b>{parts.suffix}</b></span>
+	<span class="id{strong ? ' id-strong' : ''}" {@attach tip(id)}>{prefix}<b>{parts.suffix}</b></span
+	>
 {/if}

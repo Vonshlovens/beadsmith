@@ -4,6 +4,7 @@
 	 * it. `compact` keeps only the bead (a narrow list column); the word moves
 	 * to the tooltip and stays for screen readers.
 	 */
+	import { tip } from '#lib/client/tooltip.js';
 	import { statusKey, statusLabel } from '#lib/client/format.js';
 
 	interface Props {
@@ -19,7 +20,7 @@
 </script>
 
 {#if compact}
-	<span class="badge-bead {class_name}" title={label}>
+	<span class="badge-bead {class_name}" {@attach tip(label)}>
 		<i class="dot dot-{key}" aria-hidden="true"></i><span class="sr-only">{label}</span>
 	</span>
 {:else}

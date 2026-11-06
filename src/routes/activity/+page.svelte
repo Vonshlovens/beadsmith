@@ -1,5 +1,6 @@
 <script lang="ts">
 	/** Activity log: the same thread as the home rail, at full length. */
+	import { tip } from '#lib/client/tooltip.js';
 	import { refreshAll } from '$app/navigation';
 	import ActivityFeed from '#lib/components/activity-feed.svelte';
 	import EmptyState from '#lib/components/empty-state.svelte';
@@ -62,7 +63,7 @@
 							role="radio"
 							aria-checked={only === project.id}
 							class:is-on={only === project.id}
-							title="{project.count} events"
+							{@attach tip(`${project.count} events`)}
 							onclick={() => (only = project.id)}>{project.name}</button
 						>
 					{/each}
@@ -88,7 +89,7 @@
 			description="Creates, closes, status changes and comments from every project land here."
 		>
 			{#snippet actions()}
-				<a class="btn btn-sm" href="/">Open projects</a>
+				<a class="btn btn-sm" href="/projects">Open projects</a>
 			{/snippet}
 		</EmptyState>
 	{:else}

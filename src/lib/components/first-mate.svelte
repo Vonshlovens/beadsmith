@@ -101,6 +101,7 @@
 					{onFile}
 					{onTackle}
 					{onStateChange}
+					onClose={closePalette}
 				/>
 			{/if}
 		</Dialog.Content>

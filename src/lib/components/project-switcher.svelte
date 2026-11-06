@@ -1,5 +1,6 @@
 <script lang="ts">
 	/** Top-bar switcher for Beads projects. */
+	import CaretDownIcon from 'phosphor-svelte/lib/CaretDownIcon';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
@@ -26,7 +27,7 @@
 					<i class="dot" aria-hidden="true"></i>
 					<span class="name">All projects</span>
 				{/if}
-				<span class="caret" aria-hidden="true">▼</span>
+				<span class="caret" aria-hidden="true"><CaretDownIcon size={11} weight="bold" /></span>
 			</button>
 		{/snippet}
 	</DropdownMenu.Trigger>
