@@ -80,21 +80,24 @@ export function groupMateEvents(events: readonly MateEvent[]): MateBubble[] {
 				part.kind === 'tool' && part.status === 'running' ? { ...part, status: 'stopped' } : part
 			);
 		}
-		turn = open === null ? [] : [open];
+		turn = [];
 	};
 
 	/**
 	 * Where a turn's ending goes: the open bubble, else the turn's latest
 	 * one (a message of yours came in after its last event), else a new one.
 	 */
-	const turnEnd = (event: MateEvent): MateBubble => open ?? turn.at(-1) ?? mate(event);
+	const turnEnd = (event: MateEvent): MateBubble =>
+		open === null ? (turn.at(-1) ?? mate(event)) : mate(event);
 
 	const mate = (event: MateEvent): MateBubble => {
 		if (open === null) {
 			open = { id: event.id, role: 'mate', at: event.at, parts: [] };
 			bubbles.push(open);
-			turn.push(open);
 		}
+		// A bubble left open by an error joins the next turn only once that
+		// turn writes to it.
+		if (!turn.includes(open)) turn.push(open);
 		return open;
 	};
 
