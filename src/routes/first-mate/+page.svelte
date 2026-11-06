@@ -392,20 +392,19 @@
 					{/snippet}
 				</ChatComposer>
 
-				<ol class="starters" aria-label="Starting points">
-					{#each STARTERS as starter, index (starter)}
+				<ul class="starters" aria-label="Starting points">
+					{#each STARTERS as starter (starter)}
 						<li>
 							<button
 								type="button"
 								disabled={!can_chat || starting}
 								onclick={() => useStarter(starter)}
 							>
-								<span class="n mono-num">{String(index + 1).padStart(2, '0')}</span>
-								<span>{starter}</span>
+								{starter}
 							</button>
 						</li>
 					{/each}
-				</ol>
+				</ul>
 
 				<div class="notes">
 					{#if mate_reason === 'admin_only'}
@@ -491,9 +490,8 @@
 		grid-template-columns: minmax(0, 1fr) auto;
 		gap: 2px var(--s-2);
 		align-items: start;
-		padding: 7px 8px 7px 6px;
-		border-left: 2px solid transparent;
-		border-radius: 0 var(--r-1) var(--r-1) 0;
+		padding: 7px 8px;
+		border-radius: var(--r-2);
 		color: var(--tx-mid);
 		font-size: var(--t-sm);
 		text-decoration: none;
@@ -509,8 +507,7 @@
 		box-shadow: inset 0 0 0 1px var(--line-3);
 	}
 	.mate-row[aria-current='page'] {
-		background: var(--s3);
-		border-left-color: var(--em-500);
+		background: var(--s4);
 		color: var(--tx-hi);
 		font-weight: 600;
 	}
@@ -575,36 +572,43 @@
 		font-size: var(--t-base);
 		color: var(--tx-mid);
 	}
+	/* Suggestions, like a chat app's prompt chips: they fill the box, never send. */
 	.starters {
-		list-style: none;
-		margin: var(--s-5) 0 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--s-2);
+		margin: var(--s-4) 0 0;
 		padding: 0;
-	}
-	.starters li + li {
-		border-top: 1px solid var(--line);
+		list-style: none;
 	}
 	.starters button {
-		display: grid;
-		grid-template-columns: 4ch minmax(0, 1fr);
-		gap: var(--s-3);
-		width: 100%;
-		padding: 10px 6px;
-		background: none;
-		border: 0;
-		border-radius: var(--r-1);
+		padding: 6px 12px;
+		background: var(--s1);
+		border: 1px solid var(--line);
+		border-radius: var(--r-2);
 		color: var(--tx-mid);
 		font: inherit;
 		font-size: var(--t-sm);
 		text-align: left;
 		cursor: pointer;
+		transition:
+			background-color 0.12s ease-out,
+			border-color 0.12s ease-out;
 	}
-	.starters button:hover,
+	.starters button:hover:not(:disabled),
 	.starters button:focus-visible {
-		background: var(--s2);
+		background: var(--s3);
+		border-color: var(--line-2);
 		color: var(--tx-hi);
 	}
-	.starters .n {
-		color: var(--tx-dim);
+	.starters button:disabled {
+		cursor: not-allowed;
+		opacity: 0.6;
+	}
+	@media (pointer: coarse) {
+		.starters button {
+			min-height: 44px;
+		}
 	}
 	.notes {
 		display: grid;
