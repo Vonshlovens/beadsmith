@@ -10,6 +10,8 @@ let
     ++ [ "devenv.nix" "devenv.yaml" "devenv.lock" ]
     # The website, a separate pnpm project (site/README.md).
     ++ [ "site" ]
+    # The native desktop prototype, a separate Rust crate (desktop/README.md).
+    ++ [ "desktop" ]
     ;
 in
 lib.cleanSourceWith {

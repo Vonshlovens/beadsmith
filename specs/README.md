@@ -57,6 +57,11 @@ reality**. Search `src/` before treating a spec as implemented.
   checks, a NixOS VM test and the published GHCR image; the maintainer's host
   (`fleet/`) and its sops secrets live in this public repo
   ([ADR-0014](decisions/0014-public-repo-nix-and-fleet.md)).
+- Proposed, prototype only: a **native desktop client** on Rune in
+  `desktop/` reads the same Dolt server directly with the web app's read
+  contract and a SELECT-only account. It bypasses accounts and the project
+  gate, so it is for the server's owner; it never scans workspaces or runs
+  `bd` ([ADR-0016](decisions/0016-native-desktop-prototype.md)).
 - **One Google IdP** when Cloudflare Access is used. Per-project
   catalog/membership is still the gate before projects are shared selectively;
   today every account sees every SQL-visible project
@@ -102,6 +107,7 @@ Follow the `architecture` skill at
 | [0011-accounts-and-roles.md](decisions/0011-accounts-and-roles.md) | [`src/lib/server/auth/`](../src/lib/server/auth/), [`src/hooks.server.ts`](../src/hooks.server.ts) | Better Auth accounts; admin/member roles; first-run setup token |
 | [0013-owner-account-and-global-readers.md](decisions/0013-owner-account-and-global-readers.md) | [`scripts/ci/dolt-grants-smoke.sh`](../scripts/ci/dolt-grants-smoke.sh), [`docs/new-project.md`](../docs/new-project.md) | Plain `bd init` creates projects; global readers; accounts scoped to projects for other agents |
 | [0015-scoped-agent-sandboxes.md](decisions/0015-scoped-agent-sandboxes.md) | — (not shipped) | Beads and repo sandboxes; admin terminal relay to sandboxes only; personal devices reach in through MCP |
+| [0016-native-desktop-prototype.md](decisions/0016-native-desktop-prototype.md) | [`desktop/`](../desktop/README.md) | Proposed: native Rune client reading Dolt directly (prototype) |
 
 ## UI map
 
