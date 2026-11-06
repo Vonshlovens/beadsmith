@@ -23,8 +23,8 @@ reality**. Search `src/` before treating a spec as implemented.
   `SELECT`/`SHOW` and four sanitized failure classes
   ([ADR-0003](decisions/0003-dolt-read-plane.md)).
 - Service-local SQLite holds **theme settings, dispatch records, safety
-  policy, operator-edited Tackle mappings, optional File checkout maps, and
-  accounts**, never issue rows
+  policy, operator-edited Tackle mappings, optional File checkout maps,
+  admin todos, First Mate chats, and accounts**, never issue rows
   ([ADR-0004](decisions/0004-service-local-sqlite.md)).
 - HTTP bind policy requires a Dolt host, and a non-loopback bind requires
   accounts. Cloudflare Access is an optional outer layer; one allowlisted
@@ -41,6 +41,11 @@ reality**. Search `src/` before treating a spec as implemented.
   and keyboard Send-to-agent confirm the same dispatch rather than PATCHing
   status. Comment uses the File checkout
   ([ADR-0006](decisions/0006-durable-agent-dispatch.md)).
+- First Mate's runner runs Claude Code in one persistent Firecracker guest,
+  `mate`, on the fleet host forge. Model and signing credentials stay on the
+  host, behind a key-injecting proxy that admits only the Anthropic message
+  API; the guest has no Beads or repository access yet
+  ([ADR-0016](decisions/0016-first-mate-worker-runtime.md)).
 - Target, not shipped: **agents run in scoped sandboxes**. A beads sandbox
   (the orchestrator) holds per-project Dolt grants and asks for repository
   work through dispatch; a repo sandbox reaches one repository. Model and
@@ -49,6 +54,13 @@ reality**. Search `src/` before treating a spec as implemented.
   It never connects to a personal device; agents there reach Beadsmith
   through an OAuth-authorized MCP server instead
   ([ADR-0015](decisions/0015-scoped-agent-sandboxes.md)).
+- **First Mate** is a chat with one long-lived orchestrator agent on a
+  separately deployed mate runner, after
+  [firstmate](https://github.com/kunchenguid/firstmate): admin-only, chats
+  private to their owner and stored in `state.db`, messages and events
+  relayed over a signed HTTP + SSE contract as the sanitized MissionEvent
+  union ([`docs/first-mate.md`](../docs/first-mate.md)). Without a runner it
+  answers with a placeholder.
 - Deployment is **one root `compose.yaml` + `.env`** (bridge with token,
   or host network on loopback), GHCR images, Dolt always separate.
   Tailscale is for Cloud Agent VMs, not the app image
@@ -61,7 +73,7 @@ reality**. Search `src/` before treating a spec as implemented.
   `desktop/` reads the same Dolt server directly with the web app's read
   contract and a SELECT-only account. It bypasses accounts and the project
   gate, so it is for the server's owner; it never scans workspaces or runs
-  `bd` ([ADR-0016](decisions/0016-native-desktop-prototype.md)).
+  `bd` ([ADR-0017](decisions/0017-native-desktop-prototype.md)).
 - **One Google IdP** when Cloudflare Access is used. Per-project
   catalog/membership is still the gate before projects are shared selectively;
   today every account sees every SQL-visible project
@@ -98,7 +110,7 @@ Follow the `architecture` skill at
 | [decisions/README.md](decisions/README.md) | — | Decision index |
 | [0001-remote-sql-control-plane.md](decisions/0001-remote-sql-control-plane.md) | [`src/lib/product.ts`](../src/lib/product.ts), [`src/lib/server/discovery.ts`](../src/lib/server/discovery.ts) | Server over remote Dolt; no local workspaces |
 | [0003-dolt-read-plane.md](decisions/0003-dolt-read-plane.md) | [`src/lib/server/dolt/client.ts`](../src/lib/server/dolt/client.ts) | Read-only Dolt SQL client |
-| [0004-service-local-sqlite.md](decisions/0004-service-local-sqlite.md) | [`src/lib/server/state/schema.ts`](../src/lib/server/state/schema.ts) | App settings, dispatch, policy, Tackle maps, File checkouts, admin todos |
+| [0004-service-local-sqlite.md](decisions/0004-service-local-sqlite.md) | [`src/lib/server/state/schema.ts`](../src/lib/server/state/schema.ts), [`src/lib/server/mate/store.ts`](../src/lib/server/mate/store.ts) | App settings, dispatch, policy, Tackle maps, File checkouts, admin todos, First Mate chats |
 | [0005-bind-policy-and-cloudflare-access.md](decisions/0005-bind-policy-and-cloudflare-access.md) | [`src/hooks.server.ts`](../src/hooks.server.ts), [`src/lib/server/env.ts`](../src/lib/server/env.ts) | Bind policy, Access, session |
 | [0006-durable-agent-dispatch.md](decisions/0006-durable-agent-dispatch.md) | [`src/lib/server/dispatch/`](../src/lib/server/dispatch/) | File/Tackle/comment persist-then-launch |
 | [0008-runtime-and-deployment.md](decisions/0008-runtime-and-deployment.md) | [`compose.yaml`](../compose.yaml), [`package.json`](../package.json), [`flake.nix`](../flake.nix) | Node/SvelteKit runtime; Compose production; Nix-built image |
@@ -106,8 +118,9 @@ Follow the `architecture` skill at
 | [0010-in-app-backups.md](decisions/0010-in-app-backups.md) | [`src/lib/server/backup/`](../src/lib/server/backup/) | Scheduled SQL backups to S3-compatible storage |
 | [0011-accounts-and-roles.md](decisions/0011-accounts-and-roles.md) | [`src/lib/server/auth/`](../src/lib/server/auth/), [`src/hooks.server.ts`](../src/hooks.server.ts) | Better Auth accounts; admin/member roles; first-run setup token |
 | [0013-owner-account-and-global-readers.md](decisions/0013-owner-account-and-global-readers.md) | [`scripts/ci/dolt-grants-smoke.sh`](../scripts/ci/dolt-grants-smoke.sh), [`docs/new-project.md`](../docs/new-project.md) | Plain `bd init` creates projects; global readers; accounts scoped to projects for other agents |
-| [0015-scoped-agent-sandboxes.md](decisions/0015-scoped-agent-sandboxes.md) | — (not shipped) | Beads and repo sandboxes; admin terminal relay to sandboxes only; personal devices reach in through MCP |
-| [0016-native-desktop-prototype.md](decisions/0016-native-desktop-prototype.md) | [`desktop/`](../desktop/README.md) | Proposed: native Rune client reading Dolt directly (prototype) |
+| [0015-scoped-agent-sandboxes.md](decisions/0015-scoped-agent-sandboxes.md) | [`fleet/hosts/forge/`](../fleet/hosts/forge/) (initial guest only) | Beads and repo sandboxes; admin terminal relay to sandboxes only; personal devices reach in through MCP |
+| [0016-first-mate-worker-runtime.md](decisions/0016-first-mate-worker-runtime.md) | [`fleet/hosts/forge/runtime.nix`](../fleet/hosts/forge/runtime.nix) | Persistent guest Claude Code, host model proxy and signed runner |
+| [0017-native-desktop-prototype.md](decisions/0017-native-desktop-prototype.md) | [`desktop/`](../desktop/README.md) | Proposed: native Rune client reading Dolt directly (prototype) |
 
 ## UI map
 
@@ -117,16 +130,19 @@ live in [`src/app.css`](../src/app.css).
 | Code | Purpose |
 | --- | --- |
 | [`src/routes/+layout.svelte`](../src/routes/+layout.svelte), [`src/lib/components/`](../src/lib/components/) | Shell, rail, shared components |
-| [`src/routes/+page.svelte`](../src/routes/+page.svelte) | Home / project cards |
+| [`src/routes/+page.ts`](../src/routes/+page.ts), [`src/lib/client/home.ts`](../src/lib/client/home.ts) | `/` redirects to your own work: Todos for admins, First Mate for members |
+| [`src/routes/projects/`](../src/routes/projects/) | Project catalogue: one sortable row per project |
+| [`src/lib/components/activity-drawer.svelte`](../src/lib/components/activity-drawer.svelte) | Recent changes drawer (top bar, `.`): events folded to one line per issue per day |
 | [`src/routes/ready/`](../src/routes/ready/) | Cross-project Ready deck |
 | [`src/routes/todos/`](../src/routes/todos/), [`src/lib/todos/`](../src/lib/todos/) | Admin todo agenda: local capture parser, due-date columns, derived urgency; `/api/todos/:id/route` files a todo through File dispatch ([`src/lib/server/todos/route.ts`](../src/lib/server/todos/route.ts)) |
-| [`src/lib/components/first-mate.svelte`](../src/lib/components/first-mate.svelte) | Command palette (⌘K); also hosts the agent dialog and keyboard host |
-| [`src/routes/first-mate/`](../src/routes/first-mate/) | Agent console: threads beside the conversation, palette when none is open |
+| [`src/lib/components/first-mate.svelte`](../src/lib/components/first-mate.svelte), [`src/lib/client/first-mate.ts`](../src/lib/client/first-mate.ts) | Command palette (⌘K): go anywhere, open an issue ID, recent issues, add a todo, local actions; also hosts the agent dialog and keyboard host |
+| [`src/routes/first-mate/`](../src/routes/first-mate/), [`src/lib/server/mate/`](../src/lib/server/mate/) | First Mate: server-side chats with the mate runner's agent beside agent threads, palette when none is open |
 | [`src/lib/components/agent-dialog.svelte`](../src/lib/components/agent-dialog.svelte), [`agent-thread.svelte`](../src/lib/components/agent-thread.svelte) | Issue → agent (Discuss, Elaborate, Close, Tackle) and the provider-agnostic thread |
 | [`src/lib/client/hotkeys.ts`](../src/lib/client/hotkeys.ts) | Keyboard map ([`docs/keyboard.md`](../docs/keyboard.md)) |
 | [`src/routes/p/[id]/+page.svelte`](../src/routes/p/[id]/+page.svelte) | Dense issue table and board |
 | [`src/routes/p/[id]/i/[issue_id]/+page.svelte`](../src/routes/p/[id]/i/[issue_id]/+page.svelte) | Issue body and relationships |
 | [`src/lib/components/empty-state.svelte`](../src/lib/components/empty-state.svelte), skeletons | Empty, loading, error, confirm, narrow viewport |
+| [`src/lib/client/tooltip.ts`](../src/lib/client/tooltip.ts), [`select-field.svelte`](../src/lib/components/select-field.svelte), [`date-picker.svelte`](../src/lib/components/date-picker.svelte), [`confirm-dialog.svelte`](../src/lib/components/confirm-dialog.svelte) | The app's own tooltip, dropdown, calendar and confirmation, in place of the browser's `title`, `<select>`, `<input type=date>` and `confirm()`. Icons are Phosphor (`phosphor-svelte`) |
 
 ## Related long-form docs
 
@@ -135,6 +151,7 @@ live in [`src/app.css`](../src/app.css).
 | [`docs/contract.md`](../docs/contract.md) | Product/security contract (invariants) |
 | [`docs/public-access.md`](../docs/public-access.md) | Access + catalog/membership (target vs interim) |
 | [`docs/file-tackle-dispatch.md`](../docs/file-tackle-dispatch.md) | File/Tackle launch path |
+| [`docs/first-mate.md`](../docs/first-mate.md) | First Mate chats and the mate runner contract v1 |
 | [`docs/keyboard.md`](../docs/keyboard.md) | Keyboard shortcuts |
 | [`docs/agent-access.md`](../docs/agent-access.md) | Service-token read principal; operator activation remains |
 | [`docs/server-deployment.md`](../docs/server-deployment.md) | VPS topology |

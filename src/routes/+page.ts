@@ -1,19 +1,12 @@
 /**
- * Home needs the cross-project activity feed; projects arrive from the layout.
+ * `/` is not a page of its own: it opens your own work (src/lib/client/home.ts).
+ * A universal load, so the brand link redirects without a server round trip.
  */
-import { api, errorMessage } from '#lib/client/api.js';
-import type { ActivityEvent } from '#lib/types.js';
+import { redirect } from '@sveltejs/kit';
+import { homePath } from '#lib/client/home.js';
 import type { PageLoad } from './$types';
 
-export const load: PageLoad = async ({ fetch }) => {
-	let events: ActivityEvent[] = [];
-	let activity_error: string | null = null;
-
-	try {
-		events = (await api.activity(12, { fetch })).events;
-	} catch (error) {
-		activity_error = errorMessage(error);
-	}
-
-	return { events, activity_error };
+export const load: PageLoad = async ({ parent }) => {
+	const { viewer } = await parent();
+	redirect(307, homePath(viewer?.role));
 };

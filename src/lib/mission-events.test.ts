@@ -8,6 +8,17 @@ import {
 } from './mission-events.js';
 
 describe('mission event union', () => {
+	it('preserves bounded user message identities while discarding invalid metadata', () => {
+		const user = { type: 'user', id: 'e1', text: 'hello' };
+		expect(
+			parseMissionEventJson(JSON.stringify({ ...user, message_id: 'message-1', raw: 'drop' }))
+		).toEqual({ ...user, message_id: 'message-1' });
+		for (const message_id of ['', 'x'.repeat(65), 'bad id', { raw: 'drop' }]) {
+			expect(parseMissionEventJson(JSON.stringify({ ...user, message_id }))).toEqual(user);
+		}
+		expect(parseMissionEventJson(JSON.stringify(user))).toEqual(user);
+	});
+
 	it('accepts the documented types and rejects raw runner payloads', () => {
 		const assistant: MissionEvent = { type: 'assistant', id: '1-0', text: 'Hello' };
 		expect(isMissionEvent(assistant)).toBe(true);

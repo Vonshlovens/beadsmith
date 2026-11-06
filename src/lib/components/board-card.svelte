@@ -5,7 +5,8 @@
 	 * a sibling control so keyboard users can open the same dispatch confirm
 	 * as a drop without nesting buttons inside the link.
 	 */
-	import SendHorizontalIcon from '@lucide/svelte/icons/send-horizontal';
+	import { tip } from '#lib/client/tooltip.js';
+	import PaperPlaneRightIcon from 'phosphor-svelte/lib/PaperPlaneRightIcon';
 	import IssueId from '#lib/components/issue-id.svelte';
 	import PriorityChip from '#lib/components/priority-chip.svelte';
 	import TypeChip from '#lib/components/type-chip.svelte';
@@ -101,7 +102,7 @@
 		<div class="card-meta">
 			<span
 				class="deps"
-				title="{issue.dependency_count} blocking, {issue.dependent_count} dependent"
+				{@attach tip(`${issue.dependency_count} blocking, ${issue.dependent_count} dependent`)}
 			>
 				<span class={issue.dependency_count > 0 ? 'up' : 'faint'}>↑{issue.dependency_count}</span>
 				<b>↓{issue.dependent_count}</b>
@@ -120,9 +121,9 @@
 					type="button"
 					aria-label="Send {issue.id} to an agent"
 					aria-keyshortcuts="m"
-					title="Send to an agent (m)"
+					{@attach tip('Send to an agent (m)')}
 				>
-					<SendHorizontalIcon size={13} strokeWidth={1.4} aria-hidden="true" />
+					<PaperPlaneRightIcon size={13} aria-hidden="true" />
 				</button>
 			{/snippet}
 		</DropdownMenu.Trigger>

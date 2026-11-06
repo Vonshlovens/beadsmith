@@ -5,6 +5,7 @@
 	 * code and numbers stay monospace (app.css, `data-font`). The choice is
 	 * per browser (localStorage); app.html applies it before first paint.
 	 */
+	import { tip } from '#lib/client/tooltip.js';
 	import { onMount } from 'svelte';
 
 	const STORAGE_KEY = 'bdui.font';
@@ -36,6 +37,6 @@
 	}
 </script>
 
-<button class="foot-ctl" type="button" aria-label={label} title={label} onclick={toggle}>
+<button class="foot-ctl" type="button" aria-label={label} {@attach tip(label)} onclick={toggle}>
 	[{word}]
 </button>

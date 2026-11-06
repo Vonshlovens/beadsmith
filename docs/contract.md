@@ -102,6 +102,20 @@ environment. The one place Beadsmith may carry an agent's raw input and
 output is the terminal relay to a scoped sandbox, described in the HTTP
 boundary below.
 
+### First Mate
+
+First Mate is a chat with one long-lived orchestrator agent that runs on a
+separately deployed **mate runner** ([first-mate.md](./first-mate.md)), meant
+to be a beads sandbox ([Where agents run](#where-agents-run)). Chats are
+admin-only and private to the account that started them. Beadsmith stores
+each chat and the sanitized MissionEvents it relayed in service-local SQLite,
+forwards an admin's message (text, the chat's session id, a message id and
+an optional project scope) to the runner with a signed request, and follows
+the runner's event stream. It never sends the runner a credential and never
+stores tool arguments or output. Without a runner, chats are stored and get
+a placeholder reply. The orchestrator asks for repository work through
+dispatch like any other caller.
+
 ### Where agents run
 
 Target, **not implemented yet**
@@ -217,6 +231,15 @@ and does not fall back. File maps are distinct from Tackle maps.
 service-local SQLite, not Beads Dolt, and is not accepted from File/Tackle
 POST bodies. Unmapped Tackle still fails closed even when Tackle is allowed.
 
+`/api/mate/chats/*` (admin-only, reads included, each chat visible only to
+its owner) lists, creates, reads, renames or re-scopes, and deletes First
+Mate chats; `POST .../:id/messages` `{text, message_id?}` (text capped at
+4,000 characters, extra keys refused) hands a message to the mate runner;
+`GET .../:id/events` streams the stored events and then the runner's live
+ones as the same sanitized MissionEvent union; `POST .../:id/interrupt`
+stops the agent's current turn. `GET /api/mate/status` tells any signed-in
+viewer whether First Mate answers them.
+
 `GET /api/ready` is the cross-project Ready deck: open issues with no open
 `blocks` dependencies, merged across catalog projects the session can see,
 sorted by priority then recency. Parent-child, related, and discovered-from
@@ -290,8 +313,9 @@ sanitized union for every other view.
    reveal project existence. Today every signed-in account sees every
    SQL-visible project.
 7. A dispatch request is authorized before enqueue; a worker action is never
-   directly triggered by untrusted browser input. The one direct path is an
-   admin typing into a relayed sandbox terminal, and it reaches only that
+   directly triggered by untrusted browser input. The direct paths are an
+   admin's First Mate message to the orchestrator on the mate runner, and an
+   admin typing into a relayed sandbox terminal; each reaches only that
    sandbox.
 8. Beadsmith holds no credential that reaches a personal device and opens an
    agent connection only to a registered sandbox. A sandbox's credentials are
@@ -345,3 +369,13 @@ At minimum, tests must demonstrate:
 6. Once the terminal relay exists, it refuses members and any machine that
    is not a registered sandbox, stores and logs no relayed bytes, and records
    every attach and take-over.
+
+### Initial First Mate runtime
+
+[ADR-0016](../specs/decisions/0016-first-mate-worker-runtime.md) defines the
+first persistent Claude Code guest. The host runner uses signed requests over
+tailnet HTTPS; the web integration must enforce admin and chat ownership.
+Model and signing credentials remain on the host. The guest proxy admits only
+the Anthropic message surface, with no administration endpoints. This is a
+sanitized MissionEvent stream, not raw terminal relay. Dolt access, repository
+workers and production app activation are separate acceptance gates.

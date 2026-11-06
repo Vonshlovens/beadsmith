@@ -7,10 +7,29 @@
       url = "github:Mic92/sops-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Firecracker microVM guests on forge (fleet/hosts/forge/microvms.nix).
+    microvm = {
+      url = "github:microvm-nix/microvm.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    # The Claude Code subscription pool on forge (fleet/hosts/forge/runtime.nix).
+    # devenv only serves underclass's own dev shell; pointing it at this flake
+    # keeps devenv's inputs out of the lock.
+    underclass = {
+      url = "github:ghuntley/underclass";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.devenv.follows = "";
+    };
   };
 
   outputs =
-    { self, nixpkgs, sops-nix }:
+    {
+      self,
+      nixpkgs,
+      sops-nix,
+      microvm,
+      underclass,
+    }:
     let
       lib = nixpkgs.lib;
       systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
@@ -57,6 +76,13 @@
       # The same host with throwaway secrets and DHCP, for a boot test. Never
       # deploy it: its age key is in the repo.
       nixosConfigurations.beads-vm = hostSystem "beads" [ ./fleet/hosts/beads/vm-test.nix ];
+      # The agent-worker laptop (fleet/hosts/forge): `nixos-rebuild switch
+      # --flake .#forge`, run on the machine itself. Only forge hosts microVM
+      # guests, so only forge imports microvm.nix's host module.
+      nixosConfigurations.forge = hostSystem "forge" [
+        microvm.nixosModules.host
+        underclass.nixosModules.default
+      ];
 
       packages = forSystems (
         pkgs:
@@ -113,6 +139,7 @@
         // lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
           # The whole host closure, app included, builds.
           beads-toplevel = self.nixosConfigurations.beads.config.system.build.toplevel;
+          forge-toplevel = self.nixosConfigurations.forge.config.system.build.toplevel;
         }
       );
 

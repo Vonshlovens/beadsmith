@@ -19,6 +19,7 @@ in
       dolt-password = s.beads-web-dolt-password.path;
       better-auth-secret = s.beads-web-better-auth-secret.path;
       master-key = s.beads-web-master-key.path;
+      mate-runner-secret = s.beads-web-mate-runner-secret.path;
     };
     environment = {
       BEADS_DOLT_SERVER_HOST = "127.0.0.1";
@@ -29,7 +30,7 @@ in
     };
     # BDX_ALLOWED_HOSTS, BDX_PUBLIC_ORIGIN (from BEADS_PUBLIC_HOST, kept out
     # of this public repository) and BDX_CF_ACCESS_ISSUER / _AUDIENCE /
-    # _ALLOWED_EMAILS, rendered by sops-nix (secrets.nix).
+    # _ALLOWED_EMAILS and BDX_MATE_RUNNER_URL, rendered by sops-nix (secrets.nix).
     environmentFiles = [ accessEnv ];
   };
 

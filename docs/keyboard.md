@@ -16,11 +16,12 @@ with `useHotkeys` (`src/lib/client/hotkeys.svelte.ts`), and
 | ----- | ------------------------------------------------ |
 | `?`   | Keyboard shortcuts                               |
 | `/`   | Search (the page's filter box, else the top bar) |
-| `⌘K`  | First Mate commands (Ctrl+K off a Mac)           |
+| `⌘K`  | Command palette (Ctrl+K off a Mac)               |
+| `.`   | Recent changes (the drawer from the top bar)     |
 | `[`   | Collapse or open the navigation rail             |
 | `r`   | Refresh (pages with a refresh button)            |
 | `Esc` | Leave a field; on an issue or thread, go back    |
-| `g p` | Projects                                         |
+| `g p` | Projects (`/projects`)                           |
 | `g i` | Issues in the current (or last visited) project  |
 | `g b` | Board                                            |
 | `g r` | Ready                                            |
@@ -29,6 +30,28 @@ with `useHotkeys` (`src/lib/client/hotkeys.svelte.ts`), and
 | `g a` | Activity log                                     |
 | `g c` | Console                                          |
 | `g t` | Todos (admins)                                   |
+
+`/` itself opens your own work: Todos for admins, First Mate for everyone
+else.
+
+## Command palette
+
+`⌘K` (Ctrl+K) opens it on any page; `↑` `↓` move, `Enter` runs, `Esc`
+closes. With nothing typed it lists the issues you opened lately, every
+screen with its key, and these actions: Recent changes, keyboard shortcuts,
+theme, the navigation rail, copy this page's link (and the issue ID on an
+issue), refresh projects, sign out. What you type also offers:
+
+| Type                       | Offers                                               |
+| -------------------------- | ---------------------------------------------------- |
+| An issue ID (`lh-3`)       | Open it, in the project you are in when there is one |
+| `todo` and a line (admins) | Add the todo, parsed as on the Todos page            |
+| `ready`, `missions`        | The Ready deck or the mission list, in place         |
+| `file`, `tackle`           | Launch an agent, after the usual confirmation        |
+| Anything else              | Search issues for it, or ask First Mate about it     |
+
+Only File, Tackle and Ask an agent launch an agent; their rows carry the
+robot icon.
 
 ## Lists (projects, parade, list, Ready, missions, threads)
 
@@ -180,9 +203,11 @@ here, and `S` / `f s` save a search: a deliberate difference.
 ## First Mate
 
 `/first-mate` is a chat: a rail of chats (and agent threads, when an agent
-runner is configured) beside one conversation. No model is connected yet, so
-replies are placeholders and chats stay in the browser's local storage. The
-commands stay on `⌘K`, and every composer has a **Commands** button.
+runner is configured) beside one conversation. With a mate runner configured,
+an admin's chat is one long-lived agent that runs a crew and reports back
+([first-mate.md](first-mate.md)); without one, replies are placeholders.
+Chats are kept on the server. The commands stay on `⌘K`, and every composer
+has a **Commands** button.
 
 | Keys      | Does                           |
 | --------- | ------------------------------ |

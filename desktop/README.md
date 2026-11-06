@@ -5,7 +5,7 @@ A native desktop client for Beadsmith, built on
 It is a prototype for deciding whether a native port is worth carrying: it
 covers the web app's read path for one project at a time, and nothing else.
 The decision record is
-[ADR-0016](../specs/decisions/0016-native-desktop-prototype.md).
+[ADR-0017](../specs/decisions/0017-native-desktop-prototype.md).
 
 ![Beadsmith desktop, dark](docs/sample-dark.png)
 

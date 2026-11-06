@@ -23,4 +23,5 @@ edit an ADR on every conversation — see `.agents/skills/architecture/SKILL.md`
 | [0013](./0013-owner-account-and-global-readers.md) | Single-owner server: the owner's `bd` account has `ALL ON *.*`, so plain `bd init` creates projects; readers have `SELECT ON *.*` |
 | [0014](./0014-public-repo-nix-and-fleet.md) | Public repo with its host and sops secrets; one Nix overlay feeds devenv, checks, VM test and the published image |
 | [0015](./0015-scoped-agent-sandboxes.md) | Agents run in beads or repo sandboxes; Beadsmith relays their terminals to admins and never connects into personal devices |
-| [0016](./0016-native-desktop-prototype.md) | **Proposed.** A prototype native desktop client on Rune reads Dolt directly with the web app's read contract |
+| [0016](./0016-first-mate-worker-runtime.md) | First Mate worker runtime |
+| [0017](./0017-native-desktop-prototype.md) | **Proposed.** A prototype native desktop client on Rune reads Dolt directly with the web app's read contract |

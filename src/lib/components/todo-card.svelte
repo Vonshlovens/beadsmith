@@ -5,14 +5,16 @@
 	 * reschedule or the comment thread. The `actions` snippet sits beside the
 	 * built-in buttons so the routing action can plug in.
 	 */
+	import DatePicker from '#lib/components/date-picker.svelte';
+	import { tip } from '#lib/client/tooltip.js';
 	import type { Snippet } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import ArchiveIcon from '@lucide/svelte/icons/archive';
-	import CalendarIcon from '@lucide/svelte/icons/calendar';
-	import CheckIcon from '@lucide/svelte/icons/check';
-	import MessageSquareIcon from '@lucide/svelte/icons/message-square';
-	import SendIcon from '@lucide/svelte/icons/send';
-	import Trash2Icon from '@lucide/svelte/icons/trash-2';
+	import ArchiveIcon from 'phosphor-svelte/lib/ArchiveIcon';
+	import CalendarBlankIcon from 'phosphor-svelte/lib/CalendarBlankIcon';
+	import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
+	import ChatTextIcon from 'phosphor-svelte/lib/ChatTextIcon';
+	import PaperPlaneTiltIcon from 'phosphor-svelte/lib/PaperPlaneTiltIcon';
+	import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
 	import MissionStatus from '#lib/components/mission-status.svelte';
 	import PriorityChip from '#lib/components/priority-chip.svelte';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
@@ -206,7 +208,7 @@
 			onclick={complete}
 		>
 			{#if checked}
-				<span class="tc-pop"><CheckIcon size={12} strokeWidth={2.4} /></span>
+				<span class="tc-pop"><CheckIcon size={12} /></span>
 			{/if}
 		</button>
 
@@ -268,10 +270,10 @@
 				type="button"
 				aria-label="Reschedule"
 				aria-expanded={panel === 'reschedule'}
-				title="Reschedule"
+				{@attach tip('Reschedule')}
 				onclick={() => toggle('reschedule')}
 			>
-				<CalendarIcon size={14} strokeWidth={1.4} />
+				<CalendarBlankIcon size={14} />
 			</button>
 			<button
 				class="btn btn-sm btn-ghost tc-comment"
@@ -279,31 +281,31 @@
 				type="button"
 				aria-label="Comments ({todo.comment_count})"
 				aria-expanded={panel === 'comments'}
-				title="Comments"
+				{@attach tip('Comments')}
 				onclick={() => toggle('comments')}
 			>
-				<MessageSquareIcon size={14} strokeWidth={1.4} />
+				<ChatTextIcon size={14} />
 				{#if todo.comment_count > 0}<span class="mono-num">{todo.comment_count}</span>{/if}
 			</button>
 			<button
 				class="btn btn-sm btn-ghost btn-icon"
 				type="button"
 				aria-label={routed && !route_failed ? 'Routed to a project' : 'Route to project…'}
-				title={routed && !route_failed ? 'Already routed' : 'Route to project… (r)'}
+				{@attach tip(routed && !route_failed ? 'Already routed' : 'Route to project… (r)')}
 				disabled={routed && !route_failed}
 				onclick={() => onroute(todo)}
 			>
-				<SendIcon size={14} strokeWidth={1.4} />
+				<PaperPlaneTiltIcon size={14} />
 			</button>
 			{@render actions?.(todo)}
 			<button
 				class="btn btn-sm btn-ghost btn-icon"
 				type="button"
 				aria-label="Archive"
-				title="Archive"
+				{@attach tip('Archive')}
 				onclick={() => onarchive(todo)}
 			>
-				<ArchiveIcon size={14} strokeWidth={1.4} />
+				<ArchiveIcon size={14} />
 			</button>
 		</div>
 	</div>
@@ -316,12 +318,14 @@
 						{preset.label}
 					</button>
 				{/each}
-				<input
-					class="input tc-date"
-					type="date"
-					aria-label="Pick a due date"
-					bind:value={date_value}
-					onchange={() => date_value !== '' && reschedule(date_value)}
+				<DatePicker
+					value={date_value}
+					label="Pick a due date"
+					placeholder="Another day…"
+					onpick={(day) => {
+						date_value = day;
+						reschedule(day);
+					}}
 				/>
 				{#if todo.due_at}
 					<button class="btn btn-sm btn-ghost" type="button" onclick={() => reschedule(null)}>
@@ -346,10 +350,10 @@
 								class="tc-comment-del"
 								type="button"
 								aria-label="Delete comment"
-								title="Delete comment"
+								{@attach tip('Delete comment')}
 								onclick={() => deleteComment(comment)}
 							>
-								<Trash2Icon size={12} strokeWidth={1.4} />
+								<TrashIcon size={12} />
 							</button>
 						</div>
 						<p>{comment.text}</p>
@@ -378,7 +382,7 @@
 		</div>
 	{/if}
 
-	<div class="tc-urg" aria-hidden="true" title="Urgency {score} of 7">
+	<div class="tc-urg" aria-hidden="true" {@attach tip(`Urgency ${score} of 7`)}>
 		<div class="tc-urg-fill" style:width="{ratio * 100}%"></div>
 	</div>
 </article>
@@ -561,10 +565,6 @@
 	.tc-presets {
 		flex-wrap: wrap;
 		gap: var(--s-2);
-	}
-	.tc-date {
-		width: auto;
-		min-width: 0;
 	}
 	.tc-thread {
 		flex-direction: column;

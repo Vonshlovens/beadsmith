@@ -6,7 +6,7 @@ Date: 2026-11-03
 
 accepted. Amends [0006](./0006-durable-agent-dispatch.md): a beads sandbox
 may ask for repository work, and an admin may see an agent's raw terminal.
-Nothing in this decision is implemented yet.
+The initial VM and model boundary are implemented; see ADR-0016 below.
 
 ## Context
 
@@ -182,7 +182,18 @@ question. It stays the view for members and for providers without a relay.
 ## Implementation notes
 
 Not shipped. Today the only provider is the webhook runner and Beadsmith
-holds no sandbox connection. Planned pieces, each in its own change:
+holds no sandbox connection.
+
+The first sandbox VM is `mate` on the fleet host `forge`
+([`fleet/hosts/forge/microvms.nix`](../../fleet/hosts/forge/microvms.nix)),
+a Firecracker microVM (microvm.nix) meant to become the beads sandbox. It
+has a routed tap of its own, no bridge; a host nftables table drops its
+traffic to private, tailnet, link-local and other guests' addresses and to
+the host itself except the scoped model proxy, and permits public IPv4 egress.
+The host controls it over SSH with a key that never leaves the host. It
+holds no real credential. ADR-0016 adds Claude Code and its host proxy.
+
+Planned pieces, each in its own change:
 
 - a sandbox registry in `state.db` (name, scope, repository for repo scope,
   connection target), admin console routes to manage it, and
@@ -203,3 +214,7 @@ holds no sandbox connection. Planned pieces, each in its own change:
 The contract carries these rules as targets:
 [`docs/contract.md`](../../docs/contract.md#where-agents-run). The current
 architecture bullet is in [`specs/README.md`](../README.md).
+
+The initial persistent chat runtime and host credential boundary are defined in
+[ADR-0016](0016-first-mate-worker-runtime.md). This does not activate repository
+dispatch, Dolt access, or terminal relay.

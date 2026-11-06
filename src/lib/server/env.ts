@@ -75,6 +75,14 @@ export interface ServerEnv {
 	tackle_repositories: Record<string, TackleRepositoryMapping>;
 	/** Set when BDX_TACKLE_REPOSITORIES(_FILE) is present but unusable. */
 	tackle_repositories_error?: 'invalid';
+	/**
+	 * `BDX_MATE_RUNNER_URL`, validated like the webhook URL (https, or http on
+	 * loopback). Set only when a secret is configured too; First Mate then
+	 * answers admins through the mate runner (docs/first-mate.md).
+	 */
+	mate_runner_url?: string;
+	/** Why the mate runner is not active although something was configured. */
+	mate_runner_error?: 'url_invalid' | 'secret_missing';
 }
 
 export const DEFAULT_DOLT_PORT = 3306;
@@ -95,6 +103,29 @@ export function parseWebhookUrl(raw: string | undefined): string | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * The First Mate runner: a URL and a shared secret
+ * (`BDX_MATE_RUNNER_SECRET_FILE`, or `BDX_MATE_RUNNER_SECRET` for development).
+ * Neither set means First Mate is not connected, which is not an error.
+ * @param source Environment to read.
+ */
+function resolveMateRunner(source: NodeJS.ProcessEnv): {
+	url?: string;
+	error?: ServerEnv['mate_runner_error'];
+} {
+	const raw = source.BDX_MATE_RUNNER_URL?.trim() ?? '';
+	const has_secret =
+		(source.BDX_MATE_RUNNER_SECRET_FILE?.trim() ?? '') !== '' ||
+		(source.BDX_MATE_RUNNER_SECRET?.trim() ?? '') !== '';
+	if (raw === '') {
+		return {};
+	}
+	const url = parseWebhookUrl(raw);
+	if (url === undefined) return { error: 'url_invalid' };
+	if (!has_secret) return { error: 'secret_missing' };
+	return { url };
 }
 
 function resolveDispatchProvider(source: NodeJS.ProcessEnv): {
@@ -279,6 +310,7 @@ export function readEnv(source: NodeJS.ProcessEnv = process.env): ServerEnv {
 
 	const tackle_repositories = loadTackleRepositoriesFromEnv(source);
 	const dispatch = resolveDispatchProvider(source);
+	const mate_runner = resolveMateRunner(source);
 
 	return {
 		dolt_host,
@@ -323,7 +355,9 @@ export function readEnv(source: NodeJS.ProcessEnv = process.env): ServerEnv {
 		dispatch_provider_error: dispatch.error,
 		dispatch_webhook_url: dispatch.webhook_url,
 		tackle_repositories: tackle_repositories.mappings,
-		tackle_repositories_error: tackle_repositories.error
+		tackle_repositories_error: tackle_repositories.error,
+		mate_runner_url: mate_runner.url,
+		mate_runner_error: mate_runner.error
 	};
 }
 

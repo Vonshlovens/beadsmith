@@ -4,16 +4,20 @@
 	 * chats (and agent threads, when a runner is configured) and one
 	 * conversation column. A new chat starts from the question screen.
 	 *
-	 * The chat is not wired to a model yet; see src/lib/client/mate-chat.ts.
+	 * Chats are kept on the server and answered by one long-lived agent on the
+	 * mate runner (docs/first-mate.md); without a runner they get a
+	 * placeholder, and members are told First Mate is for admins for now.
 	 * Agent threads are real: `?thread=&project=` opens a mission as before.
 	 * The command palette stays on ⌘K, reachable from every composer.
 	 */
-	import { tick } from 'svelte';
+	import { tip } from '#lib/client/tooltip.js';
+	import { tick, untrack } from 'svelte';
+	import { toast } from 'svelte-sonner';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
-	import CommandIcon from '@lucide/svelte/icons/command';
-	import PlusIcon from '@lucide/svelte/icons/plus';
+	import ArrowLeftIcon from 'phosphor-svelte/lib/ArrowLeftIcon';
+	import CommandIcon from 'phosphor-svelte/lib/CommandIcon';
+	import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
 	import AgentThread from '#lib/components/agent-thread.svelte';
 	import ChatComposer from '#lib/components/chat-composer.svelte';
 	import IssueId from '#lib/components/issue-id.svelte';
@@ -35,7 +39,7 @@
 	/** How often the thread list re-reads missions while one is working. */
 	const LIST_POLL_MS = 8000;
 
-	let mounted = $state(false);
+	let starting = $state(false);
 	let draft = $state(page.url.searchParams.get('q') ?? '');
 	let scope = $state<string | null>(currentProject()?.id ?? null);
 	let start_input = $state<HTMLTextAreaElement | null>(null);
@@ -54,12 +58,29 @@
 	const thread_open = $derived(thread_id !== null && thread_project !== null && agent.visible);
 	const selected = $derived(missions.find((mission) => mission.id === thread_id));
 	const active_count = $derived(missions.filter((mission) => isBusyStatus(mission.status)).length);
-	const is_open = $derived(thread_open || chat !== undefined);
+	const is_open = $derived(thread_open || chat_id !== null);
+	const mounted = $derived(mate_chats.loaded);
+	const can_chat = $derived(mate_chats.can_chat);
+	const mate_reason = $derived(mate_chats.status?.reason);
 
 	$effect(() => {
-		mate_chats.load();
-		mounted = true;
+		void mate_chats.load();
 	});
+
+	// Follow the open chat's events; leaving the page stops following (the
+	// agent keeps working on the runner).
+	$effect(() => {
+		const id = chat_id;
+		const allowed = can_chat;
+		untrack(() => {
+			if (id !== null && allowed) {
+				void mate_chats.open(id);
+			} else if (id === null) {
+				mate_chats.close();
+			}
+		});
+	});
+	$effect(() => () => mate_chats.close());
 
 	async function loadMissions(signal?: AbortSignal) {
 		try {
@@ -109,10 +130,20 @@
 		);
 	}
 
-	function startChat(text: string) {
-		const id = mate_chats.start(text, scope);
-		draft = '';
-		void goto(chatHref(id));
+	async function startChat(text: string) {
+		if (starting) {
+			return;
+		}
+		starting = true;
+		try {
+			const id = await mate_chats.start(text, scope);
+			if (draft.trim() === text.trim()) draft = '';
+			await goto(chatHref(id));
+		} catch (error) {
+			toast.error('Could not start the chat', { description: errorMessage(error) });
+		} finally {
+			starting = false;
+		}
 	}
 
 	function useStarter(text: string) {
@@ -124,11 +155,13 @@
 		void goto(FIRST_MATE_PATH, { reset: false });
 	}
 
-	function deleteChat() {
-		if (chat) {
-			mate_chats.remove(chat.id);
+	async function deleteChat() {
+		if (!chat) {
+			return;
 		}
-		closeOpen();
+		const id = chat.id;
+		await mate_chats.remove(id);
+		if (chat_id === id) closeOpen();
 	}
 
 	async function newChat() {
@@ -171,8 +204,8 @@
 
 <div class="wrap is-wide mate" class:is-open={is_open}>
 	<aside class="mate-rail" aria-label="Chats" bind:this={rail_el}>
-		<button class="btn new-chat" type="button" onclick={() => void newChat()}>
-			<PlusIcon size={14} strokeWidth={1.6} aria-hidden="true" /> New chat
+		<button class="btn new-chat" type="button" disabled={!can_chat} onclick={() => void newChat()}>
+			<PlusIcon size={14} aria-hidden="true" /> New chat
 			<span class="kbd" aria-hidden="true">n</span>
 		</button>
 
@@ -180,7 +213,16 @@
 			<h2 class="caps rail-hd" id="mate-chats-hd">
 				Chats <span class="n">{mate_chats.chats.length}</span>
 			</h2>
-			{#if mounted && mate_chats.chats.length === 0}
+			{#if !mounted}
+				<p class="hint" role="status">Loading chats…</p>
+			{:else if mounted && mate_reason === 'admin_only'}
+				<p class="hint">First Mate answers admins only for now.</p>
+			{:else if mate_chats.list_error}
+				<p class="hint" role="alert">{mate_chats.list_error}</p>
+				<button class="btn btn-sm" type="button" onclick={() => void mate_chats.load()}
+					>Retry chats</button
+				>
+			{:else if mounted && mate_chats.chats.length === 0}
 				<p class="hint">Your chats appear here.</p>
 			{:else}
 				<ul class="rail-list">
@@ -227,7 +269,7 @@
 									<span class="row-ti">
 										<i
 											class="dot dot-{dispatchBadgeKey(mission.status)}"
-											title={mission.status}
+											{@attach tip(mission.status)}
 											aria-hidden="true"
 										></i>
 										{mission.title ?? mission.project_name}
@@ -255,10 +297,10 @@
 						class="btn btn-sm btn-ghost btn-icon back"
 						type="button"
 						aria-label="Back to chats"
-						title="Back (esc)"
+						{@attach tip('Back (esc)')}
 						onclick={closeOpen}
 					>
-						<ArrowLeftIcon size={14} strokeWidth={1.4} />
+						<ArrowLeftIcon size={14} />
 					</button>
 					<div class="thread-ti">
 						<h1>{selected?.title ?? 'Agent thread'}</h1>
@@ -285,15 +327,34 @@
 				{/key}
 			</div>
 		{:else if chat}
-			<MateChatView
-				{chat}
-				focus_key={app_state.first_mate_focus_tick}
-				onback={closeOpen}
-				ondelete={deleteChat}
-			/>
-		{:else if !chat_id || mounted}
+			{#key chat.id}
+				<MateChatView
+					{chat}
+					focus_key={app_state.first_mate_focus_tick}
+					onback={closeOpen}
+					ondelete={deleteChat}
+				/>
+			{/key}
+		{:else if chat_id}
 			<div class="start">
-				<p class="eyebrow">First Mate</p>
+				<h1 class="h1">
+					{mate_chats.opening || !mounted ? 'Loading conversation…' : 'Conversation unavailable'}
+				</h1>
+				<p role="status">
+					{mate_chats.open_error ??
+						(mate_reason === 'admin_only'
+							? 'First Mate is for admins for now.'
+							: 'Choose a chat from the list or return to your chats.')}
+				</p>
+				{#if can_chat}<button
+						class="btn"
+						type="button"
+						onclick={() => void mate_chats.open(chat_id)}>Retry conversation</button
+					>{/if}
+				<button class="btn btn-ghost" type="button" onclick={closeOpen}>Back to chats</button>
+			</div>
+		{:else}
+			<div class="start">
 				<h1 class="h1">What do you want to know?</h1>
 				<p class="sub">
 					Ask about the work in your Beads projects: what's ready, what's stalled, what changed,
@@ -307,41 +368,67 @@
 					placeholder="Ask about your projects…"
 					rows={4}
 					submit_label="Ask"
-					onsend={startChat}
+					disabled={!mounted || !can_chat}
+					reason={!mounted
+						? 'Loading First Mate…'
+						: mate_reason === 'admin_only'
+							? 'First Mate is for admins for now'
+							: !can_chat
+								? 'First Mate is unavailable. Retry loading chats.'
+								: undefined}
+					busy={starting}
+					onsend={(text) => void startChat(text)}
 				>
 					{#snippet controls()}
-						<MateContextSelect bind:value={scope} />
+						<MateContextSelect bind:value={scope} disabled={starting || !can_chat} />
 						<button
 							class="btn btn-sm btn-ghost"
 							type="button"
-							title="Commands (⌘K)"
+							{@attach tip('Commands (⌘K)')}
 							onclick={() => app_state.openFirstMate()}
 						>
-							<CommandIcon size={12} strokeWidth={1.6} aria-hidden="true" /> Commands
+							<CommandIcon size={12} aria-hidden="true" /> Commands
 						</button>
 					{/snippet}
 				</ChatComposer>
 
-				<ol class="starters" aria-label="Starting points">
-					{#each STARTERS as starter, index (starter)}
+				<ul class="starters" aria-label="Starting points">
+					{#each STARTERS as starter (starter)}
 						<li>
-							<button type="button" onclick={() => useStarter(starter)}>
-								<span class="n mono-num">{String(index + 1).padStart(2, '0')}</span>
-								<span>{starter}</span>
+							<button
+								type="button"
+								disabled={!can_chat || starting}
+								onclick={() => useStarter(starter)}
+							>
+								{starter}
 							</button>
 						</li>
 					{/each}
-				</ol>
+				</ul>
 
 				<div class="notes">
+					{#if mate_reason === 'admin_only'}
+						<p>
+							<strong>Admins only, for now.</strong>
+							First Mate runs an agent that can change Beads in every project, so only admins talk to
+							it.
+						</p>
+					{:else if mate_chats.connected}
+						<p>
+							<strong>Runner configured.</strong>
+							Messages go to the configured runner. Available actions depend on its setup{#if mate_chats.status?.reachable === false};
+								the runner is not answering right now{/if}.
+						</p>
+					{:else}
+						<p>
+							<strong>Not connected yet.</strong>
+							No model answers yet: replies are placeholders. Your chats are kept for when one is.
+						</p>
+					{/if}
 					<p>
-						<strong>Not connected yet.</strong>
-						No model answers yet: replies are placeholders, and chats stay in this browser.
-					</p>
-					<p>
-						<strong>Reads only.</strong>
-						First Mate reads Beads; agents change it with bd. <span class="kbd">⌘K</span> runs a command
-						without a chat.
+						<strong>Changes go through bd.</strong>
+						First Mate and its crew change Beads with bd, never behind its back.
+						<span class="kbd">⌘K</span> runs a command without a chat.
 					</p>
 				</div>
 			</div>
@@ -403,9 +490,8 @@
 		grid-template-columns: minmax(0, 1fr) auto;
 		gap: 2px var(--s-2);
 		align-items: start;
-		padding: 7px 8px 7px 6px;
-		border-left: 2px solid transparent;
-		border-radius: 0 var(--r-1) var(--r-1) 0;
+		padding: 7px 8px;
+		border-radius: var(--r-2);
 		color: var(--tx-mid);
 		font-size: var(--t-sm);
 		text-decoration: none;
@@ -421,8 +507,7 @@
 		box-shadow: inset 0 0 0 1px var(--line-3);
 	}
 	.mate-row[aria-current='page'] {
-		background: var(--s3);
-		border-left-color: var(--em-500);
+		background: var(--s4);
 		color: var(--tx-hi);
 		font-weight: 600;
 	}
@@ -435,6 +520,10 @@
 		line-clamp: 2;
 		line-height: 1.4;
 		overflow-wrap: anywhere;
+	}
+	.mate-row:is(:focus-visible, [aria-current='page']) .row-ti {
+		-webkit-line-clamp: unset;
+		line-clamp: unset;
 	}
 	.row-ti .dot {
 		margin-right: 4px;
@@ -475,11 +564,6 @@
 		margin: 0 auto;
 		padding: clamp(var(--s-5), 9vh, 96px) 0 var(--s-6);
 	}
-	.eyebrow {
-		margin: 0 0 var(--s-2);
-		font-size: var(--t-sm);
-		color: var(--tx-dim);
-	}
 	.start .h1 {
 		margin: 0 0 var(--s-2);
 	}
@@ -488,36 +572,43 @@
 		font-size: var(--t-base);
 		color: var(--tx-mid);
 	}
+	/* Suggestions, like a chat app's prompt chips: they fill the box, never send. */
 	.starters {
-		list-style: none;
-		margin: var(--s-5) 0 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--s-2);
+		margin: var(--s-4) 0 0;
 		padding: 0;
-	}
-	.starters li + li {
-		border-top: 1px solid var(--line);
+		list-style: none;
 	}
 	.starters button {
-		display: grid;
-		grid-template-columns: 4ch minmax(0, 1fr);
-		gap: var(--s-3);
-		width: 100%;
-		padding: 10px 6px;
-		background: none;
-		border: 0;
-		border-radius: var(--r-1);
+		padding: 6px 12px;
+		background: var(--s1);
+		border: 1px solid var(--line);
+		border-radius: var(--r-2);
 		color: var(--tx-mid);
 		font: inherit;
 		font-size: var(--t-sm);
 		text-align: left;
 		cursor: pointer;
+		transition:
+			background-color 0.12s ease-out,
+			border-color 0.12s ease-out;
 	}
-	.starters button:hover,
+	.starters button:hover:not(:disabled),
 	.starters button:focus-visible {
-		background: var(--s2);
+		background: var(--s3);
+		border-color: var(--line-2);
 		color: var(--tx-hi);
 	}
-	.starters .n {
-		color: var(--tx-dim);
+	.starters button:disabled {
+		cursor: not-allowed;
+		opacity: 0.6;
+	}
+	@media (pointer: coarse) {
+		.starters button {
+			min-height: 44px;
+		}
 	}
 	.notes {
 		display: grid;

@@ -214,6 +214,10 @@ Architecture: [`specs/README.md`](specs/README.md), with numbered decisions in
 [`specs/decisions/`](specs/decisions/) and the product and security contract
 in [`docs/contract.md`](docs/contract.md).
 
+Interface work follows the [dashboard design standards](docs/design-standards.md):
+data presentation, progressive disclosure, interaction states, and a review
+checklist.
+
 The project website, [beadsmith.ericevans.dev](https://beadsmith.ericevans.dev)
 (a landing page plus this README and `docs/` as pages), is a static site in
 [`site/`](site/README.md).

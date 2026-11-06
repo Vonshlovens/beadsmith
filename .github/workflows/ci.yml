@@ -21,6 +21,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run check
       - run: pnpm run test
+      - run: node --test fleet/hosts/forge/model-proxy.test.mjs
       - run: pnpm run notices --check
       # Fails on any high or critical advisory in the installed tree.
       - run: pnpm run audit

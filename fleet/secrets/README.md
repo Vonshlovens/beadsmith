@@ -38,6 +38,8 @@ systemd credentials, never by reading `/run/secrets` itself.
 | `tailscale-auth-key`                  | One-time, pre-approved, `tag:beads-sql`; only used at first login    | `fill-secrets.sh tailscale` before a reinstall ([install.md](../../docs/operations/install.md)) |
 | `beads-web-better-auth-secret`        | Signs Beadsmith sessions                                             | New value signs everyone out; `fill-secrets.sh generate` only fills placeholders           |
 | `beads-web-master-key`                | Encrypts credentials Beadsmith stores (backup bucket keys)           | A new key makes stored credentials unreadable: re-enter them after rotating               |
+| `beads-web-mate-runner-secret`        | Signs First Mate requests to the runner                             | Rotate together with `mate-runner-secret` in `forge.yaml`; restart both services          |
+| `beads-web-mate-runner-url`           | Runner HTTPS origin, with no path prefix                            | Update when the runner origin changes; restart Beadsmith                                 |
 | `beads-web-cf-access-issuer`, `-audience`, `-allowed-emails` | Cloudflare Access settings for Beadsmith    | Change in Cloudflare, then here                                                            |
 
 The `beads_bd_writer` password is deliberately not here: it lives only on the

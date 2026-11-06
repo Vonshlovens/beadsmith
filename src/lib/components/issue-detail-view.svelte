@@ -8,6 +8,8 @@
 	 * rail only appears when the container is wide enough to carry it, which
 	 * is a container query so the pane and the page share one breakpoint.
 	 */
+	import { rememberIssue } from '#lib/client/recent-issues.js';
+	import { tip } from '#lib/client/tooltip.js';
 	import type { Snippet } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import CommentComposer from '#lib/components/comment-composer.svelte';
@@ -15,8 +17,8 @@
 	import MarkdownBody from '#lib/components/markdown-body.svelte';
 	import MissionsList from '#lib/components/missions-list.svelte';
 	import PriorityChip from '#lib/components/priority-chip.svelte';
-	import BotIcon from '@lucide/svelte/icons/bot';
-	import HammerIcon from '@lucide/svelte/icons/hammer';
+	import RobotIcon from 'phosphor-svelte/lib/RobotIcon';
+	import HammerIcon from 'phosphor-svelte/lib/HammerIcon';
 	import StatusBadge from '#lib/components/status-badge.svelte';
 	import TypeChip from '#lib/components/type-chip.svelte';
 	import {
@@ -65,6 +67,13 @@
 	}: Props = $props();
 
 	const agent = $derived(agentAvailability(statusSnapshot(), currentProject()?.allow));
+
+	/** The palette's Recent group lists the issues opened here. */
+	$effect(() => {
+		if (header.title) {
+			rememberIssue({ project_id, issue_id: header.id, title: header.title });
+		}
+	});
 
 	/**
 	 * Open the agent dialog on this issue.
@@ -131,10 +140,15 @@
 		class="rel-item{direction === 'up' && (ref.dep_type ?? '') === 'blocks' ? ' blocked-by' : ''}"
 	>
 		<span class="kind">{depLabel(ref.dep_type, direction)}</span>
-		<i class="dot dot-{statusKey(ref.status)}" title={statusLabel(ref.status)} aria-hidden="true"
+		<i
+			class="dot dot-{statusKey(ref.status)}"
+			{@attach tip(statusLabel(ref.status))}
+			aria-hidden="true"
 		></i>
 		<IssueId id={ref.id} href={issueDetailHref(project_id, ref.id)} abbreviate />
-		<a class="ti" href={issueDetailHref(project_id, ref.id)} title={ref.title}>{ref.title ?? ''}</a>
+		<a class="ti" href={issueDetailHref(project_id, ref.id)} {@attach tip(ref.title)}
+			>{ref.title ?? ''}</a
+		>
 	</li>
 {/snippet}
 
@@ -142,7 +156,7 @@
 	<header class="iv-hd">
 		<div class="iv-line">
 			{@render lead?.()}
-			<button class="iv-id" type="button" title="Copy {header.id}" onclick={copyId}>
+			<button class="iv-id" type="button" {@attach tip(`Copy ${header.id}`)} onclick={copyId}>
 				<IssueId id={header.id} strong />
 			</button>
 			<StatusBadge status={header.status} />
@@ -160,20 +174,22 @@
 							type="button"
 							aria-label="Tackle {header.id}"
 							aria-keyshortcuts={variant === 'page' ? 't' : undefined}
-							title="Tackle: an agent claims and does the work{variant === 'page' ? ' (t)' : ''}"
+							{@attach tip(
+								`Tackle: an agent claims and does the work${variant === 'page' ? ' (t)' : ''}`
+							)}
 							onclick={() => askAgent('tackle')}
 						>
-							<HammerIcon size={14} strokeWidth={1.4} />
+							<HammerIcon size={14} />
 						</button>
 					{/if}
 					<button
 						class="btn btn-sm btn-primary"
 						type="button"
 						aria-keyshortcuts="a"
-						title="Discuss, elaborate, close or tackle with an agent (a)"
+						{@attach tip('Discuss, elaborate, close or tackle with an agent (a)')}
 						onclick={() => askAgent()}
 					>
-						<BotIcon size={14} strokeWidth={1.6} aria-hidden="true" />
+						<RobotIcon size={14} aria-hidden="true" />
 						<span class="agent-lbl">Agent</span>
 						<kbd class="kbd agent-kbd" aria-hidden="true">a</kbd>
 					</button>
@@ -200,13 +216,13 @@
 					<dd>{header.owner}</dd>
 				{/if}
 				<dt>Created</dt>
-				<dd title={absoluteStamp(header.created_at)}>{relativeLong(header.created_at)}</dd>
+				<dd {@attach tip(absoluteStamp(header.created_at))}>{relativeLong(header.created_at)}</dd>
 				{#if issue?.created_by && !header.owner}
 					<dt>Creator</dt>
 					<dd>{issue.created_by}</dd>
 				{/if}
 				<dt>Updated</dt>
-				<dd title={absoluteStamp(header.updated_at)}>{relativeLong(header.updated_at)}</dd>
+				<dd {@attach tip(absoluteStamp(header.updated_at))}>{relativeLong(header.updated_at)}</dd>
 				{#if issue?.due_at}
 					<dt>Due</dt>
 					<dd>{absoluteStamp(issue.due_at)}</dd>
@@ -221,7 +237,7 @@
 				{/if}
 				{#if issue?.external_ref}
 					<dt>Ref</dt>
-					<dd class="clip" title={issue.external_ref}>{issue.external_ref}</dd>
+					<dd class="clip" {@attach tip(issue.external_ref)}>{issue.external_ref}</dd>
 				{/if}
 			</dl>
 
@@ -322,7 +338,7 @@
 								<div class="cmt-bd">
 									<div class="cmt-hd">
 										<b>{comment.author}</b>
-										<span class="t" title={absoluteStamp(comment.created_at)}
+										<span class="t" {@attach tip(absoluteStamp(comment.created_at))}
 											>{relativeLong(comment.created_at)}</span
 										>
 									</div>

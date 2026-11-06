@@ -7,6 +7,9 @@
 	 * re-running the list load. Below 900px there is no pane and rows are
 	 * plain links to the detail page.
 	 */
+	import CaretDownIcon from 'phosphor-svelte/lib/CaretDownIcon';
+	import CaretRightIcon from 'phosphor-svelte/lib/CaretRightIcon';
+	import { tip } from '#lib/client/tooltip.js';
 	import { untrack } from 'svelte';
 	import { browser } from '$app/env';
 	import { goto, replaceState } from '$app/navigation';
@@ -288,7 +291,12 @@
 					aria-expanded={!folded}
 					onclick={() => toggleSection(section.id)}
 				>
-					<span class="caret" aria-hidden="true">{folded ? '▸' : '▾'}</span>
+					<span class="caret" aria-hidden="true"
+						>{#if folded}<CaretRightIcon size={11} weight="bold" />{:else}<CaretDownIcon
+								size={11}
+								weight="bold"
+							/>{/if}</span
+					>
 					<i class="dot dot-{section.bead}" aria-hidden="true"></i>
 					<span class="name">{section.label}</span>
 					<span class="count">{section.issues.length}</span>
@@ -306,15 +314,18 @@
 							aria-selected={issue.id === selected_id}
 							onclick={(event) => onRowClick(event, issue.id)}
 						>
-							<i class="dot dot-{key}" title={statusLabel(issue.status)} aria-hidden="true"></i>
-							<span class="rid" title={issue.id}>{parts.suffix}</span>
+							<i class="dot dot-{key}" {@attach tip(statusLabel(issue.status))} aria-hidden="true"
+							></i>
+							<span class="rid" {@attach tip(issue.id)}>{parts.suffix}</span>
 							<PriorityChip priority={issue.priority} />
-							<span class="rti" title={issue.title}>{issue.title}</span>
+							<span class="rti" {@attach tip(issue.title)}>{issue.title}</span>
 							{#if issue.dependency_count > 0 && key === 'blocked'}
-								<span class="rdep" title="{issue.dependency_count} upstream">⛓</span>
+								<span class="rdep" {@attach tip(`${issue.dependency_count} upstream`)}>⛓</span>
 							{/if}
 							<span class="rty">{issue.issue_type}</span>
-							<span class="rup" title={issue.updated_at}>{relativeShort(issue.updated_at)}</span>
+							<span class="rup" {@attach tip(issue.updated_at)}
+								>{relativeShort(issue.updated_at)}</span
+							>
 						</a>
 					{/each}
 				{/if}
@@ -341,7 +352,7 @@
 					<a
 						class="open"
 						href={issueDetailHref(project_id, selected.id)}
-						title="Open the full page (o)">Open ↗</a
+						{@attach tip('Open the full page (o)')}>Open ↗</a
 					>
 				{/snippet}
 			</IssueDetailView>

@@ -3,6 +3,8 @@
 	 * File dialog: enqueue a /file agent for the current project.
 	 * The web process does not create the Beads issue itself.
 	 */
+	import XIcon from 'phosphor-svelte/lib/XIcon';
+	import SelectField from '#lib/components/select-field.svelte';
 	import { toast } from 'svelte-sonner';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import { api, errorMessage } from '#lib/client/api.js';
@@ -106,7 +108,7 @@
 					aria-label="Close"
 					onclick={() => (open = false)}
 				>
-					✕
+					<XIcon size={14} />
 				</button>
 			</div>
 			<div class="modal-bd">
@@ -139,19 +141,23 @@
 				<div class="row">
 					<label class="field">
 						<span class="lbl">Type</span>
-						<select class="select" bind:value={issue_type}>
-							{#each TYPE_OPTIONS as option (option)}
-								<option value={option}>{option === '' ? 'agent decides' : option}</option>
-							{/each}
-						</select>
+						<SelectField
+							bind:value={issue_type}
+							items={TYPE_OPTIONS.map((option) => ({
+								value: option,
+								label: option === '' ? 'agent decides' : option
+							}))}
+						/>
 					</label>
 					<label class="field">
 						<span class="lbl">Priority</span>
-						<select class="select" bind:value={priority}>
-							{#each PRIORITY_OPTIONS as option (option)}
-								<option value={option}>{option === '' ? 'agent decides' : `P${option}`}</option>
-							{/each}
-						</select>
+						<SelectField
+							bind:value={priority}
+							items={PRIORITY_OPTIONS.map((option) => ({
+								value: option,
+								label: option === '' ? 'agent decides' : `P${option}`
+							}))}
+						/>
 					</label>
 				</div>
 			</div>

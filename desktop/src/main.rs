@@ -1,7 +1,7 @@
 //! Beadsmith desktop: a prototype native client on Rune
 //! (<https://github.com/anomalyco/rune>). It reads Beads projects straight
 //! from the Dolt server, with the web app's read-only contract. See
-//! `desktop/README.md` and `specs/decisions/0016-native-desktop-prototype.md`.
+//! `desktop/README.md` and `specs/decisions/0017-native-desktop-prototype.md`.
 //!
 //! `cargo run` opens the window. `cargo run -- --sample` uses built-in data.
 //! Headless: `cargo run -- --snap out.png --scene sample`.
