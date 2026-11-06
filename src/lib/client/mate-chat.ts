@@ -33,7 +33,14 @@ export function chatHref(id: string): string {
 export type MatePart =
 	| { kind: 'text'; id: string; text: string }
 	| { kind: 'thinking'; id: string; text: string }
-	| { kind: 'tool'; id: string; call_id: string; name: string; status: MissionToolCallStatus }
+	| {
+			kind: 'tool';
+			id: string;
+			call_id: string;
+			name: string;
+			/** `stopped`: the turn ended (stop, failure, lost agent) before it completed. */
+			status: MissionToolCallStatus | 'stopped';
+	  }
 	| { kind: 'error'; id: string; message: string };
 
 export interface MateBubble {
@@ -52,13 +59,21 @@ export interface MateBubble {
  * yours. The agent's events gather into one bubble until its turn's `result`;
  * whatever it says after that, asked or not, starts the next one. Each
  * `assistant` event is a whole block of text: consecutive blocks become
- * paragraphs. A tool call shows once, with its latest status.
+ * paragraphs. A tool call shows once, with its latest status; one still
+ * running when its turn ends (a result or an error) shows as stopped, since
+ * no completion will follow.
  *
  * @param events - The chat's events, oldest first.
  */
 export function groupMateEvents(events: readonly MateEvent[]): MateBubble[] {
 	const bubbles: MateBubble[] = [];
 	let open: MateBubble | null = null;
+
+	const stopRunningTools = (bubble: MateBubble): void => {
+		bubble.parts = bubble.parts.map((part) =>
+			part.kind === 'tool' && part.status === 'running' ? { ...part, status: 'stopped' } : part
+		);
+	};
 
 	const mate = (event: MateEvent): MateBubble => {
 		if (open === null) {
@@ -113,11 +128,15 @@ export function groupMateEvents(events: readonly MateEvent[]): MateBubble[] {
 				}
 				break;
 			}
-			case 'error':
-				mate(event).parts.push({ kind: 'error', id: event.id, message: event.message });
+			case 'error': {
+				const bubble = mate(event);
+				stopRunningTools(bubble);
+				bubble.parts.push({ kind: 'error', id: event.id, message: event.message });
 				break;
+			}
 			case 'result': {
 				const bubble = mate(event);
+				stopRunningTools(bubble);
 				bubble.result = {
 					status: event.status,
 					...(event.git_pr_url === undefined ? {} : { git_pr_url: event.git_pr_url }),

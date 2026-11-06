@@ -80,6 +80,31 @@ describe('groupMateEvents', () => {
 		expect(bubbles[0]!.parts).toEqual([{ kind: 'text', id: 'e1', text: 'Ran out of turns.' }]);
 		expect(bubbles[1]!.parts).toEqual([{ kind: 'error', id: 'e2', message: 'worker crashed' }]);
 	});
+
+	it('shows a tool still running when its turn ends as stopped', () => {
+		const tool = (id: string, call_id: string, status: 'running' | 'completed') =>
+			ev({ type: 'tool_call', id, call_id, name: 'Bash', status });
+		const statuses = (events: MateEvent[]) =>
+			groupMateEvents(events)
+				.flatMap((bubble) => bubble.parts)
+				.map((part) => (part.kind === 'tool' ? `${part.call_id}:${part.status}` : part.kind));
+
+		// Stopped turn: the completed call stays completed.
+		expect(
+			statuses([
+				tool('e1', 'a', 'running'),
+				tool('e2', 'a', 'completed'),
+				tool('e3', 'b', 'running'),
+				ev({ type: 'result', id: 'e4', status: 'cancelled' })
+			])
+		).toEqual(['a:completed', 'b:stopped']);
+		// Lost agent: the error ends the turn too.
+		expect(
+			statuses([tool('e1', 'a', 'running'), ev({ type: 'error', id: 'e2', message: 'gone' })])
+		).toEqual(['a:stopped', 'error']);
+		// Mid-turn, a running call is still running.
+		expect(statuses([tool('e1', 'a', 'running')])).toEqual(['a:running']);
+	});
 });
 
 describe('isWorking', () => {

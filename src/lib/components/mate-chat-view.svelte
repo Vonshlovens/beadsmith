@@ -78,6 +78,20 @@
 		if (log_el) follow_latest = log_el.scrollHeight - log_el.scrollTop - log_el.clientHeight < 64;
 	}
 
+	// Stay pinned to the bottom when the transcript or its viewport changes
+	// size without new events: a narrower window, the on-screen keyboard
+	// opening, a long reply reflowing. Scrolling here keeps following on.
+	$effect(() => {
+		const el = log_el;
+		if (!el) return;
+		const observer = new ResizeObserver(() => {
+			if (follow_latest) el.scrollTo({ top: el.scrollHeight });
+		});
+		observer.observe(el);
+		if (el.firstElementChild) observer.observe(el.firstElementChild);
+		return () => observer.disconnect();
+	});
+
 	// Follow activity only while the reader is already at the bottom.
 	$effect(() => {
 		void mate_chats.events.length;
