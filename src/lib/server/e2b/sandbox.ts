@@ -1,5 +1,5 @@
 /**
- * E2B sandboxes as Beadsmith uses them ("Sand"; ADR-0017, docs/sand-e2b.md):
+ * E2B sandboxes as Beadsmith uses them ("Sand"; ADR-0018, docs/sand-e2b.md):
  * a small driver interface over the E2B SDK, shared by the dispatch provider
  * (`dispatch/e2b-provider.ts`) and the First Mate chat runner
  * (`mate/e2b-runner.ts`), and the egress plan that keeps keys outside the

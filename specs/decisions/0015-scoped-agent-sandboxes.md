@@ -182,7 +182,7 @@ question. It stays the view for members and for providers without a relay.
 ## Implementation notes
 
 Partly shipped. [0016](./0016-first-mate-worker-runtime.md) runs First Mate
-in a Firecracker guest, and [0017](./0017-sand-e2b-sandboxes.md) runs
+in a Firecracker guest, and [0018](./0018-sand-e2b-sandboxes.md) runs
 missions and chats in E2B sandboxes with keys added by E2B's egress (rule 6)
 and missions on the tailnet under their own tag (rule 3). Beadsmith still
 holds no terminal connection to any sandbox.

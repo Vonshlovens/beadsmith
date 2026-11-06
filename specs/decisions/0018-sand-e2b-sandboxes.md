@@ -1,4 +1,4 @@
-# 0017. Sand: E2B sandboxes beside self-hosted runners, picked per chat and mission
+# 0018. Sand: E2B sandboxes beside self-hosted runners, picked per chat and mission
 
 Date: 2026-11-06
 

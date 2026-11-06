@@ -7,7 +7,7 @@
  *
  * The browser only chooses among what the server lists (`dispatch.providers`
  * in the status snapshot, `runners` in the First Mate status), and the server
- * checks again (ADR-0017). The pick is a per-viewer convenience in
+ * checks again (ADR-0018). The pick is a per-viewer convenience in
  * localStorage; without one, each side uses its server default.
  */
 import { browser } from '$app/env';

@@ -1,5 +1,5 @@
 /**
- * First Mate chats in E2B sandboxes ("Sand"; ADR-0017, docs/sand-e2b.md).
+ * First Mate chats in E2B sandboxes ("Sand"; ADR-0018, docs/sand-e2b.md).
  *
  * This is the mate runner's own core (`src/lib/mate-runner/server.ts`: chat
  * logs, one long-lived Claude Code process per chat, message dedupe,

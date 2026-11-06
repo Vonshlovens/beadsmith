@@ -6,7 +6,7 @@ Date: 2026-11-05
 
 accepted. Implements the first model and process boundary from
 [0015](0015-scoped-agent-sandboxes.md); remaining sandbox capabilities stay targets.
-[0017](0017-sand-e2b-sandboxes.md) adds E2B sandboxes as a second chat
+[0018](0018-sand-e2b-sandboxes.md) adds E2B sandboxes as a second chat
 runner; this runtime stays the self-hosted one.
 
 ## Context

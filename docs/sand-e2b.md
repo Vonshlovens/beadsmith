@@ -21,7 +21,7 @@ Sand serves two things:
   pauses when the chat goes quiet and resumes on the next message.
 
 The decision and its rules are in
-[ADR-0017](../specs/decisions/0017-sand-e2b-sandboxes.md). The sandbox scopes
+[ADR-0018](../specs/decisions/0018-sand-e2b-sandboxes.md). The sandbox scopes
 come from [ADR-0015](../specs/decisions/0015-scoped-agent-sandboxes.md).
 
 ## What stays outside the sandbox

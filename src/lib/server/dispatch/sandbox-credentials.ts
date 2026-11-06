@@ -1,6 +1,6 @@
 /**
  * Short-lived credentials the E2B provider hands to one sandbox run
- * (ADR-0016). Each is minted per run and scoped as narrowly as its issuer
+ * (ADR-0018). Each is minted per run and scoped as narrowly as its issuer
  * allows:
  *
  * - a Tailscale auth key: single use, pre-authorized, ephemeral, tagged, ten

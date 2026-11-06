@@ -1,6 +1,6 @@
 /**
  * E2B dispatch provider ("Sand" in the UI): one hosted E2B sandbox per
- * mission, built from the template in `sandbox/e2b/` (ADR-0016,
+ * mission, built from the template in `sandbox/e2b/` (ADR-0018,
  * docs/sand-e2b.md). Each sandbox is its own Firecracker microVM, so this
  * needs no KVM host of ours.
  *
