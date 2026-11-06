@@ -83,6 +83,12 @@ export function groupMateEvents(events: readonly MateEvent[]): MateBubble[] {
 		turn = open === null ? [] : [open];
 	};
 
+	/**
+	 * Where a turn's ending goes: the open bubble, else the turn's latest
+	 * one (a message of yours came in after its last event), else a new one.
+	 */
+	const turnEnd = (event: MateEvent): MateBubble => open ?? turn.at(-1) ?? mate(event);
+
 	const mate = (event: MateEvent): MateBubble => {
 		if (open === null) {
 			open = { id: event.id, role: 'mate', at: event.at, parts: [] };
@@ -142,13 +148,13 @@ export function groupMateEvents(events: readonly MateEvent[]): MateBubble[] {
 				break;
 			}
 			case 'error': {
-				const bubble = mate(event);
+				const bubble = turnEnd(event);
 				bubble.parts.push({ kind: 'error', id: event.id, message: event.message });
 				endTurn();
 				break;
 			}
 			case 'result': {
-				const bubble = mate(event);
+				const bubble = turnEnd(event);
 				bubble.result = {
 					status: event.status,
 					...(event.git_pr_url === undefined ? {} : { git_pr_url: event.git_pr_url }),

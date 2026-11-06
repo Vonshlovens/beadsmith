@@ -131,6 +131,16 @@ describe('groupMateEvents', () => {
 				ev({ type: 'result', id: 'e4', status: 'succeeded' })
 			])
 		).toEqual(['a:completed', 'text']);
+		// The turn's result lands on the bubble holding its work, not on an
+		// empty bubble after your message.
+		const split = groupMateEvents([
+			tool('e1', 'a', 'running'),
+			ev({ type: 'user', id: 'e2', text: 'also this' }),
+			tool('e3', 'a', 'completed'),
+			ev({ type: 'result', id: 'e4', status: 'cancelled' })
+		]);
+		expect(split.map((bubble) => bubble.role)).toEqual(['mate', 'you']);
+		expect(split[0]!.result?.status).toBe('cancelled');
 		// A later turn starts fresh: the same call id is a new chip.
 		expect(
 			statuses([
