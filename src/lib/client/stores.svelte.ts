@@ -194,11 +194,21 @@ class AppState {
 	/** Open the First Mate palette and close the overlay drawer if it is up. */
 	openFirstMate() {
 		this.closeDrawer();
+		this.closeActivity();
 		this.first_mate_open = true;
 	}
 
 	closeFirstMate() {
 		this.first_mate_open = false;
+	}
+
+	/** Close the Recent changes drawer, recording what it showed as seen. */
+	closeActivity() {
+		if (!this.activity_open) {
+			return;
+		}
+		this.activity_open = false;
+		this.markActivitySeen();
 	}
 
 	/** Open the Recent changes drawer; it replaces the palette and the rail drawer. */
@@ -221,6 +231,7 @@ class AppState {
 	openAgent(target: AgentTarget) {
 		this.closeDrawer();
 		this.first_mate_open = false;
+		this.closeActivity();
 		this.agent_target = target;
 	}
 

@@ -421,6 +421,8 @@ describe('queryCommands', () => {
 		const admin = queryCommands(ctx({ is_admin: true }), 'todo renew certs p1', now).lead;
 		expect(admin[0]?.action).toMatchObject({ type: 'todo', title: 'renew certs', priority: 1 });
 		expect(queryCommands(ctx(), 'todo renew certs', now).lead).toEqual([]);
+		const member = queryCommands(ctx(), 'todo renew certs', now).tail;
+		expect(member.map((row) => row.id)).toEqual(['search-issues', 'ask-chat']);
 	});
 
 	it('ends with search and ask rows, which launch nothing', () => {

@@ -223,7 +223,7 @@
 
 			<footer class="sheet-ft">
 				<span class="xs faint mono-num"
-					>{#if loaded}{events.length} changes on {issue_count} issues{/if}</span
+					>{#if loaded}{scoped.length} changes on {issue_count} issues{/if}</span
 				>
 				<span class="sheet-sp"></span>
 				<a class="btn btn-sm" href="/activity">Open the activity log</a>

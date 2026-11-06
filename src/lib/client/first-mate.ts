@@ -714,8 +714,10 @@ export function queryCommands(
 		}
 	}
 
-	const todo = text.match(TODO_PREFIX);
-	if (ctx.is_admin && todo) {
+	// Only an admin gets the add-todo row; for anyone else "todo …" is
+	// ordinary text and still offers search and ask.
+	const todo = ctx.is_admin ? text.match(TODO_PREFIX) : null;
+	if (todo) {
 		const parsed = parseCapture(text.slice(todo[0].length), now);
 		if (parsed.title.length > 0) {
 			const details = parsed.tokens.map((token) => {
