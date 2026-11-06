@@ -4,6 +4,7 @@
 	 * the open todos in 1–3 due-date columns (agenda.dev's `getColumnTodos`).
 	 * Mutations are optimistic and roll back with a toast on failure.
 	 */
+	import { tip } from '#lib/client/tooltip.js';
 	import { onMount, tick, untrack } from 'svelte';
 	import { replaceState } from '$app/navigation';
 	import { page } from '$app/state';
@@ -529,7 +530,7 @@
 				<button
 					class="btn btn-sm"
 					type="button"
-					title="Column order: urgency, or the order you dragged cards into"
+					{@attach tip('Column order: urgency, or the order you dragged cards into')}
 					onclick={() => setOrder(order === 'urgency' ? 'manual' : 'urgency')}
 				>
 					Order: {order}

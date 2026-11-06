@@ -5,6 +5,8 @@
 	 * the admin (there is no email invite yet); a reset password signs the
 	 * account out everywhere. The server keeps at least one admin.
 	 */
+	import ConfirmDialog from '#lib/components/confirm-dialog.svelte';
+	import SelectField from '#lib/components/select-field.svelte';
 	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { api, errorMessage } from '#lib/client/api.js';
@@ -94,9 +96,19 @@
 		}
 	}
 
+	/** The account a Remove press is waiting to confirm. */
+	let removing = $state<{ user_id: string; label: string } | null>(null);
+	let remove_open = $state(false);
+
 	function remove(user_id: string, label: string): void {
-		if (!window.confirm(`Remove ${label}? They are signed out and cannot sign in again.`)) return;
-		void change(() => api.removeAccount(user_id), `Removed ${label}`);
+		removing = { user_id, label };
+		remove_open = true;
+	}
+
+	function confirmRemove(): void {
+		const target = removing;
+		if (!target) return;
+		void change(() => api.removeAccount(target.user_id), `Removed ${target.label}`);
 	}
 
 	function toggleSignup(open: boolean): void {
@@ -215,10 +227,13 @@
 					</label>
 					<label class="field">
 						<span class="lbl">Role</span>
-						<select class="select" bind:value={role}>
-							<option value="member">member (read)</option>
-							<option value="admin">admin (console, agents)</option>
-						</select>
+						<SelectField
+							bind:value={role}
+							items={[
+								{ value: 'member', label: 'member (read)' },
+								{ value: 'admin', label: 'admin (console, agents)' }
+							]}
+						/>
 					</label>
 					<label class="field">
 						<span class="lbl">Initial password</span>
@@ -245,6 +260,17 @@
 		<p class="hint">Loading accounts…</p>
 	{/if}
 </div>
+
+{#if removing}
+	<ConfirmDialog
+		bind:open={remove_open}
+		title="Remove {removing.label}?"
+		description="{removing.label} is signed out everywhere and cannot sign in again. Their account and sessions are deleted; this cannot be undone."
+		confirm_label="Remove account"
+		destructive
+		onconfirm={confirmRemove}
+	/>
+{/if}
 
 <style>
 	.accounts {

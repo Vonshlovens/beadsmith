@@ -10,13 +10,14 @@
 	 * Agent threads are real: `?thread=&project=` opens a mission as before.
 	 * The command palette stays on ⌘K, reachable from every composer.
 	 */
+	import { tip } from '#lib/client/tooltip.js';
 	import { tick, untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
-	import CommandIcon from '@lucide/svelte/icons/command';
-	import PlusIcon from '@lucide/svelte/icons/plus';
+	import ArrowLeftIcon from 'phosphor-svelte/lib/ArrowLeftIcon';
+	import CommandIcon from 'phosphor-svelte/lib/CommandIcon';
+	import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
 	import AgentThread from '#lib/components/agent-thread.svelte';
 	import ChatComposer from '#lib/components/chat-composer.svelte';
 	import IssueId from '#lib/components/issue-id.svelte';
@@ -204,7 +205,7 @@
 <div class="wrap is-wide mate" class:is-open={is_open}>
 	<aside class="mate-rail" aria-label="Chats" bind:this={rail_el}>
 		<button class="btn new-chat" type="button" disabled={!can_chat} onclick={() => void newChat()}>
-			<PlusIcon size={14} strokeWidth={1.6} aria-hidden="true" /> New chat
+			<PlusIcon size={14} aria-hidden="true" /> New chat
 			<span class="kbd" aria-hidden="true">n</span>
 		</button>
 
@@ -268,7 +269,7 @@
 									<span class="row-ti">
 										<i
 											class="dot dot-{dispatchBadgeKey(mission.status)}"
-											title={mission.status}
+											{@attach tip(mission.status)}
 											aria-hidden="true"
 										></i>
 										{mission.title ?? mission.project_name}
@@ -296,10 +297,10 @@
 						class="btn btn-sm btn-ghost btn-icon back"
 						type="button"
 						aria-label="Back to chats"
-						title="Back (esc)"
+						{@attach tip('Back (esc)')}
 						onclick={closeOpen}
 					>
-						<ArrowLeftIcon size={14} strokeWidth={1.4} />
+						<ArrowLeftIcon size={14} />
 					</button>
 					<div class="thread-ti">
 						<h1>{selected?.title ?? 'Agent thread'}</h1>
@@ -383,10 +384,10 @@
 						<button
 							class="btn btn-sm btn-ghost"
 							type="button"
-							title="Commands (⌘K)"
+							{@attach tip('Commands (⌘K)')}
 							onclick={() => app_state.openFirstMate()}
 						>
-							<CommandIcon size={12} strokeWidth={1.6} aria-hidden="true" /> Commands
+							<CommandIcon size={12} aria-hidden="true" /> Commands
 						</button>
 					{/snippet}
 				</ChatComposer>

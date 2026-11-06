@@ -341,10 +341,74 @@
 		box-sizing: border-box;
 	}
 
-	/* Native checks take the mark, not the browser's blue. */
+	/* Checks and radios are drawn here rather than by the browser, so they
+	   match the fields in both themes: a square box, the mark when on. */
 	input[type='checkbox'],
 	input[type='radio'] {
-		accent-color: var(--em-500);
+		appearance: none;
+		flex: none;
+		display: inline-grid;
+		place-content: center;
+		width: 16px;
+		height: 16px;
+		margin: 0;
+		border: 1px solid var(--line-3);
+		border-radius: var(--r-1);
+		background: var(--bg);
+		vertical-align: -3px;
+		transition:
+			background 0.1s ease,
+			border-color 0.1s ease;
+	}
+	input[type='radio'] {
+		border-radius: 99px;
+	}
+	input[type='checkbox']:hover:not(:disabled),
+	input[type='radio']:hover:not(:disabled) {
+		border-color: var(--tx-mid);
+	}
+	input[type='checkbox']:checked,
+	input[type='radio']:checked {
+		background: var(--em-500);
+		border-color: var(--em-500);
+	}
+	input[type='checkbox']::before {
+		content: '';
+		width: 9px;
+		height: 5px;
+		border-left: 2px solid var(--on-em);
+		border-bottom: 2px solid var(--on-em);
+		transform: translateY(-1px) rotate(-45deg) scale(0);
+		transition: transform 0.1s ease;
+	}
+	input[type='checkbox']:checked::before {
+		transform: translateY(-1px) rotate(-45deg) scale(1);
+	}
+	input[type='checkbox']:indeterminate::before {
+		width: 8px;
+		height: 0;
+		border-left: 0;
+		transform: none;
+	}
+	input[type='checkbox']:indeterminate {
+		background: var(--em-500);
+		border-color: var(--em-500);
+	}
+	input[type='radio']::before {
+		content: '';
+		width: 6px;
+		height: 6px;
+		border-radius: 99px;
+		background: var(--on-em);
+		transform: scale(0);
+		transition: transform 0.1s ease;
+	}
+	input[type='radio']:checked::before {
+		transform: scale(1);
+	}
+	input[type='checkbox']:disabled,
+	input[type='radio']:disabled {
+		opacity: 0.5;
 	}
 
 	html,
@@ -401,6 +465,64 @@
 
 	svg {
 		display: block;
+	}
+
+	/* Small inline icons (carets, sort arrows) sit on the text's centre line
+	   rather than as blocks; every other svg is a block. */
+	.caret,
+	.arrow,
+	.ph-arrow {
+		display: inline-flex;
+		align-items: center;
+	}
+
+	/* Cursor: the shape says what a press will do. Tailwind 4's preflight
+	   leaves buttons on the arrow, so anything that acts takes the hand,
+	   anything that only takes text takes the I-beam, and a control that
+	   cannot act says so. Component rules refine this (grab, col-resize). */
+	a[href],
+	button:not(:disabled),
+	summary,
+	select:not(:disabled),
+	label[for],
+	label:has(> input[type='checkbox']:not(:disabled)),
+	label:has(> input[type='radio']:not(:disabled)),
+	input[type='checkbox']:not(:disabled),
+	input[type='radio']:not(:disabled),
+	input[type='file']:not(:disabled),
+	[role='button']:not([aria-disabled='true']),
+	[role='option']:not([aria-disabled='true']),
+	[role='menuitem']:not([aria-disabled='true']),
+	[role='menuitemradio']:not([aria-disabled='true']),
+	[role='menuitemcheckbox']:not([aria-disabled='true']),
+	[role='tab']:not([aria-disabled='true']),
+	[role='radio']:not([aria-disabled='true']),
+	[role='switch']:not([aria-disabled='true']),
+	[role='checkbox']:not([aria-disabled='true']) {
+		cursor: pointer;
+	}
+	input:not([type]),
+	input[type='text'],
+	input[type='search'],
+	input[type='email'],
+	input[type='password'],
+	input[type='url'],
+	input[type='number'],
+	input[type='tel'],
+	textarea,
+	[contenteditable='true'] {
+		cursor: text;
+	}
+	:disabled,
+	[aria-disabled='true'],
+	label:has(> input:disabled) {
+		cursor: not-allowed;
+	}
+	[draggable='true'] {
+		cursor: grab;
+	}
+	[draggable='true']:active {
+		cursor: grabbing;
 	}
 
 	::selection {
@@ -976,7 +1098,7 @@
 		background: transparent;
 		border: 0;
 		border-right: 1px solid var(--line);
-		cursor: default;
+		cursor: pointer;
 		position: relative;
 		color: var(--tx-mid);
 		font-size: var(--t-xs);
@@ -1052,6 +1174,37 @@
 		justify-content: space-between;
 		gap: var(--s-4);
 		font-variant-numeric: tabular-nums;
+	}
+
+	/* The shared tooltip bubble (src/lib/client/tooltip.ts): one line or a
+	   short sentence, never a control. */
+	.tip-pop {
+		position: fixed;
+		top: 0;
+		left: 0;
+		z-index: 90;
+		max-width: min(320px, calc(100vw - 16px));
+		padding: 5px 8px;
+		background: var(--tx-hi);
+		color: var(--bg);
+		border-radius: var(--r-1);
+		box-shadow: var(--shadow-tip);
+		font-family: var(--font);
+		font-size: var(--t-xs);
+		line-height: 1.45;
+		overflow-wrap: anywhere;
+		opacity: 0;
+		visibility: hidden;
+		pointer-events: none;
+		transition:
+			opacity 0.1s ease,
+			visibility 0s linear 0.1s;
+	}
+	.tip-pop[data-open='true'] {
+		opacity: 1;
+		visibility: visible;
+		pointer-events: auto;
+		transition: opacity 0.1s ease;
 	}
 
 	/* ---- PROJECT SWITCHER ------------------------------------------------- */
@@ -2141,6 +2294,11 @@
 		.stat {
 			padding: 0 6px;
 		}
+		/* Room for the Recent changes button: the switcher keeps its bead and
+		   the start of the name. */
+		.topbar .switcher {
+			max-width: 108px;
+		}
 		.kv {
 			grid-template-columns: 1fr;
 			gap: var(--s-1) 0;
@@ -2198,6 +2356,101 @@
 	height: 1px;
 	margin: var(--s-1) 0;
 	background: var(--line);
+}
+
+/* SelectField (src/lib/components/select-field.svelte): the `.select` field
+   look on a button, with our own list instead of the browser's. */
+.select.select-trigger {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--s-2);
+	text-align: left;
+	background-image: none;
+	padding-right: 10px;
+}
+.select-trigger[data-state='open'] {
+	border-color: var(--em-500);
+	box-shadow: 0 0 0 1px var(--em-500);
+}
+.select-trigger .st-value {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.select-trigger .st-value.is-placeholder {
+	color: var(--tx-dim);
+}
+.select-trigger .st-caret {
+	flex: none;
+	color: var(--tx-dim);
+	transition: transform 0.12s ease;
+}
+.select-trigger[data-state='open'] .st-caret {
+	transform: rotate(180deg);
+}
+.select-sm {
+	height: 28px;
+	font-size: var(--t-xs);
+}
+.select-menu {
+	z-index: 70;
+	min-width: max(var(--bits-select-anchor-width), 160px);
+	max-height: min(var(--bits-select-content-available-height), 360px);
+	overflow-y: auto;
+}
+.select-menu[data-state='open'] {
+	animation: select-in 0.1s ease-out;
+}
+@keyframes select-in {
+	from {
+		opacity: 0;
+		transform: translateY(-2px);
+	}
+}
+.select-opt {
+	display: flex;
+	align-items: center;
+	gap: var(--s-2);
+	padding: 7px 10px 7px 6px;
+	border-radius: var(--r-1);
+	color: var(--tx);
+	cursor: pointer;
+	outline: none;
+	user-select: none;
+}
+.select-opt[data-highlighted] {
+	background: var(--s4);
+	color: var(--tx-hi);
+}
+.select-opt[data-selected] {
+	color: var(--tx-hi);
+	font-weight: 600;
+}
+.select-opt[data-disabled] {
+	color: var(--tx-faint);
+	cursor: not-allowed;
+}
+.select-opt .so-check {
+	display: grid;
+	place-items: center;
+	width: 14px;
+	flex: none;
+	color: var(--em-500);
+}
+.select-opt .so-label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.select-opt .so-hint {
+	flex: none;
+	font-size: var(--t-xs);
+	font-weight: 400;
+	color: var(--tx-dim);
 }
 
 /*

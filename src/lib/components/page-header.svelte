@@ -5,8 +5,9 @@
 	 * and worded Refresh button each page used to carry. With `onrefresh` it
 	 * shows a refresh icon and binds `r`.
 	 */
+	import { tip } from '#lib/client/tooltip.js';
 	import type { Snippet } from 'svelte';
-	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
+	import ArrowsClockwiseIcon from 'phosphor-svelte/lib/ArrowsClockwiseIcon';
 	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
 
 	interface Props {
@@ -32,7 +33,7 @@
 <div class="phd">
 	<h1 class="phd-t">{title}</h1>
 	{#if meta}
-		<span class="phd-m mono-num" title={meta_label} aria-label={meta_label}>{meta}</span>
+		<span class="phd-m mono-num" {@attach tip(meta_label)} aria-label={meta_label}>{meta}</span>
 	{/if}
 	<span class="phd-sp"></span>
 	{@render actions?.()}
@@ -42,11 +43,11 @@
 			class:is-spinning={refreshing}
 			type="button"
 			aria-label="Refresh"
-			title="Refresh (r)"
+			{@attach tip('Refresh (r)')}
 			disabled={refreshing}
 			onclick={() => void onrefresh()}
 		>
-			<RefreshCwIcon size={14} strokeWidth={1.4} />
+			<ArrowsClockwiseIcon size={14} />
 		</button>
 	{/if}
 </div>

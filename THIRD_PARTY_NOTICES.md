@@ -37,7 +37,6 @@ own license file inside the package.
 | @libsql/core | 0.17.4 | MIT |
 | @libsql/hrana-client | 0.10.0 | MIT |
 | @libsql/isomorphic-ws | 0.1.5 | MIT |
-| @lucide/svelte | 1.61.0 | ISC |
 | @neon-rs/load | 0.0.4 | MIT |
 | @noble/ciphers | 2.4.0 | MIT |
 | @noble/hashes | 2.4.0 | MIT |
@@ -73,6 +72,7 @@ own license file inside the package.
 | drizzle-orm | 0.45.4 | Apache-2.0 |
 | esm-env | 1.2.2 | MIT |
 | esrap | 2.4.0 | MIT |
+| estree-walker | 3.0.3 | MIT |
 | generate-function | 2.3.1 | MIT |
 | iconv-lite | 0.7.3 | MIT |
 | inline-style-parser | 0.2.7 | MIT |
@@ -94,6 +94,7 @@ own license file inside the package.
 | mysql2 | 3.24.6 | MIT |
 | named-placeholders | 1.1.6 | MIT |
 | nanostores | 1.5.5 | MIT |
+| phosphor-svelte | 3.1.1 | MIT |
 | promise-limit | 2.7.0 | ISC |
 | rou3 | 0.9.2 | MIT |
 | runed | 0.23.4 | MIT |

@@ -5,8 +5,9 @@
 	 * cross-project Missions page (rows open the thread in First Mate). The
 	 * conversation itself lives in agent-thread.svelte.
 	 */
-	import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
-	import GitPullRequestIcon from '@lucide/svelte/icons/git-pull-request';
+	import { tip } from '#lib/client/tooltip.js';
+	import ArrowSquareOutIcon from 'phosphor-svelte/lib/ArrowSquareOutIcon';
+	import GitPullRequestIcon from 'phosphor-svelte/lib/GitPullRequestIcon';
 	import IssueId from '#lib/components/issue-id.svelte';
 	import MissionStatus from '#lib/components/mission-status.svelte';
 	import { formatElapsed, isSafeRunUrl, missionVerb } from '#lib/client/agent.js';
@@ -68,11 +69,11 @@
 				{#if show_project}
 					<a class="f-proj" href="/p/{mission.project_id}">{mission.project_name}</a>
 				{/if}
-				<span class="f-actor" title={mission.actor}>{mission.actor}</span>
-				<span class="f-dur mono-num" title="Run time"
+				<span class="f-actor" {@attach tip(mission.actor)}>{mission.actor}</span>
+				<span class="f-dur mono-num" {@attach tip('Run time')}
 					>{mission.duration_ms === undefined ? '' : formatElapsed(mission.duration_ms)}</span
 				>
-				<span class="f-when mono-num" title={mission.updated_at}
+				<span class="f-when mono-num" {@attach tip(mission.updated_at)}
 					>{relativeShort(mission.updated_at)}</span
 				>
 				<span class="f-links">
@@ -83,7 +84,7 @@
 							target="_blank"
 							rel="noopener noreferrer"
 							aria-label="Pull request for this mission"
-							title="Pull request"><GitPullRequestIcon size={13} strokeWidth={1.4} /></a
+							{@attach tip('Pull request')}><GitPullRequestIcon size={13} /></a
 						>
 					{/if}
 					{#if isSafeRunUrl(mission.agent_url)}
@@ -93,7 +94,7 @@
 							target="_blank"
 							rel="noopener noreferrer"
 							aria-label="Open the run on the agent runner"
-							title="Open the run"><ExternalLinkIcon size={13} strokeWidth={1.4} /></a
+							{@attach tip('Open the run')}><ArrowSquareOutIcon size={13} /></a
 						>
 					{/if}
 				</span>

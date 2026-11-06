@@ -7,12 +7,15 @@
 	 * keyboard-shortcut controls live in the sidebar footer: both are rarely
 	 * used, and both keep their keys (`?` for shortcuts).
 	 */
+	import { tip } from '#lib/client/tooltip.js';
 	import { tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import PanelLeftIcon from '@lucide/svelte/icons/panel-left';
-	import SearchIcon from '@lucide/svelte/icons/search';
-	import SparklesIcon from '@lucide/svelte/icons/sparkles';
+	import SidebarSimpleIcon from 'phosphor-svelte/lib/SidebarSimpleIcon';
+	import MagnifyingGlassIcon from 'phosphor-svelte/lib/MagnifyingGlassIcon';
+	import ClockCounterClockwiseIcon from 'phosphor-svelte/lib/ClockCounterClockwiseIcon';
+	import SteeringWheelIcon from 'phosphor-svelte/lib/SteeringWheelIcon';
+	import { newestStamp } from '#lib/client/activity-groups.js';
 	import ProjectSwitcher from '#lib/components/project-switcher.svelte';
 	import StatusCluster from '#lib/components/status-cluster.svelte';
 	import BrandMark from '#lib/components/brand-mark.svelte';
@@ -25,6 +28,12 @@
 
 	const rail_expanded = $derived(app_state.rail_open || !app_state.rail_collapsed);
 	const on_first_mate_page = $derived(page.url.pathname === FIRST_MATE_PATH);
+	/** Something changed since this browser last opened Recent changes. */
+	const activity_unseen = $derived(
+		app_state.activity_seen_at > 0 &&
+			newestStamp(projectList().map((project) => project.last_activity)) >
+				app_state.activity_seen_at
+	);
 
 	/** Open a new First Mate chat with its question box focused. */
 	async function onFirstMate() {
@@ -76,13 +85,13 @@
 		aria-expanded={rail_expanded}
 		aria-controls="sidebar"
 		aria-label="Toggle navigation"
-		title="Navigation ([)"
+		{@attach tip('Navigation ([)')}
 		onclick={() => app_state.toggleRailForViewport()}
 	>
-		<PanelLeftIcon size={15} strokeWidth={1.2} />
+		<SidebarSimpleIcon size={17} />
 	</button>
 
-	<a class="brand" href="/" aria-label="{PRODUCT_NAME}, projects" title={PRODUCT_NAME}>
+	<a class="brand" href="/" aria-label="{PRODUCT_NAME}, home">
 		<BrandMark size={30} />
 		<span class="brand-tx">{PRODUCT_NAME}</span>
 	</a>
@@ -90,7 +99,7 @@
 	<ProjectSwitcher />
 
 	<form class="search" onsubmit={submitSearch} role="search">
-		<SearchIcon size={13} strokeWidth={1.4} aria-hidden="true" />
+		<MagnifyingGlassIcon size={13} aria-hidden="true" />
 		<input
 			type="search"
 			placeholder="Search issues"
@@ -98,7 +107,7 @@
 			data-hotkey="search"
 			bind:value={query}
 		/>
-		<span class="kbd" aria-hidden="true" title="Press / to search">/</span>
+		<span class="kbd" aria-hidden="true" {@attach tip('Press / to search')}>/</span>
 	</form>
 
 	<span class="bar-spacer"></span>
@@ -107,10 +116,25 @@
 		class="rail-toggle search-phone"
 		type="button"
 		aria-label="Search issues"
-		title="Search issues (/)"
+		{@attach tip('Search issues (/)')}
 		onclick={searchOnPhone}
 	>
-		<SearchIcon size={15} strokeWidth={1.2} />
+		<MagnifyingGlassIcon size={17} />
+	</button>
+
+	<button
+		class="rail-toggle activity-open"
+		type="button"
+		aria-haspopup="dialog"
+		aria-expanded={app_state.activity_open}
+		aria-label={activity_unseen ? 'Recent changes, new since your last look' : 'Recent changes'}
+		{@attach tip(
+			activity_unseen ? 'Recent changes: new since your last look (.)' : 'Recent changes (.)'
+		)}
+		onclick={() => app_state.openActivity()}
+	>
+		<ClockCounterClockwiseIcon size={17} />
+		{#if activity_unseen}<i class="unseen" aria-hidden="true"></i>{/if}
 	</button>
 
 	<button
@@ -118,12 +142,29 @@
 		type="button"
 		onclick={onFirstMate}
 		aria-label="First Mate"
-		title="First Mate (g f)"
+		{@attach tip('First Mate (g f)')}
 		aria-current={on_first_mate_page ? 'page' : undefined}
 	>
-		<SparklesIcon size={14} strokeWidth={1.3} aria-hidden="true" />
+		<SteeringWheelIcon size={15} aria-hidden="true" />
 		<span class="fm-tx">First Mate</span>
 	</button>
 
 	<StatusCluster />
 </header>
+
+<style>
+	.activity-open {
+		position: relative;
+	}
+	/* The red bead: something changed since you last looked. */
+	.unseen {
+		position: absolute;
+		top: 5px;
+		right: 5px;
+		width: 7px;
+		height: 7px;
+		border-radius: 99px;
+		background: var(--em-500);
+		box-shadow: 0 0 0 2px var(--bg);
+	}
+</style>

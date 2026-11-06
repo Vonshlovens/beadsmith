@@ -3,6 +3,7 @@
 	 * Issue-detail composer: enqueue a /comment agent.
 	 * The web process does not write Beads comment rows itself.
 	 */
+	import { tip } from '#lib/client/tooltip.js';
 	import { refreshAll } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
 	import { api, errorMessage } from '#lib/client/api.js';
@@ -132,7 +133,7 @@
 	<div class="composer-ft">
 		<span
 			class="xs faint"
-			title="An agent stores this on the Beads issue; Beadsmith stays read-only."
+			{@attach tip('An agent stores this on the Beads issue; Beadsmith stays read-only.')}
 			>Posted by an agent</span
 		>
 		<span class="spacer"></span>

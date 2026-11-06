@@ -3,6 +3,7 @@
 	 * Confirm a board drop: enqueue an agent for the destination status.
 	 * The card is not moved; Beads status changes only after the worker uses bd.
 	 */
+	import XIcon from 'phosphor-svelte/lib/XIcon';
 	import { toast } from 'svelte-sonner';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import { api, errorMessage } from '#lib/client/api.js';
@@ -118,7 +119,7 @@
 				<Dialog.Title class="lbl">{pending.action.confirm_title}</Dialog.Title>
 				<span class="spacer"></span>
 				<button class="btn btn-sm btn-icon" type="button" aria-label="Close" onclick={close}>
-					✕
+					<XIcon size={14} />
 				</button>
 			</div>
 			<div class="modal-bd">

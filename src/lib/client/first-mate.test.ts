@@ -17,6 +17,10 @@ import {
 	remainderAfterIntent,
 	resolveView,
 	catalogFetchForView,
+	paletteRows,
+	queryCommands,
+	sortByGroup,
+	recentCommands,
 	type FirstMateContext
 } from './first-mate.js';
 
@@ -339,5 +343,108 @@ describe('go-first-mate', () => {
 	it('hides the command on the First Mate page', () => {
 		const commands = defaultCommands(ctx({ on_first_mate_page: true }));
 		expect(commands.some((row) => row.id === 'go-first-mate')).toBe(false);
+	});
+});
+
+describe('palette commands', () => {
+	const ids = (rows: { id: string }[]) => rows.map((row) => row.id);
+
+	it('shows Todos and Console to admins only', () => {
+		expect(ids(defaultCommands(ctx()))).not.toContain('go-todos');
+		expect(ids(defaultCommands(ctx()))).not.toContain('go-console');
+		const admin = ids(defaultCommands(ctx({ is_admin: true })));
+		expect(admin).toContain('go-todos');
+		expect(admin).toContain('go-console');
+	});
+
+	it('goes to /projects and names its keys', () => {
+		const projects = defaultCommands(ctx()).find((row) => row.id === 'go-projects');
+		expect(projects?.action).toEqual({ type: 'navigate', href: '/projects' });
+		expect(projects?.shortcut).toBe('g p');
+	});
+
+	it('offers the two themes that are not current', () => {
+		const rows = ids(defaultCommands(ctx({ theme: 'dark' })));
+		expect(rows).toContain('act-theme-light');
+		expect(rows).toContain('act-theme-system');
+		expect(rows).not.toContain('act-theme-dark');
+	});
+
+	it('never marks an action or recent row as an agent launch', () => {
+		const rows = defaultCommands(
+			ctx({
+				is_admin: true,
+				recent_issues: [{ project_id: 'd_other', issue_id: 'ot-1', title: 'Old' }]
+			})
+		).filter((row) => row.group === 'Actions' || row.group === 'Recent');
+		expect(rows.length).toBeGreaterThan(0);
+		expect(rows.every((row) => !row.launches_agent)).toBe(true);
+	});
+
+	it('lists recent issues but not the one on screen or a vanished project', () => {
+		const rows = recentCommands(
+			ctx({
+				current_project_id: 'd_beads_web',
+				current_issue_id: 'bw-1',
+				recent_issues: [
+					{ project_id: 'd_beads_web', issue_id: 'bw-1', title: 'Here' },
+					{ project_id: 'd_beads_web', issue_id: 'bw-2', title: 'Before' },
+					{ project_id: 'd_gone', issue_id: 'g-1', title: 'Gone' }
+				]
+			})
+		);
+		expect(ids(rows)).toEqual(['recent-d_beads_web-bw-2']);
+	});
+});
+
+describe('queryCommands', () => {
+	it('jumps to a typed issue ID in the project in view', () => {
+		const { lead } = queryCommands(ctx({ current_project_id: 'd_other' }), 'ot-12');
+		expect(lead).toHaveLength(1);
+		expect(lead[0]?.action).toEqual({ type: 'navigate', href: '/p/d_other/i/ot-12' });
+	});
+
+	it('uses a recent visit to tie an ID prefix to its project', () => {
+		const { lead } = queryCommands(
+			ctx({ recent_issues: [{ project_id: 'd_other', issue_id: 'ot-1', title: 'x' }] }),
+			'ot-99'
+		);
+		expect(lead.map((row) => row.hint)).toEqual(['in other']);
+	});
+
+	it('does not read ordinary hyphenated words as IDs', () => {
+		expect(queryCommands(ctx(), 'first-mate').lead).toEqual([]);
+	});
+
+	it('adds a todo with its parsed date for admins only', () => {
+		const now = new Date(2026, 10, 6, 12);
+		const admin = queryCommands(ctx({ is_admin: true }), 'todo renew certs p1', now).lead;
+		expect(admin[0]?.action).toMatchObject({ type: 'todo', title: 'renew certs', priority: 1 });
+		expect(queryCommands(ctx(), 'todo renew certs', now).lead).toEqual([]);
+		const member = queryCommands(ctx(), 'todo renew certs', now).tail;
+		expect(member.map((row) => row.id)).toEqual(['search-issues', 'ask-chat']);
+	});
+
+	it('ends with search and ask rows, which launch nothing', () => {
+		const rows = paletteRows(ctx({ current_project_id: 'd_other' }), 'flaky alerts');
+		const tail = rows.slice(-2);
+		expect(tail.every((row) => row.group === 'Search')).toBe(true);
+		expect(tail.map((row) => row.id)).toEqual(['search-issues', 'ask-chat']);
+		expect(tail[0]?.action).toEqual({ type: 'navigate', href: '/p/d_other?q=flaky%20alerts' });
+		expect(tail.every((row) => !row.launches_agent)).toBe(true);
+	});
+});
+
+describe('sortByGroup', () => {
+	it('puts a typed ID jump first and keeps each group contiguous', () => {
+		const rows = paletteRows(ctx({ current_project_id: 'd_other' }), 'ot-12');
+		expect(rows[0]?.group).toBe('Jump');
+		const groups = rows.map((row) => row.group);
+		expect(sortByGroup(rows)).toEqual(rows);
+		for (const group of new Set(groups)) {
+			const first = groups.indexOf(group);
+			const last = groups.lastIndexOf(group);
+			expect(groups.slice(first, last + 1).every((other) => other === group)).toBe(true);
+		}
 	});
 });

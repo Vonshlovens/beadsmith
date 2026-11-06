@@ -5,10 +5,11 @@
 	 * conversation sits next to what it is about. Narrower screens use the
 	 * agent dialog instead.
 	 */
-	import CircleCheckIcon from '@lucide/svelte/icons/circle-check';
-	import HammerIcon from '@lucide/svelte/icons/hammer';
-	import MessageSquareIcon from '@lucide/svelte/icons/message-square';
-	import PencilLineIcon from '@lucide/svelte/icons/pencil-line';
+	import { tip } from '#lib/client/tooltip.js';
+	import CheckCircleIcon from 'phosphor-svelte/lib/CheckCircleIcon';
+	import HammerIcon from 'phosphor-svelte/lib/HammerIcon';
+	import ChatTextIcon from 'phosphor-svelte/lib/ChatTextIcon';
+	import PencilLineIcon from 'phosphor-svelte/lib/PencilLineIcon';
 	import AgentThread from '#lib/components/agent-thread.svelte';
 	import { AGENT_INTENTS, intentAllowed, type AgentIntent } from '#lib/client/agent.js';
 	import { currentProject } from '#lib/client/projects.svelte.js';
@@ -24,9 +25,9 @@
 	let { project_id, issue, missions }: Props = $props();
 
 	const ICONS = {
-		discuss: MessageSquareIcon,
+		discuss: ChatTextIcon,
 		elaborate: PencilLineIcon,
-		close: CircleCheckIcon,
+		close: CheckCircleIcon,
 		tackle: HammerIcon
 	} as const;
 
@@ -45,10 +46,10 @@
 				class="btn btn-sm"
 				type="button"
 				disabled={!intentAllowed(entry.id, allow)}
-				title={entry.hint}
+				{@attach tip(entry.hint)}
 				onclick={() => ask(entry.id)}
 			>
-				<Icon size={13} strokeWidth={1.4} aria-hidden="true" />{entry.label}
+				<Icon size={13} aria-hidden="true" />{entry.label}
 			</button>
 		{/each}
 	</div>

@@ -1,5 +1,6 @@
 <script lang="ts">
 	/** Instance-admin console: catalog coverage and redacted health. */
+	import { tip } from '#lib/client/tooltip.js';
 	import { refreshAll } from '$app/navigation';
 	import AccountSettings from '#lib/components/account-settings.svelte';
 	import BackupSettings from '#lib/components/backup-settings.svelte';
@@ -356,9 +357,11 @@
 													class="id"
 													class:faint={project.schema.status === 'supported'}
 													class:schema-warn={project.schema.status !== 'supported'}
-													title={project.schema.missing.length > 0
-														? `Missing: ${project.schema.missing.join(', ')}`
-														: undefined}
+													{@attach tip(
+														project.schema.missing.length > 0
+															? `Missing: ${project.schema.missing.join(', ')}`
+															: undefined
+													)}
 												>
 													bd {project.schema.bd_version ?? '?'} · {project.schema.status}
 												</div>

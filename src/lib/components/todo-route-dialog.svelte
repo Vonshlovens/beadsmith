@@ -4,6 +4,8 @@
 	 * File payload from the stored todo; this dialog only picks the project and
 	 * adds an optional note. An agent files the issue and will not implement it.
 	 */
+	import XIcon from 'phosphor-svelte/lib/XIcon';
+	import SelectField from '#lib/components/select-field.svelte';
 	import { toast } from 'svelte-sonner';
 	import PriorityChip from '#lib/components/priority-chip.svelte';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
@@ -86,7 +88,7 @@
 					aria-label="Close"
 					onclick={() => (open = false)}
 				>
-					✕
+					<XIcon size={14} />
 				</button>
 			</div>
 			<div class="modal-bd">
@@ -105,12 +107,12 @@
 				{/if}
 				<label class="field">
 					<span class="lbl">Project</span>
-					<select class="select" bind:value={project_id} required>
-						<option value="" disabled>Choose a project</option>
-						{#each projects as project (project.id)}
-							<option value={project.id}>{project.name}</option>
-						{/each}
-					</select>
+					<SelectField
+						bind:value={project_id}
+						required
+						placeholder="Choose a project"
+						items={projects.map((project) => ({ value: project.id, label: project.name }))}
+					/>
 				</label>
 				{#if refusal}
 					<p class="hint refusal" role="alert">{refusal}</p>

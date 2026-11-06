@@ -5,9 +5,10 @@
 	 * renders the `?` overlay and the "g …" hint while a jump waits for its
 	 * second key. Pages and dialogs add their own keys with `useHotkeys`.
 	 */
+	import { tip } from '#lib/client/tooltip.js';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import XIcon from '@lucide/svelte/icons/x';
+	import XIcon from 'phosphor-svelte/lib/XIcon';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import {
 		describeSequence,
@@ -27,6 +28,7 @@
 	} from '#lib/client/issue-view.js';
 	import { currentProject, currentViewer, projectList } from '#lib/client/projects.svelte.js';
 	import { app_state } from '#lib/client/stores.svelte.js';
+	import { PROJECTS_PATH } from '#lib/client/home.js';
 
 	const mac = $derived(
 		typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
@@ -101,7 +103,13 @@
 			}
 		},
 		{ keys: ['/'], label: 'Search', group: 'General', run: focusSearch },
-		{ keys: ['mod+k'], label: 'First Mate commands', group: 'General', display_only: true },
+		{ keys: ['mod+k'], label: 'Command palette', group: 'General', display_only: true },
+		{
+			keys: ['.'],
+			label: 'Recent changes',
+			group: 'General',
+			run: () => app_state.openActivity()
+		},
 		{
 			keys: ['['],
 			label: 'Collapse or open the navigation rail',
@@ -121,14 +129,14 @@
 				(event.target as HTMLElement).blur();
 			}
 		},
-		{ keys: ['g p'], label: 'Projects', group: 'Go to', run: () => go('/') },
+		{ keys: ['g p'], label: 'Projects', group: 'Go to', run: () => go(PROJECTS_PATH) },
 		{
 			keys: ['g i'],
 			label: 'Issues in this project',
 			group: 'Go to',
 			run: () => {
 				const id = jumpProject();
-				go(id === null ? '/' : issuesHref(id));
+				go(id === null ? PROJECTS_PATH : issuesHref(id));
 			}
 		},
 		{
@@ -137,7 +145,7 @@
 			group: 'Go to',
 			run: () => {
 				const id = jumpProject();
-				go(id === null ? '/' : projectIssuesHref(id, 'board'));
+				go(id === null ? PROJECTS_PATH : projectIssuesHref(id, 'board'));
 			}
 		},
 		{ keys: ['g r'], label: 'Ready', group: 'Go to', run: () => go('/ready') },
@@ -249,10 +257,10 @@
 				class="btn btn-sm btn-ghost btn-icon"
 				type="button"
 				aria-label="Close"
-				title="Close (esc)"
+				{@attach tip('Close (esc)')}
 				onclick={() => (app_state.shortcuts_open = false)}
 			>
-				<XIcon size={14} strokeWidth={1.4} />
+				<XIcon size={14} />
 			</button>
 		</div>
 		<div class="modal-bd keys-grid">

@@ -71,7 +71,7 @@
 			description="File, Tackle and agent threads land here, one row per run."
 		>
 			{#snippet actions()}
-				<a class="btn btn-sm" href="/">Open projects</a>
+				<a class="btn btn-sm" href="/projects">Open projects</a>
 			{/snippet}
 		</EmptyState>
 	{:else}
