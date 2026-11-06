@@ -46,6 +46,13 @@ This repository is public. Write for someone who has only the repository.
   files listed in `site/src/lib/server/docs.ts` as its docs pages. It is a
   separate pnpm project: run its commands from `site/`, not the root.
 
+## Interface design
+
+Follow [the dashboard design standards](docs/design-standards.md) for UI work.
+Let data determine the presentation, reveal secondary actions in context, and
+review the full interaction states, including keyboard and touch access.
+Reuse the tokens in `src/app.css` and shared components.
+
 ## Build and test
 
 ```bash
