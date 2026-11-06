@@ -237,6 +237,26 @@ describe('member', () => {
 		}
 	});
 
+	it('is refused admin routes written with percent-encoded characters', async () => {
+		// SvelteKit routes `/%61pi/todos` to `/api/todos`; the gates must too.
+		for (const [method, path] of [
+			['GET', '/api/%74odos'],
+			['GET', '/%61pi/todos'],
+			['POST', '/%61pi/todos'],
+			['GET', '/api/mate/%63hats'],
+			['GET', '/api/%63onsole/accounts'],
+			['POST', '/api/projects/p1/%64ispatch']
+		]) {
+			const { response } = await run({ path, method, cookie: member_cookie });
+			expect(response.status, `${method} ${path}`).toBe(403);
+		}
+	});
+
+	it('gets a 400 for a malformed percent escape', async () => {
+		const { response } = await run({ path: '/api/%E0%A4%A', cookie: member_cookie });
+		expect(response.status).toBe(400);
+	});
+
 	it('may not launch, cancel, or steer agents', async () => {
 		for (const path of [
 			'/api/projects/p1/dispatch',

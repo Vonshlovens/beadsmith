@@ -33,10 +33,14 @@
 	let deleting = $state(false);
 	let delete_error = $state<string | null>(null);
 	let delete_button = $state<HTMLButtonElement | null>(null);
+	let keep_button = $state<HTMLButtonElement | null>(null);
 	let follow_latest = $state(true);
 	let textarea = $state<HTMLTextAreaElement | null>(null);
 	let log_el = $state<HTMLDivElement | null>(null);
 
+	// Most events replace the `chat` object (a newer `updated_at`); only a
+	// different chat should move focus back to the composer.
+	const chat_id = $derived(chat.id);
 	const bubbles = $derived(groupMateEvents(mate_chats.events));
 	const working = $derived(mate_chats.working);
 	const connected = $derived(mate_chats.connected);
@@ -89,7 +93,7 @@
 
 	$effect(() => {
 		void focus_key;
-		void chat.id;
+		void chat_id;
 		if (!mate_chats.opening) void tick().then(() => textarea?.focus({ preventScroll: true }));
 	});
 
@@ -105,9 +109,21 @@
 			deleting = false;
 		}
 	}
+	function openDelete() {
+		confirming_delete = true;
+		delete_error = null;
+		// Land on the safe choice, so Enter or Space keeps the chat.
+		void tick().then(() => keep_button?.focus());
+	}
 	function cancelDelete() {
 		confirming_delete = false;
 		void tick().then(() => delete_button?.focus());
+	}
+	/** Escape dismisses the confirmation instead of closing the chat. */
+	function confirmKeydown(event: KeyboardEvent) {
+		if (event.key !== 'Escape' || deleting) return;
+		event.preventDefault();
+		cancelDelete();
 	}
 
 	function send(message: string) {
@@ -143,7 +159,8 @@
 			class="btn btn-sm btn-ghost"
 			type="button"
 			aria-expanded={confirming_delete}
-			onclick={() => (confirming_delete = !confirming_delete)}>Delete chat</button
+			disabled={deleting}
+			onclick={() => (confirming_delete ? cancelDelete() : openDelete())}>Delete chat</button
 		>
 	</header>
 
@@ -155,10 +172,16 @@
 				class="btn btn-sm btn-danger"
 				type="button"
 				disabled={deleting}
+				onkeydown={confirmKeydown}
 				onclick={() => void deleteChat()}>{deleting ? 'Deleting…' : 'Delete permanently'}</button
 			>
-			<button class="btn btn-sm btn-ghost" type="button" disabled={deleting} onclick={cancelDelete}
-				>Keep chat</button
+			<button
+				bind:this={keep_button}
+				class="btn btn-sm btn-ghost"
+				type="button"
+				disabled={deleting}
+				onkeydown={confirmKeydown}
+				onclick={cancelDelete}>Keep chat</button
 			>
 		</div>
 	{/if}

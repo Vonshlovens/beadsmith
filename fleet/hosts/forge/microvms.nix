@@ -85,8 +85,9 @@ let
         counter
       }
 
-      # Temporary: the open internet, until the key proxy exists and egress
-      # can be narrowed to it.
+      # Public IPv4 only. Model traffic already goes through the host's key
+      # proxy (guest-to-host above); narrowing the rest of the internet to an
+      # allowlist is still to do (ADR-0016).
       chain guest-egress {
         meta nfproto != ipv4 counter drop
         fib saddr . iif oif missing counter drop
