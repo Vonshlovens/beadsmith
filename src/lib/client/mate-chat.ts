@@ -210,3 +210,90 @@ export function mergeEvents(
 	});
 	return fresh.length === 0 ? [...log] : [...log, ...fresh];
 }
+
+/** Consecutive messages from one sender within this gap share a header. */
+export const GROUP_GAP_MS = 7 * 60 * 1000;
+
+/** Where a message sits in the transcript, after chat apps' message grouping. */
+export interface MateRowPlacement {
+	/** First of a run from one sender: it shows the avatar and time. */
+	head: boolean;
+	/** A new calendar day starts here: the divider's label. */
+	day?: string;
+}
+
+/** Local calendar day of an ISO time, as a sortable key. */
+function dayKey(iso: string): string {
+	const date = new Date(iso);
+	return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+/**
+ * A day divider's label: Today, Yesterday, or the date (with the year only
+ * when it is not this year).
+ *
+ * @param iso - A time on that day.
+ * @param now - The current time.
+ */
+export function dayLabel(iso: string, now = Date.now()): string {
+	const date = new Date(iso);
+	const today = new Date(now);
+	if (dayKey(iso) === dayKey(today.toISOString())) return 'Today';
+	const yesterday = new Date(now);
+	yesterday.setDate(yesterday.getDate() - 1);
+	if (dayKey(iso) === dayKey(yesterday.toISOString())) return 'Yesterday';
+	return date.toLocaleDateString(undefined, {
+		weekday: 'long',
+		month: 'long',
+		day: 'numeric',
+		...(date.getFullYear() === today.getFullYear() ? {} : { year: 'numeric' })
+	});
+}
+
+/** Clock time for a message header, such as 3:42 PM. */
+export function clockTime(iso: string): string {
+	const date = new Date(iso);
+	return Number.isNaN(date.getTime())
+		? ''
+		: date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
+/**
+ * Place each message: a header starts a run when the sender changes, the
+ * day changes, or the sender paused for longer than `GROUP_GAP_MS`; a day
+ * divider goes before the first message of each day.
+ *
+ * @param items - Messages in order, with their sender and time.
+ * @param now - The current time, for Today and Yesterday.
+ */
+export function placeMateRows(
+	items: readonly { role: 'you' | 'mate'; at: string }[],
+	now = Date.now()
+): MateRowPlacement[] {
+	return items.map((item, index) => {
+		const previous = index > 0 ? items[index - 1] : undefined;
+		const new_day = previous === undefined || dayKey(previous.at) !== dayKey(item.at);
+		const gap = previous === undefined ? Infinity : Date.parse(item.at) - Date.parse(previous.at);
+		const head = new_day || previous?.role !== item.role || !(gap <= GROUP_GAP_MS);
+		return new_day ? { head, day: dayLabel(item.at, now) } : { head };
+	});
+}
+
+/**
+ * Up to two initials for an avatar: from the name's first two words, else
+ * the email's first letter.
+ *
+ * @param name - Display name, if any.
+ * @param email - Email address, if any.
+ */
+export function initials(name: string | undefined, email: string | undefined): string {
+	const words = (name ?? '').trim().split(/\s+/).filter(Boolean);
+	const letters =
+		words.length > 0
+			? words
+					.slice(0, 2)
+					.map((word) => [...word][0] ?? '')
+					.join('')
+			: ([...(email ?? '').trim()][0] ?? '');
+	return letters.toLocaleUpperCase() || '?';
+}

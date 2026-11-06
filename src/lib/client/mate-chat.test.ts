@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { MateEvent } from '#lib/mate.js';
-import { chatHref, chatTitle, groupMateEvents, isWorking, mergeEvents } from './mate-chat';
+import {
+	GROUP_GAP_MS,
+	chatHref,
+	chatTitle,
+	groupMateEvents,
+	initials,
+	isWorking,
+	mergeEvents,
+	placeMateRows
+} from './mate-chat';
 
 const AT = '2026-11-05T00:00:00.000Z';
 
@@ -184,5 +193,53 @@ describe('mergeEvents', () => {
 		const a = ev({ type: 'user', id: 'e1', text: 'a' });
 		const b = ev({ type: 'assistant', id: 'e2', text: 'b' });
 		expect(mergeEvents([a], [a, b, b]).map((event) => event.id)).toEqual(['e1', 'e2']);
+	});
+});
+
+describe('placeMateRows', () => {
+	// Local calendar times: day labels follow the reader's own calendar.
+	const at = (minutes: number) => new Date(2026, 10, 6, 12, minutes).toISOString();
+	const now = new Date(2026, 10, 6, 18, 0).getTime();
+
+	it('groups one sender’s messages and starts a header when the sender changes', () => {
+		const rows = placeMateRows(
+			[
+				{ role: 'you', at: at(0) },
+				{ role: 'mate', at: at(1) },
+				{ role: 'mate', at: at(2) },
+				{ role: 'you', at: at(3) }
+			],
+			now
+		);
+		expect(rows.map((row) => row.head)).toEqual([true, true, false, true]);
+		expect(rows[0]!.day).toBe('Today');
+		expect(rows.slice(1).every((row) => row.day === undefined)).toBe(true);
+	});
+
+	it('starts a new header after a long pause and a divider on a new day', () => {
+		const late = new Date(
+			new Date(2026, 10, 6, 12, 0).getTime() + GROUP_GAP_MS + 60_000
+		).toISOString();
+		const next_day = new Date(2026, 10, 7, 12, 0).toISOString();
+		const rows = placeMateRows(
+			[
+				{ role: 'mate', at: at(0) },
+				{ role: 'mate', at: late },
+				{ role: 'mate', at: next_day }
+			],
+			new Date(2026, 10, 7, 13, 0).getTime()
+		);
+		expect(rows.map((row) => row.head)).toEqual([true, true, true]);
+		expect(rows[0]!.day).toBe('Yesterday');
+		expect(rows[2]!.day).toBe('Today');
+	});
+});
+
+describe('initials', () => {
+	it('uses the first two words of the name, else the email', () => {
+		expect(initials('Local Tester', 'x@example.com')).toBe('LT');
+		expect(initials('  ada  ', undefined)).toBe('A');
+		expect(initials('', 'eric@example.com')).toBe('E');
+		expect(initials(undefined, undefined)).toBe('?');
 	});
 });
