@@ -68,17 +68,26 @@ export interface MateBubble {
 export function groupMateEvents(events: readonly MateEvent[]): MateBubble[] {
 	const bubbles: MateBubble[] = [];
 	let open: MateBubble | null = null;
+	// The agent's bubbles since its last turn ended. A message of yours sent
+	// mid-turn splits a turn into several bubbles; its tool calls still
+	// belong to it.
+	let turn: MateBubble[] = [];
 
-	const stopRunningTools = (bubble: MateBubble): void => {
-		bubble.parts = bubble.parts.map((part) =>
-			part.kind === 'tool' && part.status === 'running' ? { ...part, status: 'stopped' } : part
-		);
+	/** A turn ended: a tool it left running will never complete. */
+	const endTurn = (): void => {
+		for (const bubble of turn) {
+			bubble.parts = bubble.parts.map((part) =>
+				part.kind === 'tool' && part.status === 'running' ? { ...part, status: 'stopped' } : part
+			);
+		}
+		turn = open === null ? [] : [open];
 	};
 
 	const mate = (event: MateEvent): MateBubble => {
 		if (open === null) {
 			open = { id: event.id, role: 'mate', at: event.at, parts: [] };
 			bubbles.push(open);
+			turn.push(open);
 		}
 		return open;
 	};
@@ -110,10 +119,6 @@ export function groupMateEvents(events: readonly MateEvent[]): MateBubble[] {
 				break;
 			}
 			case 'tool_call': {
-				const bubble = mate(event);
-				const index = bubble.parts.findIndex(
-					(part) => part.kind === 'tool' && part.call_id === event.call_id
-				);
 				const part: MatePart = {
 					kind: 'tool',
 					id: event.id,
@@ -121,22 +126,29 @@ export function groupMateEvents(events: readonly MateEvent[]): MateBubble[] {
 					name: event.name,
 					status: event.status
 				};
-				if (index === -1) {
-					bubble.parts.push(part);
+				// Update the call where it first appeared, even if a message of
+				// yours came in between; otherwise it starts here.
+				const owner = turn.findLast((bubble) =>
+					bubble.parts.some((item) => item.kind === 'tool' && item.call_id === event.call_id)
+				);
+				if (owner === undefined) {
+					mate(event).parts.push(part);
 				} else {
-					bubble.parts[index] = { ...part, id: bubble.parts[index]!.id };
+					const index = owner.parts.findIndex(
+						(item) => item.kind === 'tool' && item.call_id === event.call_id
+					);
+					owner.parts[index] = { ...part, id: owner.parts[index]!.id };
 				}
 				break;
 			}
 			case 'error': {
 				const bubble = mate(event);
-				stopRunningTools(bubble);
 				bubble.parts.push({ kind: 'error', id: event.id, message: event.message });
+				endTurn();
 				break;
 			}
 			case 'result': {
 				const bubble = mate(event);
-				stopRunningTools(bubble);
 				bubble.result = {
 					status: event.status,
 					...(event.git_pr_url === undefined ? {} : { git_pr_url: event.git_pr_url }),
@@ -146,6 +158,7 @@ export function groupMateEvents(events: readonly MateEvent[]): MateBubble[] {
 					bubble.parts.push({ kind: 'text', id: event.id, text: event.text });
 				}
 				open = null;
+				endTurn();
 				break;
 			}
 		}

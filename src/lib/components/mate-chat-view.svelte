@@ -202,9 +202,13 @@
 		confirming_delete = false;
 		void tick().then(() => delete_button?.focus());
 	}
-	/** Escape dismisses the confirmation instead of closing the chat. */
+	/**
+	 * While the confirmation is open, Escape dismisses it instead of closing
+	 * the chat, wherever focus is. This runs in the capture phase, ahead of
+	 * the page's hotkeys, which skip a key that is already handled.
+	 */
 	function confirmKeydown(event: KeyboardEvent) {
-		if (event.key !== 'Escape' || deleting) return;
+		if (!confirming_delete || event.key !== 'Escape' || deleting) return;
 		event.preventDefault();
 		cancelDelete();
 	}
@@ -215,6 +219,8 @@
 		void tick().then(jumpToLatest);
 	}
 </script>
+
+<svelte:window onkeydowncapture={confirmKeydown} />
 
 <section class="chat" aria-label={chat.title}>
 	<header class="chat-hd">
@@ -256,7 +262,6 @@
 					class="btn btn-sm btn-danger"
 					type="button"
 					disabled={deleting}
-					onkeydown={confirmKeydown}
 					onclick={() => void deleteChat()}>{deleting ? 'Deleting…' : 'Delete permanently'}</button
 				>
 				<button
@@ -264,7 +269,6 @@
 					class="btn btn-sm btn-ghost"
 					type="button"
 					disabled={deleting}
-					onkeydown={confirmKeydown}
 					onclick={cancelDelete}>Keep chat</button
 				>
 			</div>
