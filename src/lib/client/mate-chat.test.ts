@@ -141,6 +141,25 @@ describe('groupMateEvents', () => {
 		]);
 		expect(split.map((bubble) => bubble.role)).toEqual(['mate', 'you']);
 		expect(split[0]!.result?.status).toBe('cancelled');
+		// After an error ends a turn, a later ending with nothing new from the
+		// agent starts its own bubble rather than joining the ended turn.
+		const after_error = groupMateEvents([
+			ev({ type: 'assistant', id: 'e1', text: 'Working on it.' }),
+			ev({ type: 'error', id: 'e2', message: 'agent stopped' }),
+			ev({ type: 'user', id: 'e3', text: 'try again' }),
+			ev({ type: 'result', id: 'e4', status: 'failed', text: 'Could not resume.' })
+		]);
+		expect(after_error.map((bubble) => bubble.role)).toEqual(['mate', 'you', 'mate']);
+		expect(after_error[0]!.result).toBeUndefined();
+		expect(after_error[2]!.result?.status).toBe('failed');
+		// A tool started in a bubble an error left open still ends with its turn.
+		expect(
+			statuses([
+				ev({ type: 'error', id: 'e1', message: 'blip' }),
+				tool('e2', 'a', 'running'),
+				ev({ type: 'result', id: 'e3', status: 'cancelled' })
+			])
+		).toEqual(['error', 'a:stopped']);
 		// A later turn starts fresh: the same call id is a new chip.
 		expect(
 			statuses([
