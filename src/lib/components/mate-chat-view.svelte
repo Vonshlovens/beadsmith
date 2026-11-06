@@ -57,6 +57,7 @@
 	let textarea = $state<HTMLTextAreaElement | null>(null);
 	let log_el = $state<HTMLDivElement | null>(null);
 	let copied = $state<string | null>(null);
+	let title_open = $state(false);
 
 	// Most events replace the `chat` object (a newer `updated_at`); only a
 	// different chat should move focus back to the composer.
@@ -233,7 +234,16 @@
 		>
 			<ArrowLeftIcon size={14} />
 		</button>
-		<h1 class="chat-ti" {@attach tip(chat.title)}>{chat.title}</h1>
+		<!-- A long title is clipped to one line; tapping it (or Enter) shows all of it. -->
+		<h1 class="chat-ti">
+			<button
+				class="ti-btn"
+				class:is-open={title_open}
+				type="button"
+				{@attach tip(title_open ? null : chat.title)}
+				onclick={() => (title_open = !title_open)}>{chat.title}</button
+			>
+		</h1>
 		<p class="chat-meta">
 			Started <time datetime={chat.created_at} {@attach tip(absoluteStamp(chat.created_at))}
 				>{absoluteStamp(chat.created_at)}</time
@@ -306,7 +316,7 @@
 
 			{#each rows as row (row.key)}
 				{#if row.day}
-					<li class="day" aria-hidden="true"><span>{row.day}</span></li>
+					<li class="day"><span>{row.day}</span></li>
 				{/if}
 				<li
 					class="msg"
@@ -335,9 +345,6 @@
 							<span class="sr-only">{row.role === 'you' ? 'You' : 'First Mate'}, </span>
 							<time datetime={row.at} {@attach tip(absoluteStamp(row.at))}>{clockTime(row.at)}</time
 							>
-							{#if row.kind === 'bubble' && row.bubble.result && RESULT_NOTE[row.bubble.result.status]}
-								<span class="st">{RESULT_NOTE[row.bubble.result.status]}</span>
-							{/if}
 						</p>
 
 						{#if row.kind === 'pending'}
@@ -393,6 +400,12 @@
 										<a href={row.bubble.result.git_pr_url} target="_blank" rel="noopener noreferrer"
 											>Pull request</a
 										>
+									</p>
+								{/if}
+								<!-- After the turn's content, so it shows on grouped messages too. -->
+								{#if row.bubble.result && RESULT_NOTE[row.bubble.result.status]}
+									<p class="outcome">
+										<span class="st">{RESULT_NOTE[row.bubble.result.status]}</span>
 									</p>
 								{/if}
 							</div>
@@ -527,13 +540,29 @@
 		flex: 0 1 auto;
 		min-width: 0;
 		margin: 0;
-		overflow: hidden;
 		font-size: var(--t-md);
 		font-weight: 600;
 		line-height: 1.35;
 		color: var(--tx-hi);
+	}
+	.ti-btn {
+		display: block;
+		max-width: 100%;
+		padding: 0;
+		overflow: hidden;
+		background: none;
+		border: 0;
+		border-radius: var(--r-1);
+		color: inherit;
+		font: inherit;
+		text-align: left;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+		cursor: pointer;
+	}
+	.ti-btn.is-open {
+		white-space: normal;
+		overflow-wrap: anywhere;
 	}
 	.chat-meta {
 		flex: 1 0 auto;
@@ -667,6 +696,10 @@
 		font-size: var(--t-xs);
 		color: var(--tx-dim);
 		font-variant-numeric: tabular-nums;
+	}
+	.outcome {
+		margin: 0;
+		font-size: var(--t-xs);
 	}
 	.st {
 		padding: 0 5px;

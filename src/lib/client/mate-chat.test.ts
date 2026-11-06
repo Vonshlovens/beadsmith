@@ -197,8 +197,9 @@ describe('mergeEvents', () => {
 });
 
 describe('placeMateRows', () => {
-	const at = (minutes: number) => new Date(Date.UTC(2026, 10, 6, 12, minutes)).toISOString();
-	const now = Date.UTC(2026, 10, 6, 18, 0);
+	// Local calendar times: day labels follow the reader's own calendar.
+	const at = (minutes: number) => new Date(2026, 10, 6, 12, minutes).toISOString();
+	const now = new Date(2026, 10, 6, 18, 0).getTime();
 
 	it('groups one sender’s messages and starts a header when the sender changes', () => {
 		const rows = placeMateRows(
@@ -216,15 +217,17 @@ describe('placeMateRows', () => {
 	});
 
 	it('starts a new header after a long pause and a divider on a new day', () => {
-		const late = new Date(Date.UTC(2026, 10, 6, 12, 0) + GROUP_GAP_MS + 60_000).toISOString();
-		const next_day = new Date(Date.UTC(2026, 10, 7, 12, 0)).toISOString();
+		const late = new Date(
+			new Date(2026, 10, 6, 12, 0).getTime() + GROUP_GAP_MS + 60_000
+		).toISOString();
+		const next_day = new Date(2026, 10, 7, 12, 0).toISOString();
 		const rows = placeMateRows(
 			[
 				{ role: 'mate', at: at(0) },
 				{ role: 'mate', at: late },
 				{ role: 'mate', at: next_day }
 			],
-			Date.UTC(2026, 10, 7, 13, 0)
+			new Date(2026, 10, 7, 13, 0).getTime()
 		);
 		expect(rows.map((row) => row.head)).toEqual([true, true, true]);
 		expect(rows[0]!.day).toBe('Yesterday');
