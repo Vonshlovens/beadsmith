@@ -4,6 +4,7 @@
 	 * parade's reading pane renders the same thing; this route adds the
 	 * breadcrumb and the streamed-load plumbing.
 	 */
+	import { tip } from '#lib/client/tooltip.js';
 	import { goto } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
 	import IssueAgentPanel from '#lib/components/issue-agent-panel.svelte';
@@ -182,7 +183,9 @@
 		>
 			{#snippet lead()}
 				<nav class="crumb" aria-label="Breadcrumb">
-					<a href={back_href} title="Back to the list (esc)">← {project?.name ?? 'Issues'}</a>
+					<a href={back_href} {@attach tip('Back to the list (esc)')}
+						>← {project?.name ?? 'Issues'}</a
+					>
 				</nav>
 			{/snippet}
 		</IssueDetailView>

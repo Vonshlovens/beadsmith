@@ -72,6 +72,8 @@ export function expand(
 	const base = slide(node, { duration: dur(duration), easing: cubicOut });
 	return {
 		...base,
-		css: (t, u) => `${base.css?.(t, u) ?? ''}opacity: ${t};`
+		// slide's css ends without a semicolon; without one here the browser
+		// reads `min-height: 0opacity: …` and drops both.
+		css: (t, u) => `${base.css?.(t, u) ?? ''}; opacity: ${t};`
 	};
 }

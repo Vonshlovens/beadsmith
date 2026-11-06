@@ -2,6 +2,7 @@
 	/**
 	 * Tackle control: enqueue a /tackle agent for one issue.
 	 */
+	import XIcon from 'phosphor-svelte/lib/XIcon';
 	import { toast } from 'svelte-sonner';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import { api, errorMessage } from '#lib/client/api.js';
@@ -79,7 +80,7 @@
 				aria-label="Close"
 				onclick={() => (open = false)}
 			>
-				✕
+				<XIcon size={14} />
 			</button>
 		</div>
 		<div class="modal-bd">

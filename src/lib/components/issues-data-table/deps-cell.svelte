@@ -1,5 +1,6 @@
 <script lang="ts">
 	/** Dependency counts: blockers first, dependents second. */
+	import { tip } from '#lib/client/tooltip.js';
 	interface Props {
 		dependency_count: number;
 		dependent_count: number;
@@ -8,7 +9,7 @@
 	let { dependency_count, dependent_count }: Props = $props();
 </script>
 
-<span class="deps" title="{dependency_count} blocking, {dependent_count} dependent">
+<span class="deps" {@attach tip(`${dependency_count} blocking, ${dependent_count} dependent`)}>
 	<span class={dependency_count > 0 ? 'up' : 'faint'}>↑{dependency_count}</span>
 	<b>↓{dependent_count}</b>
 </span>

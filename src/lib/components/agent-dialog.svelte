@@ -5,15 +5,16 @@
 	 * Opened from anywhere with `app_state.openAgent` (key `a`). Every intent
 	 * goes through the dispatch pipeline; this never writes Beads itself.
 	 */
+	import { tip } from '#lib/client/tooltip.js';
 	import { toast } from 'svelte-sonner';
-	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
-	import BotIcon from '@lucide/svelte/icons/bot';
-	import CircleCheckIcon from '@lucide/svelte/icons/circle-check';
-	import HammerIcon from '@lucide/svelte/icons/hammer';
-	import Maximize2Icon from '@lucide/svelte/icons/maximize-2';
-	import MessageSquareIcon from '@lucide/svelte/icons/message-square';
-	import PencilLineIcon from '@lucide/svelte/icons/pencil-line';
-	import XIcon from '@lucide/svelte/icons/x';
+	import ArrowLeftIcon from 'phosphor-svelte/lib/ArrowLeftIcon';
+	import RobotIcon from 'phosphor-svelte/lib/RobotIcon';
+	import CheckCircleIcon from 'phosphor-svelte/lib/CheckCircleIcon';
+	import HammerIcon from 'phosphor-svelte/lib/HammerIcon';
+	import ArrowsOutSimpleIcon from 'phosphor-svelte/lib/ArrowsOutSimpleIcon';
+	import ChatTextIcon from 'phosphor-svelte/lib/ChatTextIcon';
+	import PencilLineIcon from 'phosphor-svelte/lib/PencilLineIcon';
+	import XIcon from 'phosphor-svelte/lib/XIcon';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import AgentThread from '#lib/components/agent-thread.svelte';
 	import IssueId from '#lib/components/issue-id.svelte';
@@ -34,9 +35,9 @@
 	import type { Mission } from '#lib/types.js';
 
 	const ICONS = {
-		discuss: MessageSquareIcon,
+		discuss: ChatTextIcon,
 		elaborate: PencilLineIcon,
-		close: CircleCheckIcon,
+		close: CheckCircleIcon,
 		tackle: HammerIcon
 	} as const;
 
@@ -194,10 +195,10 @@
 	>
 		{#if target}
 			<div class="modal-hd">
-				<BotIcon size={15} strokeWidth={1.4} aria-hidden="true" />
+				<RobotIcon size={15} aria-hidden="true" />
 				<Dialog.Title class="sr-only">Agent on {target.issue_id}</Dialog.Title>
 				<IssueId id={target.issue_id} strong />
-				<span class="ti" title={target.issue_title}>{target.issue_title}</span>
+				<span class="ti" {@attach tip(target.issue_title)}>{target.issue_title}</span>
 				<span class="spacer"></span>
 				{#if page_href}
 					<a
@@ -205,19 +206,19 @@
 						href={page_href}
 						onclick={() => app_state.closeAgent()}
 						aria-label="Open this thread in First Mate"
-						title="Open in First Mate"
+						{@attach tip('Open in First Mate')}
 					>
-						<Maximize2Icon size={14} strokeWidth={1.4} />
+						<ArrowsOutSimpleIcon size={14} />
 					</a>
 				{/if}
 				<button
 					class="btn btn-sm btn-ghost btn-icon"
 					type="button"
 					aria-label="Close"
-					title="Close (esc)"
+					{@attach tip('Close (esc)')}
 					onclick={() => app_state.closeAgent()}
 				>
-					<XIcon size={14} strokeWidth={1.4} />
+					<XIcon size={14} />
 				</button>
 			</div>
 
@@ -227,9 +228,9 @@
 						class="back"
 						type="button"
 						onclick={() => (thread_id = null)}
-						title="New request (n)"
+						{@attach tip('New request (n)')}
 					>
-						<ArrowLeftIcon size={13} strokeWidth={1.4} /> New request
+						<ArrowLeftIcon size={13} /> New request
 					</button>
 					<AgentThread
 						project_id={target.project_id}
@@ -251,10 +252,12 @@
 								role="radio"
 								aria-checked={intent === entry.id}
 								aria-keyshortcuts="{entry.key} {index + 1}"
-								title={ok ? entry.hint : `${entry.label} needs Tackle allowed for this project.`}
+								{@attach tip(
+									ok ? entry.hint : `${entry.label} needs Tackle allowed for this project.`
+								)}
 								onclick={() => pick(entry.id)}
 							>
-								<Icon size={16} strokeWidth={1.4} aria-hidden="true" />
+								<Icon size={16} aria-hidden="true" />
 								<span class="intent-lbl">{entry.label}</span>
 								<kbd class="kbd">{entry.key}</kbd>
 							</button>

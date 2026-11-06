@@ -7,6 +7,7 @@
 	 * absorbs slack rather than sharing pixels equally. The frame scrolls;
 	 * Status and Id pin to the left of that scrollport.
 	 */
+	import { tip } from '#lib/client/tooltip.js';
 	import { goto, preloadData } from '$app/navigation';
 	import { issueDetailHref } from '#lib/client/issue-view.js';
 	import { FlexRender, createTable, type SortingState, type Updater } from '@tanstack/svelte-table';
@@ -341,7 +342,7 @@
 	<div class="tbl-ft">
 		<span
 			class="mono-num"
-			title="{issues.length} shown, {total_count - issues.length} hidden by filters"
+			{@attach tip(`${issues.length} shown, ${total_count - issues.length} hidden by filters`)}
 		>
 			{issues.length}{#if total_count > issues.length}<span class="faint">
 					/ {total_count}</span

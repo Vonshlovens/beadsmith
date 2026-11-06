@@ -5,9 +5,9 @@
 	 * dependency and the bead shows its state. Colour is never the only
 	 * signal: the accessible name and the tooltip state the condition in words.
 	 */
-	import BotIcon from '@lucide/svelte/icons/bot';
-	import DatabaseIcon from '@lucide/svelte/icons/database';
-	import ServerIcon from '@lucide/svelte/icons/server';
+	import RobotIcon from 'phosphor-svelte/lib/RobotIcon';
+	import DatabaseIcon from 'phosphor-svelte/lib/DatabaseIcon';
+	import HardDrivesIcon from 'phosphor-svelte/lib/HardDrivesIcon';
 	import { statusSnapshot } from '#lib/client/projects.svelte.js';
 	import { relativeLong } from '#lib/client/format.js';
 
@@ -60,18 +60,37 @@
 	});
 
 	const agents_active = $derived(status ? status.agents.active : false);
+
+	/** A press pins one readout open, so touch (no hover) can read it too. */
+	let pinned = $state<string | null>(null);
+
+	function toggle(name: string) {
+		pinned = pinned === name ? null : name;
+	}
+
+	function onKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape' && pinned !== null) {
+			pinned = null;
+		}
+	}
 	const agents_tone = $derived(status ? (agents_active ? 'live' : 'warn') : '');
 </script>
+
+<svelte:window onkeydown={onKeydown} />
 
 <div class="cluster" role="group" aria-label="System status">
 	<button
 		class="stat {dolt_tone}"
 		type="button"
 		aria-describedby="tip-dolt"
+		aria-expanded={pinned === 'dolt'}
+		class:is-pinned={pinned === 'dolt'}
+		onclick={() => toggle('dolt')}
+		onblur={() => pinned === 'dolt' && (pinned = null)}
 		aria-label="Dolt server, {dolt_word}"
 	>
 		<i class="stat-dot" aria-hidden="true"></i><span class="stat-ic" aria-hidden="true"
-			><DatabaseIcon size={12} strokeWidth={1.4} /></span
+			><DatabaseIcon size={12} /></span
 		>
 		<span class="tip" id="tip-dolt" role="tooltip">
 			<b>Dolt server · {dolt_word}</b>
@@ -88,10 +107,14 @@
 		class="stat {service_tone}"
 		type="button"
 		aria-describedby="tip-service"
+		aria-expanded={pinned === 'service'}
+		class:is-pinned={pinned === 'service'}
+		onclick={() => toggle('service')}
+		onblur={() => pinned === 'service' && (pinned = null)}
 		aria-label="Service, {service_word}"
 	>
 		<i class="stat-dot" aria-hidden="true"></i><span class="stat-ic" aria-hidden="true"
-			><ServerIcon size={12} strokeWidth={1.4} /></span
+			><HardDrivesIcon size={12} /></span
 		>
 		<span class="tip" id="tip-service" role="tooltip">
 			<b>Service · {service_word}</b>
@@ -108,11 +131,15 @@
 		class="stat {agents_tone}"
 		type="button"
 		aria-describedby="tip-agents"
+		aria-expanded={pinned === 'agents'}
+		class:is-pinned={pinned === 'agents'}
+		onclick={() => toggle('agents')}
+		onblur={() => pinned === 'agents' && (pinned = null)}
 		aria-label="Agent activity, {agents_active ? 'active in the last 15 minutes' : 'idle'}, {status
 			?.agents.count ?? 0} agents"
 	>
 		<i class="stat-dot" aria-hidden="true"></i><span class="stat-ic" aria-hidden="true"
-			><BotIcon size={12} strokeWidth={1.4} /></span
+			><RobotIcon size={12} /></span
 		>
 		<span class="stat-n" aria-hidden="true">{status?.agents.count ?? 0}</span>
 		<span class="tip" id="tip-agents" role="tooltip">
@@ -142,7 +169,8 @@
 			transform 0.12s ease;
 	}
 	.stat:hover .tip,
-	.stat:focus-visible .tip {
+	.stat:focus-visible .tip,
+	.stat.is-pinned .tip {
 		opacity: 1;
 		transform: none;
 	}

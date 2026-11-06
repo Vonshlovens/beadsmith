@@ -6,7 +6,7 @@
 	 * message, `reason` says why in place of the hint.
 	 */
 	import type { Snippet } from 'svelte';
-	import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
+	import ArrowUpIcon from 'phosphor-svelte/lib/ArrowUpIcon';
 	import { MAX_MESSAGE_CHARS } from '#lib/client/mate-chat.js';
 
 	interface Props {
@@ -90,7 +90,7 @@
 		{@render actions?.()}
 		<button class="btn btn-sm btn-primary send" type="submit" disabled={!can_send}>
 			{busy ? 'Sending…' : submit_label}
-			<ArrowUpIcon size={13} strokeWidth={2} aria-hidden="true" />
+			<ArrowUpIcon size={13} aria-hidden="true" />
 		</button>
 	</div>
 </form>

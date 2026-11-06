@@ -123,16 +123,19 @@ live in [`src/app.css`](../src/app.css).
 | Code | Purpose |
 | --- | --- |
 | [`src/routes/+layout.svelte`](../src/routes/+layout.svelte), [`src/lib/components/`](../src/lib/components/) | Shell, rail, shared components |
-| [`src/routes/+page.svelte`](../src/routes/+page.svelte) | Home / project cards |
+| [`src/routes/+page.ts`](../src/routes/+page.ts), [`src/lib/client/home.ts`](../src/lib/client/home.ts) | `/` redirects to your own work: Todos for admins, First Mate for members |
+| [`src/routes/projects/`](../src/routes/projects/) | Project catalogue: one sortable row per project |
+| [`src/lib/components/activity-drawer.svelte`](../src/lib/components/activity-drawer.svelte) | Recent changes drawer (top bar, `.`): events folded to one line per issue per day |
 | [`src/routes/ready/`](../src/routes/ready/) | Cross-project Ready deck |
 | [`src/routes/todos/`](../src/routes/todos/), [`src/lib/todos/`](../src/lib/todos/) | Admin todo agenda: local capture parser, due-date columns, derived urgency; `/api/todos/:id/route` files a todo through File dispatch ([`src/lib/server/todos/route.ts`](../src/lib/server/todos/route.ts)) |
-| [`src/lib/components/first-mate.svelte`](../src/lib/components/first-mate.svelte) | Command palette (⌘K); also hosts the agent dialog and keyboard host |
+| [`src/lib/components/first-mate.svelte`](../src/lib/components/first-mate.svelte), [`src/lib/client/first-mate.ts`](../src/lib/client/first-mate.ts) | Command palette (⌘K): go anywhere, open an issue ID, recent issues, add a todo, local actions; also hosts the agent dialog and keyboard host |
 | [`src/routes/first-mate/`](../src/routes/first-mate/), [`src/lib/server/mate/`](../src/lib/server/mate/) | First Mate: server-side chats with the mate runner's agent beside agent threads, palette when none is open |
 | [`src/lib/components/agent-dialog.svelte`](../src/lib/components/agent-dialog.svelte), [`agent-thread.svelte`](../src/lib/components/agent-thread.svelte) | Issue → agent (Discuss, Elaborate, Close, Tackle) and the provider-agnostic thread |
 | [`src/lib/client/hotkeys.ts`](../src/lib/client/hotkeys.ts) | Keyboard map ([`docs/keyboard.md`](../docs/keyboard.md)) |
 | [`src/routes/p/[id]/+page.svelte`](../src/routes/p/[id]/+page.svelte) | Dense issue table and board |
 | [`src/routes/p/[id]/i/[issue_id]/+page.svelte`](../src/routes/p/[id]/i/[issue_id]/+page.svelte) | Issue body and relationships |
 | [`src/lib/components/empty-state.svelte`](../src/lib/components/empty-state.svelte), skeletons | Empty, loading, error, confirm, narrow viewport |
+| [`src/lib/client/tooltip.ts`](../src/lib/client/tooltip.ts), [`select-field.svelte`](../src/lib/components/select-field.svelte), [`date-picker.svelte`](../src/lib/components/date-picker.svelte), [`confirm-dialog.svelte`](../src/lib/components/confirm-dialog.svelte) | The app's own tooltip, dropdown, calendar and confirmation, in place of the browser's `title`, `<select>`, `<input type=date>` and `confirm()`. Icons are Phosphor (`phosphor-svelte`) |
 
 ## Related long-form docs
 

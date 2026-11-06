@@ -6,6 +6,8 @@
 	 * selection,undo}`. Keys are registered through `useHotkeys`, so they stay
 	 * inert in fields and under dialogs, and appear in the `?` overlay.
 	 */
+	import XIcon from 'phosphor-svelte/lib/XIcon';
+	import { tip } from '#lib/client/tooltip.js';
 	import { onMount, tick, untrack } from 'svelte';
 	import { flip } from 'svelte/animate';
 	import { toast } from 'svelte-sonner';
@@ -892,7 +894,7 @@
 							type="button"
 							class="si"
 							class:is-on={active_saved === entry.name}
-							title={entry.text}
+							{@attach tip(entry.text)}
 							onclick={() => pickSaved(entry.name)}
 						>
 							<span class="sn">{entry.name}</span><span class="sc">{entry.count}</span>
@@ -901,7 +903,7 @@
 							type="button"
 							class="si-x"
 							aria-label="Remove saved search {entry.name}"
-							onclick={() => deleteSaved(entry.name)}>×</button
+							onclick={() => deleteSaved(entry.name)}><XIcon size={11} weight="bold" /></button
 						>
 					</div>
 				{:else}
@@ -959,8 +961,9 @@
 						>
 						<span
 							class="pr"
-							title="Priority P{todo.priority} · urgency {urgency(todo.priority, todo.due_at, now)}"
-							>P{todo.priority}</span
+							{@attach tip(
+								`Priority P${todo.priority} · urgency ${urgency(todo.priority, todo.due_at, now)}`
+							)}>P{todo.priority}</span
 						>
 						<span class="ttl">{todo.title}</span>
 						<span class="tg">
@@ -977,8 +980,9 @@
 								>due:{dueLabel(todo.due_at, now)}</span
 							>
 						{/if}
-						{#if todo.routed_project_id}<span class="rt" title="Routed to {todo.routed_project_id}"
-								>→{todo.routed_project_id}</span
+						{#if todo.routed_project_id}<span
+								class="rt"
+								{@attach tip(`Routed to ${todo.routed_project_id}`)}>→{todo.routed_project_id}</span
 							>{/if}
 						{#if todo.comment_count > 0}<span class="cm">{todo.comment_count}c</span>{/if}
 					</div>
