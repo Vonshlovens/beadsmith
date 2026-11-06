@@ -104,6 +104,32 @@ describe('groupMateEvents', () => {
 		).toEqual(['a:stopped', 'error']);
 		// Mid-turn, a running call is still running.
 		expect(statuses([tool('e1', 'a', 'running')])).toEqual(['a:running']);
+		// A follow-up sent mid-turn splits the turn; its calls still end with it.
+		expect(
+			statuses([
+				tool('e1', 'a', 'running'),
+				ev({ type: 'user', id: 'e2', text: 'also this' }),
+				tool('e3', 'b', 'running'),
+				ev({ type: 'result', id: 'e4', status: 'cancelled' })
+			])
+		).toEqual(['a:stopped', 'text', 'b:stopped']);
+		// A call that completes after the follow-up updates its own chip.
+		expect(
+			statuses([
+				tool('e1', 'a', 'running'),
+				ev({ type: 'user', id: 'e2', text: 'also this' }),
+				tool('e3', 'a', 'completed'),
+				ev({ type: 'result', id: 'e4', status: 'succeeded' })
+			])
+		).toEqual(['a:completed', 'text']);
+		// A later turn starts fresh: the same call id is a new chip.
+		expect(
+			statuses([
+				tool('e1', 'a', 'completed'),
+				ev({ type: 'result', id: 'e2', status: 'succeeded' }),
+				tool('e3', 'a', 'running')
+			])
+		).toEqual(['a:completed', 'a:running']);
 	});
 });
 
