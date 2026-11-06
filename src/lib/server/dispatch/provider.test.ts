@@ -47,6 +47,90 @@ describe('dispatch provider selection (env)', () => {
 		});
 	});
 
+	it('takes a list of providers, the first usable one as default', () => {
+		const e2b = {
+			BDX_E2B_API_KEY_FILE: '/run/secrets/e2b',
+			BDX_E2B_ANTHROPIC_API_KEY_FILE: '/run/secrets/anthropic',
+			BDX_E2B_DOLT_ACCOUNTS_FILE: '/run/secrets/dolt.json',
+			BDX_E2B_TAILSCALE_OAUTH_CLIENT_ID: 'cid',
+			BDX_E2B_TAILSCALE_OAUTH_CLIENT_SECRET_FILE: '/run/secrets/ts'
+		};
+		const both = readEnv({
+			...base,
+			...e2b,
+			BDX_DISPATCH_PROVIDER: 'webhook, e2b',
+			BDX_DISPATCH_WEBHOOK_URL: 'https://runner.example.com',
+			BDX_DISPATCH_WEBHOOK_SECRET: SECRET,
+			BDX_DISPATCH_WEBHOOK_LABEL: 'home box'
+		});
+		expect(both).toMatchObject({
+			dispatch_provider: 'webhook',
+			dispatch_providers: ['webhook', 'e2b'],
+			dispatch_labels: { webhook: 'home box', e2b: 'Sand' }
+		});
+		expect(both.dispatch_e2b).toMatchObject({
+			template: 'beadsmith-agent',
+			dolt_tailnet_host: 'beads',
+			dolt_tailnet_port: 3306,
+			tailscale_tags: ['tag:beads-sandbox'],
+			max_run_minutes: 55,
+			idle_minutes: 10
+		});
+		// A broken webhook leaves e2b as the default and says why.
+		expect(readEnv({ ...base, ...e2b, BDX_DISPATCH_PROVIDER: 'webhook,e2b' })).toMatchObject({
+			dispatch_provider: 'e2b',
+			dispatch_providers: ['e2b'],
+			dispatch_provider_error: 'webhook_url_invalid'
+		});
+		expect(readEnv({ ...base, BDX_DISPATCH_PROVIDER: 'e2b' })).toMatchObject({
+			dispatch_provider: 'none',
+			dispatch_providers: [],
+			dispatch_provider_error: 'e2b_config_missing'
+		});
+		// Half a GitHub App, a bad tag, or an unsafe label are refused or replaced.
+		expect(
+			readEnv({ ...base, ...e2b, BDX_DISPATCH_PROVIDER: 'e2b', BDX_E2B_GITHUB_APP_ID: '1' })
+				.dispatch_provider_error
+		).toBe('e2b_config_missing');
+		expect(
+			readEnv({ ...base, ...e2b, BDX_DISPATCH_PROVIDER: 'e2b', BDX_E2B_TAILSCALE_TAGS: 'beads' })
+				.dispatch_provider_error
+		).toBe('e2b_config_missing');
+		expect(
+			readEnv({ ...base, ...e2b, BDX_DISPATCH_PROVIDER: 'e2b', BDX_E2B_LABEL: '<script>' })
+				.dispatch_labels.e2b
+		).toBe('Sand');
+	});
+
+	it('lists First Mate chat runners, defaulting to the HTTP runner alone', () => {
+		const remote = {
+			BDX_MATE_RUNNER_URL: 'https://runner.example.com/mate',
+			BDX_MATE_RUNNER_SECRET: SECRET,
+			BDX_MATE_RUNNER_LABEL: 'forge'
+		};
+		const sand = {
+			BDX_E2B_API_KEY_FILE: '/run/secrets/e2b',
+			BDX_E2B_CLAUDE_OAUTH_TOKEN_FILE: '/run/secrets/claude'
+		};
+		expect(readEnv({ ...base, ...remote })).toMatchObject({
+			mate_runners: ['remote'],
+			mate_labels: { remote: 'forge', e2b: 'Sand' }
+		});
+		const both = readEnv({ ...base, ...remote, ...sand, BDX_MATE_RUNNERS: 'e2b,remote' });
+		expect(both.mate_runners).toEqual(['e2b', 'remote']);
+		expect(both.mate_e2b).toMatchObject({
+			claude_oauth_token_file: '/run/secrets/claude',
+			idle_minutes: 15,
+			max_sessions: 3,
+			state_dir: '/home/tester/.local/state/beads-web/sand-mate'
+		});
+		expect(both.mate_e2b?.anthropic_api_key_file).toBeUndefined();
+		// Sand chats need no tailnet or Dolt settings, but do need a model credential.
+		expect(readEnv({ ...base, BDX_MATE_RUNNERS: 'e2b', BDX_E2B_API_KEY_FILE: '/k' })).toMatchObject(
+			{ mate_runners: [], mate_runner_error: 'e2b_config_missing' }
+		);
+	});
+
 	it('requires https (http only on loopback) and a secret for webhooks', () => {
 		const webhook = {
 			...base,
@@ -131,6 +215,7 @@ describe('webhook provider', () => {
 		const launched = await provider.launch({
 			name: 'File: login',
 			prompt: 'file this',
+			dolt_database: 'beads_web',
 			auto_create_pr: false,
 			repository: { url: 'https://github.com/example-org/beads-web', starting_ref: 'main' }
 		});
@@ -190,9 +275,16 @@ describe('webhook provider', () => {
 		]);
 		await expect(provider.getRun('ag-1', 'run-1')).rejects.toThrow(/unknown run status/);
 		await expect(
-			provider.launch({ name: 'n', prompt: 'p', auto_create_pr: false })
+			provider.launch({ name: 'n', prompt: 'p', dolt_database: 'beads_x', auto_create_pr: false })
 		).rejects.toThrow(/no valid agent_id/);
-		expect(await provider.launch({ name: 'n', prompt: 'p', auto_create_pr: false })).toEqual({
+		expect(
+			await provider.launch({
+				name: 'n',
+				prompt: 'p',
+				dolt_database: 'beads_x',
+				auto_create_pr: false
+			})
+		).toEqual({
 			agent_id: 'ag-2',
 			run_id: undefined,
 			agent_url: undefined
@@ -284,6 +376,63 @@ describe('service routing across providers', () => {
 		const refreshed = await getDispatch(PROJECT.id, request.id, { store, provider });
 		expect(refreshed?.status).toBe('succeeded');
 		expect(provider.getRun).toHaveBeenCalledWith('ag-1', 'run-1');
+	});
+
+	it('launches on the provider a request names and follows each mission on its own', async () => {
+		const webhook = minimalProvider();
+		const sand: AgentProvider = {
+			...minimalProvider(),
+			id: 'e2b',
+			label: 'Sand',
+			launch: vi.fn(async () => ({ agent_id: 'sbx1', run_id: 'r1' })),
+			getRun: vi.fn(async () => ({ status: 'running' as const }))
+		};
+		const deps = {
+			store,
+			providers: [webhook, sand],
+			configured: true,
+			policy: ALLOW_ALL,
+			file_maps: {},
+			repositories: {},
+			schedule_background: () => {}
+		};
+		const payload = { operation: 'file' as const, title: 'x', notes: '' };
+		const on_sand = await enqueueDispatch(
+			{ idempotency_key: 'k-s', project: PROJECT, actor: 't', payload, provider: 'e2b' },
+			deps
+		);
+		const on_default = await enqueueDispatch(
+			{ idempotency_key: 'k-d', project: PROJECT, actor: 't', payload },
+			deps
+		);
+		expect(on_sand.request.provider).toBe('e2b');
+		expect(on_default.request.provider).toBe('webhook');
+		expect(sand.launch).toHaveBeenCalledWith(
+			expect.objectContaining({ dolt_database: 'beads_web' })
+		);
+
+		await getDispatch(PROJECT.id, on_sand.request.id, deps);
+		expect(sand.getRun).toHaveBeenCalledWith('sbx1', 'r1');
+		expect(webhook.getRun).not.toHaveBeenCalledWith('sbx1', 'r1');
+	});
+
+	it('refuses a provider that is not configured, before recording anything', async () => {
+		await expect(
+			enqueueDispatch(
+				{
+					idempotency_key: 'k-x',
+					project: PROJECT,
+					actor: 't',
+					payload: { operation: 'file', title: 'x', notes: '' },
+					provider: 'e2b'
+				},
+				{ store, provider: minimalProvider(), configured: true, policy: ALLOW_ALL }
+			)
+		).rejects.toMatchObject({
+			code: 'forbidden',
+			message: 'That agent runner is not configured on this service.'
+		});
+		expect(await store.list({ limit: 10 })).toHaveLength(0);
 	});
 
 	it('refuses cancel and follow-up a provider cannot perform', async () => {

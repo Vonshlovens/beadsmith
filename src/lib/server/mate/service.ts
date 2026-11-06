@@ -13,7 +13,13 @@
  * stored as local events so the chat still reads like one.
  */
 import { randomUUID } from 'node:crypto';
-import { UNWIRED_REPLY, type MateEvent, type MateSendResult, type MateStatus } from '#lib/mate.js';
+import {
+	UNWIRED_REPLY,
+	type MateEvent,
+	type MateRunnerInfo,
+	type MateSendResult,
+	type MateStatus
+} from '#lib/mate.js';
 import { encodeMissionEvent, type MissionEvent } from '#lib/mission-events.js';
 import { roleCan, type AccountRole } from '../auth/roles.js';
 import { errorResponse } from '../security.js';
@@ -44,7 +50,8 @@ export function resetMateHealthCache(): void {
 export async function mateStatus(
 	runner: MateRunner | undefined,
 	role: AccountRole | undefined,
-	now: () => number = Date.now
+	now: () => number = Date.now,
+	runners: MateRunnerInfo[] = []
 ): Promise<MateStatus> {
 	if (!roleCan(role, { console: ['manage'] })) {
 		return { connected: false, reason: 'admin_only' };
@@ -55,7 +62,11 @@ export async function mateStatus(
 	if (health_cache === undefined || now() - health_cache.at > HEALTH_TTL_MS) {
 		health_cache = { ok: await runner.health(), at: now() };
 	}
-	return { connected: true, reachable: health_cache.ok };
+	return {
+		connected: true,
+		reachable: health_cache.ok,
+		...(runners.length > 0 ? { runners } : {})
+	};
 }
 
 /** Map a runner failure onto the API error envelope. */

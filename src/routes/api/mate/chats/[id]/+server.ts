@@ -51,7 +51,7 @@ export const DELETE: RequestHandler = async ({ params, locals }) => {
 		if (!owned.ok) {
 			return owned.response;
 		}
-		const runner = getMateRunner();
+		const runner = getMateRunner(owned.chat.runner);
 		if (runner !== undefined) {
 			await runner.deleteChat(owned.chat.id);
 		}

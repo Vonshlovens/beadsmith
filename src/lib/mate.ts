@@ -9,12 +9,28 @@
  */
 import type { MissionEvent } from '#lib/mission-events.js';
 
+/**
+ * Where a chat's agent runs: `remote`, the HTTP mate runner
+ * (`BDX_MATE_RUNNER_URL`, for example the maintainer's forge host), or `e2b`,
+ * an E2B sandbox per chat ("Sand"; docs/sand-e2b.md).
+ */
+export const MATE_RUNNER_IDS = ['remote', 'e2b'] as const;
+export type MateRunnerId = (typeof MATE_RUNNER_IDS)[number];
+
+/** One configured chat runner, as the start screen offers it. */
+export interface MateRunnerInfo {
+	id: MateRunnerId;
+	label: string;
+}
+
 /** One chat as listed. */
 export interface MateChat {
 	id: string;
 	title: string;
 	/** Project id the chat is about; null for every project. */
 	scope: string | null;
+	/** Where the chat's agent runs; fixed when the chat is created. */
+	runner: MateRunnerId;
 	/** ISO timestamps. */
 	created_at: string;
 	updated_at: string;
@@ -39,6 +55,8 @@ export interface MateStatus {
 	connected: boolean;
 	reason?: 'unconfigured' | 'admin_only';
 	reachable?: boolean;
+	/** Configured chat runners, default first (admins only). */
+	runners?: MateRunnerInfo[];
 }
 
 /** What `POST /api/mate/chats/:id/messages` answers. */

@@ -25,3 +25,4 @@ edit an ADR on every conversation — see `.agents/skills/architecture/SKILL.md`
 | [0015](./0015-scoped-agent-sandboxes.md) | Agents run in beads or repo sandboxes; Beadsmith relays their terminals to admins and never connects into personal devices |
 
 - [0016: First Mate worker runtime](0016-first-mate-worker-runtime.md) — accepted.
+- [0017: Sand, E2B sandboxes beside self-hosted runners](0017-sand-e2b-sandboxes.md) — accepted.

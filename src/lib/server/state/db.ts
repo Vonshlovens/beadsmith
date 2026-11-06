@@ -98,6 +98,10 @@ export async function initStateSchema(client: Client): Promise<void> {
 	if (!mateColumns.rows.some((row) => row.name === 'message_id')) {
 		await client.execute('ALTER TABLE mate_events ADD COLUMN message_id TEXT');
 	}
+	const chatColumns = await client.execute('PRAGMA table_info(mate_chats)');
+	if (!chatColumns.rows.some((row) => row.name === 'runner')) {
+		await client.execute('ALTER TABLE mate_chats ADD COLUMN runner TEXT');
+	}
 	const columns = await client.execute('PRAGMA table_info(dispatch_requests)');
 	const existing = new Set(
 		columns.rows.map((row) => {

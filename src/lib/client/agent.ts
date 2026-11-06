@@ -9,6 +9,7 @@ import type {
 	DispatchCapabilities,
 	DispatchOperation,
 	DispatchProjectAllow,
+	DispatchProviderInfo,
 	DispatchRequest,
 	DispatchStatus,
 	StatusSnapshot
@@ -135,21 +136,54 @@ export function isBusyStatus(status: DispatchStatus): boolean {
 	return BUSY.has(status);
 }
 
+/** The dispatch fields the agent console reads. */
+export interface DispatchView {
+	armed: boolean;
+	provider?: string;
+	capabilities?: DispatchCapabilities;
+	providers?: DispatchProviderInfo[];
+}
+
 /**
- * False when a launched mission came from a provider that is no longer
- * configured: it keeps its stored status, but nothing refreshes, cancels, or
- * streams it. Missions not launched yet, and an unknown dispatch state, count
- * as followed.
+ * The configured provider a mission was launched by, or undefined when it is
+ * no longer configured (or the mission has not launched).
+ *
+ * @param mission - The thread's mission.
+ * @param dispatch - Current dispatch health.
+ */
+export function missionProvider(
+	mission: Pick<DispatchRequest, 'provider'>,
+	dispatch: Pick<DispatchView, 'provider' | 'capabilities' | 'providers'> | null
+): DispatchProviderInfo | undefined {
+	if (dispatch === null || mission.provider === undefined) return undefined;
+	const listed = dispatch.providers?.find((entry) => entry.id === mission.provider);
+	if (listed !== undefined) return listed;
+	// A server without the providers list reports only its one provider.
+	if (dispatch.providers === undefined && mission.provider === dispatch.provider) {
+		return dispatch.capabilities === undefined
+			? undefined
+			: { id: mission.provider, label: mission.provider, capabilities: dispatch.capabilities };
+	}
+	return undefined;
+}
+
+/**
+ * Whether this service still follows a mission. A mission launched by a
+ * provider that is no longer configured keeps its stored status, but nothing
+ * refreshes, cancels, or streams it. Missions not launched yet, and an unknown
+ * dispatch state, count as followed.
  *
  * @param mission - The thread's mission.
  * @param dispatch - Current dispatch health, or null before it loads.
  */
 export function isFollowedMission(
 	mission: Pick<DispatchRequest, 'agent_id' | 'provider'>,
-	dispatch: { provider?: string } | null
+	dispatch: Pick<DispatchView, 'provider' | 'capabilities' | 'providers'> | null
 ): boolean {
 	return (
-		dispatch === null || mission.agent_id === undefined || mission.provider === dispatch.provider
+		dispatch === null ||
+		mission.agent_id === undefined ||
+		missionProvider(mission, dispatch) !== undefined
 	);
 }
 
@@ -168,11 +202,7 @@ export interface ComposerState {
  */
 export function composerState(
 	mission: Pick<DispatchRequest, 'status' | 'agent_id' | 'provider'>,
-	dispatch: {
-		armed: boolean;
-		provider?: string;
-		capabilities?: DispatchCapabilities;
-	} | null
+	dispatch: DispatchView | null
 ): ComposerState {
 	if (dispatch === null || dispatch.provider === undefined || dispatch.provider === 'none') {
 		return { can_send: false, reason: 'Agent dispatch is off on this service.' };
@@ -184,13 +214,14 @@ export function composerState(
 				mission.status === 'failed' ? 'This run never started.' : 'Waiting for the agent to start.'
 		};
 	}
-	if (mission.provider !== dispatch.provider) {
+	const runner = missionProvider(mission, dispatch);
+	if (runner === undefined) {
 		return { can_send: false, reason: 'Started on a runner that is no longer configured.' };
 	}
 	if (isBusyStatus(mission.status)) {
 		return { can_send: false, reason: 'The agent is working. Wait for its reply or stop the run.' };
 	}
-	if (dispatch.capabilities?.follow_up !== true) {
+	if (runner.capabilities.follow_up !== true) {
 		return { can_send: false, reason: 'This runner does not take follow-up messages.' };
 	}
 	if (!dispatch.armed) {

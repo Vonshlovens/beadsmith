@@ -25,7 +25,7 @@ export const GET: RequestHandler = async ({ params, locals, request, url }) => {
 	if (!owned.ok) {
 		return owned.response;
 	}
-	const runner = getMateRunner();
+	const runner = getMateRunner(owned.chat.runner);
 	if (runner === undefined) {
 		return errorResponse('unavailable', 'First Mate is not connected to a runner.');
 	}

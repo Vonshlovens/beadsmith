@@ -35,6 +35,7 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 			const result = await enqueueDispatch({
 				idempotency_key: body.data.idempotency_key,
 				project,
+				provider: body.data.provider,
 				actor: actorFromLocals(locals),
 				payload: {
 					operation: 'file',
@@ -60,6 +61,7 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 			const result = await enqueueDispatch({
 				idempotency_key: body.data.idempotency_key,
 				project,
+				provider: body.data.provider,
 				actor: actorFromLocals(locals),
 				payload: {
 					operation: 'discuss',
@@ -77,6 +79,7 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 			const result = await enqueueDispatch({
 				idempotency_key: body.data.idempotency_key,
 				project,
+				provider: body.data.provider,
 				actor,
 				payload: {
 					operation: 'comment',
@@ -92,6 +95,7 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 		const result = await enqueueDispatch({
 			idempotency_key: body.data.idempotency_key,
 			project,
+			provider: body.data.provider,
 			actor: actorFromLocals(locals),
 			payload: {
 				operation: 'tackle',

@@ -22,6 +22,7 @@
 		formatElapsed,
 		isBusyStatus,
 		isFollowedMission,
+		missionProvider,
 		isSafeRunUrl,
 		missionVerb,
 		THREAD_POLL_MS
@@ -65,7 +66,10 @@
 	let run_generation = $state(0);
 
 	const dispatch = $derived(statusSnapshot()?.dispatch ?? null);
-	const capabilities = $derived(dispatch?.capabilities);
+	// Each thread follows the runner that launched it, not the default one.
+	const capabilities = $derived(
+		mission === undefined ? undefined : missionProvider(mission, dispatch)?.capabilities
+	);
 	// A run nothing follows any more (its provider was removed) is not working:
 	// no working turn, polling, live stream, or Cancel.
 	const busy = $derived(

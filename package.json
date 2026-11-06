@@ -54,6 +54,7 @@
 		"clsx": "^2.1.1",
 		"dompurify": "^3.4.13",
 		"drizzle-orm": "^0.45.2",
+		"e2b": "2.62.1",
 		"marked": "^18.0.7",
 		"mode-watcher": "^1.1.0",
 		"mysql2": "^3.23.2",

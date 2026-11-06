@@ -36,8 +36,9 @@ reality**. Search `src/` before treating a spec as implemented.
   (backups included) and launches agents; `member` reads
   ([ADR-0011](decisions/0011-accounts-and-roles.md)).
 - Lifecycle UI checks a **global arm and per-project File/Tackle allow**, then
-  persists a dispatch request and launches an agent through the configured
-  provider (signed webhook or none; provider-neutral). Board drag
+  persists a dispatch request and launches an agent through a configured
+  provider (signed webhook, E2B, or none; provider-neutral; several may be
+  configured and a launch may name one). Board drag
   and keyboard Send-to-agent confirm the same dispatch rather than PATCHing
   status. Comment uses the File checkout
   ([ADR-0006](decisions/0006-durable-agent-dispatch.md)).
@@ -46,7 +47,15 @@ reality**. Search `src/` before treating a spec as implemented.
   host, behind a key-injecting proxy that admits only the Anthropic message
   API; the guest has no Beads or repository access yet
   ([ADR-0016](decisions/0016-first-mate-worker-runtime.md)).
-- Target, not shipped: **agents run in scoped sandboxes**. A beads sandbox
+- **Sand** runs missions and First Mate chats in hosted E2B sandboxes, one
+  Firecracker microVM per mission or chat, beside the self-hosted runners.
+  First Mate's **Runs on** picker chooses where new work goes; each mission
+  and chat keeps its runner. Model and GitHub keys are added by E2B's egress,
+  never inside the sandbox; mission sandboxes join the tailnet with
+  single-use tagged keys and hold only their project's Dolt account. Beadsmith
+  drives E2B in-process, reusing the mate runner core for chats
+  ([ADR-0017](decisions/0017-sand-e2b-sandboxes.md)).
+- Target, partly shipped (0016, 0017): **agents run in scoped sandboxes**. A beads sandbox
   (the orchestrator) holds per-project Dolt grants and asks for repository
   work through dispatch; a repo sandbox reaches one repository. Model and
   repository keys stay outside sandboxes, behind a proxy. Beadsmith may
@@ -115,6 +124,7 @@ Follow the `architecture` skill at
 | [0013-owner-account-and-global-readers.md](decisions/0013-owner-account-and-global-readers.md) | [`scripts/ci/dolt-grants-smoke.sh`](../scripts/ci/dolt-grants-smoke.sh), [`docs/new-project.md`](../docs/new-project.md) | Plain `bd init` creates projects; global readers; accounts scoped to projects for other agents |
 | [0015-scoped-agent-sandboxes.md](decisions/0015-scoped-agent-sandboxes.md) | [`fleet/hosts/forge/`](../fleet/hosts/forge/) (initial guest only) | Beads and repo sandboxes; admin terminal relay to sandboxes only; personal devices reach in through MCP |
 | [0016-first-mate-worker-runtime.md](decisions/0016-first-mate-worker-runtime.md) | [`fleet/hosts/forge/runtime.nix`](../fleet/hosts/forge/runtime.nix) | Persistent guest Claude Code, host model proxy and signed runner |
+| [0017-sand-e2b-sandboxes.md](decisions/0017-sand-e2b-sandboxes.md) | [`src/lib/server/e2b/`](../src/lib/server/e2b/), [`src/lib/server/dispatch/e2b-provider.ts`](../src/lib/server/dispatch/e2b-provider.ts), [`src/lib/server/mate/e2b-runner.ts`](../src/lib/server/mate/e2b-runner.ts), [`sandbox/e2b/`](../sandbox/e2b/) | Sand: E2B sandboxes for missions and chats; several runners, picked in First Mate |
 
 ## UI map
 
@@ -146,6 +156,7 @@ live in [`src/app.css`](../src/app.css).
 | [`docs/public-access.md`](../docs/public-access.md) | Access + catalog/membership (target vs interim) |
 | [`docs/file-tackle-dispatch.md`](../docs/file-tackle-dispatch.md) | File/Tackle launch path |
 | [`docs/first-mate.md`](../docs/first-mate.md) | First Mate chats and the mate runner contract v1 |
+| [`docs/sand-e2b.md`](../docs/sand-e2b.md) | Sand: setting up and running agents in E2B sandboxes |
 | [`docs/keyboard.md`](../docs/keyboard.md) | Keyboard shortcuts |
 | [`docs/agent-access.md`](../docs/agent-access.md) | Service-token read principal; operator activation remains |
 | [`docs/server-deployment.md`](../docs/server-deployment.md) | VPS topology |

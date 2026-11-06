@@ -113,18 +113,20 @@
 		}
 	}
 
-	const PROVIDER_COPY: Record<DispatchProviderId | 'none', string> = {
-		webhook: 'Webhook agent runner',
-		none: 'No provider (read-only)'
+	/** What kind of runner each provider id is, beside its operator label. */
+	const PROVIDER_KIND: Record<DispatchProviderId, string> = {
+		webhook: 'webhook runner',
+		e2b: 'E2B sandboxes'
 	};
 
 	const PROVIDER_ERROR_COPY: Record<
 		NonNullable<ConsoleSnapshot['health']['dispatch']['provider_error']>,
 		string
 	> = {
-		invalid: 'BDX_DISPATCH_PROVIDER is not webhook or none',
+		invalid: 'BDX_DISPATCH_PROVIDER names something other than webhook, e2b or none',
 		webhook_url_invalid: 'webhook URL must be https (http only on loopback)',
-		webhook_secret_missing: 'webhook secret is not configured'
+		webhook_secret_missing: 'webhook secret is not configured',
+		e2b_config_missing: 'E2B settings are incomplete (docs/sand-e2b.md)'
 	};
 
 	const ACCESS_POLICY_COPY: Record<ConsoleAccessPolicyClass, string> = {
@@ -202,7 +204,13 @@
 					<dd>{snapshot.health.state_db.ok ? 'ok' : 'unavailable'}</dd>
 					<dt>Dispatch</dt>
 					<dd>
-						{PROVIDER_COPY[snapshot.health.dispatch.provider ?? 'none']}
+						{#each snapshot.health.dispatch.providers ?? [] as runner, index (runner.id)}
+							{index > 0 ? ' · ' : ''}{runner.label}
+							<span class="faint">({PROVIDER_KIND[runner.id]}{index === 0 ? ', default' : ''})</span
+							>
+						{:else}
+							No provider (read-only)
+						{/each}
 						{#if snapshot.health.dispatch.provider_error}
 							<span class="schema-warn">
 								· {PROVIDER_ERROR_COPY[snapshot.health.dispatch.provider_error]}</span

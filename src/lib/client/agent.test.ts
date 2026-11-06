@@ -5,6 +5,7 @@ import {
 	formatElapsed,
 	intentAllowed,
 	isFollowedMission,
+	missionProvider,
 	isSafeRunUrl,
 	missionVerb
 } from './agent.js';
@@ -85,6 +86,37 @@ describe('isFollowedMission', () => {
 			true
 		);
 		expect(isFollowedMission({ agent_id: 'ag-1', provider: undefined }, null)).toBe(true);
+	});
+});
+
+describe('missions across several runners', () => {
+	const webhook_caps = { live_events: false, follow_up: false, cancel: true };
+	const sand_caps = { live_events: true, follow_up: true, cancel: true };
+	const dispatch = {
+		armed: true,
+		provider: 'webhook' as const,
+		capabilities: webhook_caps,
+		providers: [
+			{ id: 'webhook' as const, label: 'home box', capabilities: webhook_caps },
+			{ id: 'e2b' as const, label: 'Sand', capabilities: sand_caps }
+		]
+	};
+
+	it('follows each mission on the runner that launched it', () => {
+		expect(missionProvider({ provider: 'e2b' }, dispatch)?.label).toBe('Sand');
+		expect(isFollowedMission({ agent_id: 'sbx1', provider: 'e2b' }, dispatch)).toBe(true);
+		expect(
+			isFollowedMission(
+				{ agent_id: 'sbx1', provider: 'e2b' },
+				{ ...dispatch, providers: [dispatch.providers[0]] }
+			)
+		).toBe(false);
+	});
+
+	it("uses the mission's runner, not the default, to decide on follow-up", () => {
+		const done = { status: 'succeeded' as const, agent_id: 'a' };
+		expect(composerState({ ...done, provider: 'e2b' }, dispatch)).toEqual({ can_send: true });
+		expect(composerState({ ...done, provider: 'webhook' }, dispatch).reason).toContain('follow-up');
 	});
 });
 

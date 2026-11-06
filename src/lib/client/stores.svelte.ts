@@ -18,6 +18,7 @@ import {
 	toThemePreference
 } from '#lib/client/theme.js';
 import type { AgentTarget } from '#lib/client/agent.js';
+import { run_place } from '#lib/client/agent-runner.svelte.js';
 import type { ResolvedTheme, StatusSnapshot, ThemePreference } from '#lib/types.js';
 
 const RAIL_KEY = 'bdui:rail-collapsed';
@@ -60,6 +61,7 @@ class AppState {
 	 */
 	setStatus(status: StatusSnapshot | null) {
 		this.status = status;
+		if (status !== null) run_place.syncProviders(status.dispatch.providers);
 	}
 
 	/** Read the persisted rail preference. Safe to call on the server. */

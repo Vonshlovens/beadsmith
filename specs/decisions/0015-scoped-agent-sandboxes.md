@@ -181,8 +181,11 @@ question. It stays the view for members and for providers without a relay.
 
 ## Implementation notes
 
-Not shipped. Today the only provider is the webhook runner and Beadsmith
-holds no sandbox connection.
+Partly shipped. [0016](./0016-first-mate-worker-runtime.md) runs First Mate
+in a Firecracker guest, and [0017](./0017-sand-e2b-sandboxes.md) runs
+missions and chats in E2B sandboxes with keys added by E2B's egress (rule 6)
+and missions on the tailnet under their own tag (rule 3). Beadsmith still
+holds no terminal connection to any sandbox.
 
 The first sandbox VM is `mate` on the fleet host `forge`
 ([`fleet/hosts/forge/microvms.nix`](../../fleet/hosts/forge/microvms.nix)),

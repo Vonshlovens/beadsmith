@@ -2,7 +2,7 @@ import { getEnv, type ServerEnv } from './env.js';
 import { getDoltClient, toDoltConnectionError, type DoltClient } from './dolt/client.js';
 import { discoverProjects } from './discovery.js';
 import { dispatchEnabled } from './dispatch/policy.js';
-import { PROVIDER_CAPABILITIES } from './dispatch/provider.js';
+import { configuredProviders, PROVIDER_CAPABILITIES } from './dispatch/provider.js';
 import { getDispatchPolicyStore, stateDbHealthy, getStateStore } from './state/db.js';
 import type { DoltFailureKind, Project, StatusSnapshot } from '#lib/types.js';
 import { roleCan, type AccountRole } from './auth/roles.js';
@@ -228,7 +228,10 @@ export async function getStatus(deps: StatusDeps = {}): Promise<StatusSnapshot> 
 			provider: env.dispatch_provider,
 			...(env.dispatch_provider === 'none'
 				? {}
-				: { capabilities: PROVIDER_CAPABILITIES[env.dispatch_provider] }),
+				: {
+						capabilities: PROVIDER_CAPABILITIES[env.dispatch_provider],
+						providers: configuredProviders(env)
+					}),
 			...(env.dispatch_provider_error === undefined
 				? {}
 				: { provider_error: env.dispatch_provider_error })

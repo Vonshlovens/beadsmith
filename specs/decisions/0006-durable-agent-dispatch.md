@@ -6,7 +6,9 @@ Date: 2026-08-17 (updated 2026-09-03, 2026-10-17, 2026-10-28 provider-neutral)
 
 accepted. Amended by [0015](./0015-scoped-agent-sandboxes.md): agents run
 in scoped sandboxes, a beads sandbox may ask for repository work through this
-dispatch API, and admins may see a sandbox agent's raw terminal.
+dispatch API, and admins may see a sandbox agent's raw terminal. Amended by
+[0017](./0017-sand-e2b-sandboxes.md): several providers may be configured at
+once (`webhook` and `e2b`), and a launch may name one of them.
 
 ## Context
 
@@ -29,8 +31,10 @@ through one configured provider as the worker. beads-web never runs `bd`.
 
 Dispatch is provider-neutral. Providers
 (`src/lib/server/dispatch/provider.ts`): `webhook` (any runner implementing
-the signed contract in `docs/file-tackle-dispatch.md`) or `none` (dispatch
-off). `BDX_DISPATCH_PROVIDER` selects one; unset means `none`. Launch, latest
+the signed contract in `docs/file-tackle-dispatch.md`), `e2b` (hosted
+sandboxes, [0017](./0017-sand-e2b-sandboxes.md)) or `none` (dispatch off).
+`BDX_DISPATCH_PROVIDER` lists the configured ones, default first; unset means
+`none`. Launch, latest
 run, and run status are required; follow-up, cancel, and live events are
 optional capabilities. Each request row records its `provider`, and a mission
 is only ever followed, cancelled, or resumed by the provider that launched it.
