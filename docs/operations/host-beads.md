@@ -5,15 +5,16 @@ A small KVM VPS (2 vCPU, 8 GB, 100 GB disk, BIOS boot) running
 
 ## What runs
 
-| Unit                              | What                                                                                                |
-| --------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `beadsmith.service`               | `services.beadsmith` on `127.0.0.1:4321`, user `beads-web` (uid 901), state in `/var/lib/beads-web` |
-| `docker-beads-dolt.service`       | Dolt sql-server (pinned image digest), host networking, data in `/srv/beads-dolt/data`              |
-| `cloudflared.service`             | Cloudflare Tunnel: the only public way in, to Beadsmith behind Cloudflare Access                    |
-| `tailscaled.service`              | Joins the tailnet as `beads` with `tag:beads-sql`; SSH and Dolt are reachable only here             |
-| `beads-uplink.service`            | Applies the public addresses from sops as a networkd drop-in ([recovery](recovery.md))              |
-| `restic-backups-beads-dolt.timer` | Nightly restic snapshot of every Dolt database (alongside the in-app backups)                       |
-| `beadsmith-auto-update.timer`     | Push-to-deploy, once enabled (below)                                                                |
+| Unit                              | What                                                                                                                                                                       |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `beadsmith.service`               | `services.beadsmith` on `127.0.0.1:4321`, user `beads-web` (uid 901), state in `/var/lib/beads-web`                                                                        |
+| `docker-beads-dolt.service`       | Dolt sql-server (pinned image digest), host networking, data in `/srv/beads-dolt/data`                                                                                     |
+| `beads-dolt-grants.service`       | After every Dolt start, grants `beads_bd_writer` `ALL ON *.*` and the readers `SELECT ON *.*` ([ADR-0013](../../specs/decisions/0013-owner-account-and-global-readers.md)) |
+| `cloudflared.service`             | Cloudflare Tunnel: the only public way in, to Beadsmith behind Cloudflare Access                                                                                           |
+| `tailscaled.service`              | Joins the tailnet as `beads` with `tag:beads-sql`; SSH and Dolt are reachable only here                                                                                    |
+| `beads-uplink.service`            | Applies the public addresses from sops as a networkd drop-in ([recovery](recovery.md))                                                                                     |
+| `restic-backups-beads-dolt.timer` | Nightly restic snapshot of every Dolt database (alongside the in-app backups)                                                                                              |
+| `beadsmith-auto-update.timer`     | Push-to-deploy, once enabled (below)                                                                                                                                       |
 
 The firewall admits only Tailscale's WireGuard port from the internet; port
 22 and 3306 only on `tailscale0` (and loopback). sshd allows `beads-admin`

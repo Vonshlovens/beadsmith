@@ -1,6 +1,6 @@
 # 0013. Plain bd init on a single-owner server; readers see every database
 
-Date: 2026-10-27
+Date: 2026-10-27 (updated 2026-11-06: the beads host applies the grants)
 
 ## Status
 
@@ -150,6 +150,15 @@ combine both, but Dolt ignores it.
   checks that an account scoped to projects stays narrow and that the
   trade-offs above still hold.
 - Guide and account table: [`docs/new-project.md`](../../docs/new-project.md).
-- Production grants are applied by the owner from a reviewed list. Nothing
-  in this repository changes them.
+- Production grants: the owner was to apply them by hand from a reviewed
+  list, and that never happened, so on 2026-11-06 `bd init` as the writer
+  still failed with `command denied` on `CREATE DATABASE`. The beads host now
+  applies them: `beads-dolt-grants.service`
+  ([`fleet/hosts/beads/dolt.nix`](../../fleet/hosts/beads/dolt.nix),
+  [`apply-grants.sh`](../../fleet/hosts/beads/files/dolt/apply-grants.sh))
+  runs the three `GRANT`s as root over the container's loopback after every
+  Dolt start. It only adds grants and never creates accounts or sets
+  passwords. Because a merge to `main` deploys, the ordering above (writer
+  password off every machine that is not the owner's, then rotated) must
+  hold before this reaches `main`.
 - Row in [`specs/README.md`](../README.md).

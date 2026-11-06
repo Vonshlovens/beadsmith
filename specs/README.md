@@ -95,7 +95,8 @@ reality**. Search `src/` before treating a spec as implemented.
 - **New projects** are a plain `bd init` from the owner's machines: on a
   single-owner server their account has `ALL ON *.*` (an administrator in
   practice), and the reader and backup accounts have `SELECT ON *.*`, so a
-  new database appears with no grant. Every account has a long random
+  new database appears with no grant. The beads host applies these grants
+  after every Dolt start. Every account has a long random
   password because readers can see `mysql.user`. Other agents get accounts
   scoped to projects
   ([ADR-0013](decisions/0013-owner-account-and-global-readers.md)).
@@ -126,7 +127,7 @@ Follow the `architecture` skill at
 | [0009-edge-identity-and-catalog-gate.md](decisions/0009-edge-identity-and-catalog-gate.md) | [`src/lib/server/cloudflare-access.ts`](../src/lib/server/cloudflare-access.ts) | One Access IdP; catalog before a second identity |
 | [0010-in-app-backups.md](decisions/0010-in-app-backups.md) | [`src/lib/server/backup/`](../src/lib/server/backup/) | Scheduled SQL backups to S3-compatible storage |
 | [0011-accounts-and-roles.md](decisions/0011-accounts-and-roles.md) | [`src/lib/server/auth/`](../src/lib/server/auth/), [`src/hooks.server.ts`](../src/hooks.server.ts) | Better Auth accounts; admin/member roles; first-run setup token |
-| [0013-owner-account-and-global-readers.md](decisions/0013-owner-account-and-global-readers.md) | [`scripts/ci/dolt-grants-smoke.sh`](../scripts/ci/dolt-grants-smoke.sh), [`docs/new-project.md`](../docs/new-project.md) | Plain `bd init` creates projects; global readers; accounts scoped to projects for other agents |
+| [0013-owner-account-and-global-readers.md](decisions/0013-owner-account-and-global-readers.md) | [`scripts/ci/dolt-grants-smoke.sh`](../scripts/ci/dolt-grants-smoke.sh), [`docs/new-project.md`](../docs/new-project.md), [`fleet/hosts/beads/dolt.nix`](../fleet/hosts/beads/dolt.nix) (`beads-dolt-grants`) | Plain `bd init` creates projects; global readers; accounts scoped to projects for other agents |
 | [0015-scoped-agent-sandboxes.md](decisions/0015-scoped-agent-sandboxes.md) | [`fleet/hosts/forge/`](../fleet/hosts/forge/) (initial guest only) | Beads and repo sandboxes; admin terminal relay to sandboxes only; personal devices reach in through MCP |
 | [0016-first-mate-worker-runtime.md](decisions/0016-first-mate-worker-runtime.md) | [`fleet/hosts/forge/runtime.nix`](../fleet/hosts/forge/runtime.nix) | Persistent guest Claude Code, host model proxy and signed runner |
 | [0017-native-desktop-prototype.md](decisions/0017-native-desktop-prototype.md) | [`desktop/`](../desktop/README.md) | Proposed: native Rune client reading Dolt directly (prototype) |
