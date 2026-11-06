@@ -181,7 +181,7 @@ async function establishIdentity(
 		event.locals.role = 'member';
 		return { session_id: '', set_cookies };
 	}
-	if (isSignedOutPath(event.url.pathname)) {
+	if (isSignedOutPath(routePathname(event))) {
 		return { session_id: '', set_cookies };
 	}
 	if (is_api) {
@@ -197,6 +197,19 @@ async function establishIdentity(
 }
 
 /**
+ * The path SvelteKit routes on. It decodes `%xx` escapes (all but `%25`)
+ * before matching a route, so `/%61pi/todos` is served by `/api/todos`.
+ * Every gate in this file decides on this form: matching the raw
+ * `event.url.pathname` would let an encoded path skip the API, role and CSRF
+ * checks. Mirrors `decode_pathname` in `@sveltejs/kit`.
+ * @param event Request event.
+ * @throws URIError on a malformed escape, which SvelteKit does not route.
+ */
+function routePathname(event: HandleEvent): string {
+	return event.url.pathname.split('%25').map(decodeURI).join('%25');
+}
+
+/**
  * Refuse an `/api` request the caller's role does not permit. Pages are
  * checked by their own load (`/console/+layout.server.ts`) so they can render
  * the error page; their data still comes from these API routes.
@@ -208,7 +221,7 @@ function roleDenial(event: HandleEvent, is_api: boolean, method: string): Respon
 	if (!is_api) {
 		return undefined;
 	}
-	const permission = requiredPermission(method, event.url.pathname);
+	const permission = requiredPermission(method, routePathname(event));
 	if (permission === undefined || roleCan(event.locals.role, permission)) {
 		return undefined;
 	}
@@ -274,7 +287,16 @@ export const init: ServerInit = () => {
 
 export const handle: Handle = async ({ event, resolve }) => {
 	const env = getEnv();
-	const is_api = event.url.pathname.startsWith('/api');
+	let pathname: string;
+	try {
+		pathname = routePathname(event);
+	} catch {
+		return applySecurityHeaders(
+			errorResponse('bad_request', 'malformed request path'),
+			event.url.pathname.startsWith('/api')
+		);
+	}
+	const is_api = pathname.startsWith('/api');
 	const method = event.request.method.toUpperCase();
 
 	if (configError() !== undefined) {
@@ -287,7 +309,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 	// Health is intentionally handled before all application/session/catalog
 	// behavior. A route cannot use it as an auth bypass: both the socket peer
 	// and Host must be loopback, and it returns no body or identity/session.
-	if (event.url.pathname === HEALTH_PATH) {
+	if (pathname === HEALTH_PATH) {
 		if (!isDirectLoopbackHealthRequest(event, event.request.headers.get('host'))) {
 			return applySecurityHeaders(errorResponse('forbidden', 'health probe not allowed'), is_api);
 		}
@@ -441,7 +463,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const limiter = getRateLimiter();
 	const kind = requiresCsrfHeader(method) ? 'mutation' : 'read';
 	const limit_key = session_id === '' ? `addr:${clientAddress(event)}` : session_id;
-	const credential_attempt = method === 'POST' && CREDENTIAL_PATHS.includes(event.url.pathname);
+	const credential_attempt = method === 'POST' && CREDENTIAL_PATHS.includes(pathname);
 	if (
 		!limiter.consume(limit_key, kind) ||
 		(credential_attempt && !limiter.consume(`addr:${clientAddress(event)}`, 'credential'))

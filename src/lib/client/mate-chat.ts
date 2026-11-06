@@ -33,7 +33,14 @@ export function chatHref(id: string): string {
 export type MatePart =
 	| { kind: 'text'; id: string; text: string }
 	| { kind: 'thinking'; id: string; text: string }
-	| { kind: 'tool'; id: string; call_id: string; name: string; status: MissionToolCallStatus }
+	| {
+			kind: 'tool';
+			id: string;
+			call_id: string;
+			name: string;
+			/** `stopped`: the turn ended (stop, failure, lost agent) before it completed. */
+			status: MissionToolCallStatus | 'stopped';
+	  }
 	| { kind: 'error'; id: string; message: string };
 
 export interface MateBubble {
@@ -52,19 +59,45 @@ export interface MateBubble {
  * yours. The agent's events gather into one bubble until its turn's `result`;
  * whatever it says after that, asked or not, starts the next one. Each
  * `assistant` event is a whole block of text: consecutive blocks become
- * paragraphs. A tool call shows once, with its latest status.
+ * paragraphs. A tool call shows once, with its latest status; one still
+ * running when its turn ends (a result or an error) shows as stopped, since
+ * no completion will follow.
  *
  * @param events - The chat's events, oldest first.
  */
 export function groupMateEvents(events: readonly MateEvent[]): MateBubble[] {
 	const bubbles: MateBubble[] = [];
 	let open: MateBubble | null = null;
+	// The agent's bubbles since its last turn ended. A message of yours sent
+	// mid-turn splits a turn into several bubbles; its tool calls still
+	// belong to it.
+	let turn: MateBubble[] = [];
+
+	/** A turn ended: a tool it left running will never complete. */
+	const endTurn = (): void => {
+		for (const bubble of turn) {
+			bubble.parts = bubble.parts.map((part) =>
+				part.kind === 'tool' && part.status === 'running' ? { ...part, status: 'stopped' } : part
+			);
+		}
+		turn = [];
+	};
+
+	/**
+	 * Where a turn's ending goes: the open bubble, else the turn's latest
+	 * one (a message of yours came in after its last event), else a new one.
+	 */
+	const turnEnd = (event: MateEvent): MateBubble =>
+		open === null ? (turn.at(-1) ?? mate(event)) : mate(event);
 
 	const mate = (event: MateEvent): MateBubble => {
 		if (open === null) {
 			open = { id: event.id, role: 'mate', at: event.at, parts: [] };
 			bubbles.push(open);
 		}
+		// A bubble left open by an error joins the next turn only once that
+		// turn writes to it.
+		if (!turn.includes(open)) turn.push(open);
 		return open;
 	};
 
@@ -95,10 +128,6 @@ export function groupMateEvents(events: readonly MateEvent[]): MateBubble[] {
 				break;
 			}
 			case 'tool_call': {
-				const bubble = mate(event);
-				const index = bubble.parts.findIndex(
-					(part) => part.kind === 'tool' && part.call_id === event.call_id
-				);
 				const part: MatePart = {
 					kind: 'tool',
 					id: event.id,
@@ -106,18 +135,29 @@ export function groupMateEvents(events: readonly MateEvent[]): MateBubble[] {
 					name: event.name,
 					status: event.status
 				};
-				if (index === -1) {
-					bubble.parts.push(part);
+				// Update the call where it first appeared, even if a message of
+				// yours came in between; otherwise it starts here.
+				const owner = turn.findLast((bubble) =>
+					bubble.parts.some((item) => item.kind === 'tool' && item.call_id === event.call_id)
+				);
+				if (owner === undefined) {
+					mate(event).parts.push(part);
 				} else {
-					bubble.parts[index] = { ...part, id: bubble.parts[index]!.id };
+					const index = owner.parts.findIndex(
+						(item) => item.kind === 'tool' && item.call_id === event.call_id
+					);
+					owner.parts[index] = { ...part, id: owner.parts[index]!.id };
 				}
 				break;
 			}
-			case 'error':
-				mate(event).parts.push({ kind: 'error', id: event.id, message: event.message });
+			case 'error': {
+				const bubble = turnEnd(event);
+				bubble.parts.push({ kind: 'error', id: event.id, message: event.message });
+				endTurn();
 				break;
+			}
 			case 'result': {
-				const bubble = mate(event);
+				const bubble = turnEnd(event);
 				bubble.result = {
 					status: event.status,
 					...(event.git_pr_url === undefined ? {} : { git_pr_url: event.git_pr_url }),
@@ -127,6 +167,7 @@ export function groupMateEvents(events: readonly MateEvent[]): MateBubble[] {
 					bubble.parts.push({ kind: 'text', id: event.id, text: event.text });
 				}
 				open = null;
+				endTurn();
 				break;
 			}
 		}

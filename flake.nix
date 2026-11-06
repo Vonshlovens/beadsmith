@@ -12,7 +12,7 @@
       url = "github:microvm-nix/microvm.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    # The Claude Code subscription pool on forge (fleet/hosts/forge/underclass.nix).
+    # The Claude Code subscription pool on forge (fleet/hosts/forge/runtime.nix).
     # devenv only serves underclass's own dev shell; pointing it at this flake
     # keeps devenv's inputs out of the lock.
     underclass = {

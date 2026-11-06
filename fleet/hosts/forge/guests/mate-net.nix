@@ -1,5 +1,5 @@
 # The `mate` guest's fixed facts, shared by the host modules that deal with
-# it (../microvms.nix, ../model-proxy.nix, ../mate-runner.nix) and passed to
+# it (../microvms.nix, ../runtime.nix) and passed to
 # the guest itself (./mate.nix). Everything here is public: addresses on a
 # host-only link, and public keys.
 {
@@ -12,7 +12,7 @@
   guestAddress = "10.100.0.2";
   prefixLength = 30;
 
-  # The host's model proxy for this guest (../model-proxy.nix): the only
+  # The host's model proxy for this guest (../model-proxy.mjs): the only
   # host port the guest may open.
   modelProxyPort = 8443;
 

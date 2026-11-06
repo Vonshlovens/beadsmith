@@ -34,10 +34,14 @@
 	let deleting = $state(false);
 	let delete_error = $state<string | null>(null);
 	let delete_button = $state<HTMLButtonElement | null>(null);
+	let keep_button = $state<HTMLButtonElement | null>(null);
 	let follow_latest = $state(true);
 	let textarea = $state<HTMLTextAreaElement | null>(null);
 	let log_el = $state<HTMLDivElement | null>(null);
 
+	// Most events replace the `chat` object (a newer `updated_at`); only a
+	// different chat should move focus back to the composer.
+	const chat_id = $derived(chat.id);
 	const bubbles = $derived(groupMateEvents(mate_chats.events));
 	const working = $derived(mate_chats.working);
 	const connected = $derived(mate_chats.connected);
@@ -75,6 +79,20 @@
 		if (log_el) follow_latest = log_el.scrollHeight - log_el.scrollTop - log_el.clientHeight < 64;
 	}
 
+	// Stay pinned to the bottom when the transcript or its viewport changes
+	// size without new events: a narrower window, the on-screen keyboard
+	// opening, a long reply reflowing. Scrolling here keeps following on.
+	$effect(() => {
+		const el = log_el;
+		if (!el) return;
+		const observer = new ResizeObserver(() => {
+			if (follow_latest) el.scrollTo({ top: el.scrollHeight });
+		});
+		observer.observe(el);
+		if (el.firstElementChild) observer.observe(el.firstElementChild);
+		return () => observer.disconnect();
+	});
+
 	// Follow activity only while the reader is already at the bottom.
 	$effect(() => {
 		void mate_chats.events.length;
@@ -90,7 +108,7 @@
 
 	$effect(() => {
 		void focus_key;
-		void chat.id;
+		void chat_id;
 		if (!mate_chats.opening) void tick().then(() => textarea?.focus({ preventScroll: true }));
 	});
 
@@ -106,9 +124,25 @@
 			deleting = false;
 		}
 	}
+	function openDelete() {
+		confirming_delete = true;
+		delete_error = null;
+		// Land on the safe choice, so Enter or Space keeps the chat.
+		void tick().then(() => keep_button?.focus());
+	}
 	function cancelDelete() {
 		confirming_delete = false;
 		void tick().then(() => delete_button?.focus());
+	}
+	/**
+	 * While the confirmation is open, Escape dismisses it instead of closing
+	 * the chat, wherever focus is. This runs in the capture phase, ahead of
+	 * the page's hotkeys, which skip a key that is already handled.
+	 */
+	function confirmKeydown(event: KeyboardEvent) {
+		if (!confirming_delete || event.key !== 'Escape' || deleting) return;
+		event.preventDefault();
+		cancelDelete();
 	}
 
 	function send(message: string) {
@@ -117,6 +151,8 @@
 		void tick().then(jumpToLatest);
 	}
 </script>
+
+<svelte:window onkeydowncapture={confirmKeydown} />
 
 <section class="chat" aria-label={chat.title}>
 	<header class="chat-col chat-hd">
@@ -144,7 +180,8 @@
 			class="btn btn-sm btn-ghost"
 			type="button"
 			aria-expanded={confirming_delete}
-			onclick={() => (confirming_delete = !confirming_delete)}>Delete chat</button
+			disabled={deleting}
+			onclick={() => (confirming_delete ? cancelDelete() : openDelete())}>Delete chat</button
 		>
 	</header>
 
@@ -158,8 +195,12 @@
 				disabled={deleting}
 				onclick={() => void deleteChat()}>{deleting ? 'Deleting…' : 'Delete permanently'}</button
 			>
-			<button class="btn btn-sm btn-ghost" type="button" disabled={deleting} onclick={cancelDelete}
-				>Keep chat</button
+			<button
+				bind:this={keep_button}
+				class="btn btn-sm btn-ghost"
+				type="button"
+				disabled={deleting}
+				onclick={cancelDelete}>Keep chat</button
 			>
 		</div>
 	{/if}
