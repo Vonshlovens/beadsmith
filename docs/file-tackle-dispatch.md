@@ -29,17 +29,23 @@ turning dispatch off, and for adding a provider.
 
 ## Providers
 
-`BDX_DISPATCH_PROVIDER` picks exactly one provider:
+`BDX_DISPATCH_PROVIDER` lists the providers, comma separated; the first
+usable one is the default:
 
 | Value     | Worker                                                | Needs                                                                           |
 | --------- | ----------------------------------------------------- | ------------------------------------------------------------------------------- |
 | `webhook` | Any runner implementing the contract below            | `BDX_DISPATCH_WEBHOOK_URL`, `BDX_DISPATCH_WEBHOOK_SECRET_FILE` (32+ characters) |
+| `e2b`     | Sand: one E2B sandbox per mission, with live events   | The `BDX_E2B_*` settings in [sand-e2b.md](sand-e2b.md#configuration)            |
 | `none`    | Dispatch off: File/Tackle/comment hidden, API refuses | nothing                                                                         |
 
-Unset means `none`. A provider missing its configuration is inactive, and the
-console says why. Each mission records the provider that launched it; after a
-switch, older missions keep their stored state and are never sent to the new
-provider. Missions from a provider this build no longer has show their stored
+Unset means `none`. `BDX_DISPATCH_WEBHOOK_LABEL` and `BDX_E2B_LABEL` name
+them in the console and First Mate. A provider missing its configuration is
+inactive, and the console says why; the others still work. With more than
+one, First Mate's **Runs on** picker chooses where new launches go, and every
+launch names it (`provider` below). Each mission records the provider that
+launched it and is only ever followed, cancelled or continued there; after a
+provider is removed, its missions keep their stored state and are never sent
+to another provider. Missions from a provider this build no longer has show their stored
 result and refuse cancel and follow-up.
 
 A native provider (for example Overalls microVMs) implements
@@ -120,7 +126,8 @@ None of these values belong in the repository, a dotenv file, or the browser.
 
 | Variable                           | Meaning                                                                                                              |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `BDX_DISPATCH_PROVIDER`            | `webhook` or `none`; unset means `none`.                                                                             |
+| `BDX_DISPATCH_PROVIDER`            | A list of `webhook` and `e2b`, default first, or `none`; unset means `none`.                                         |
+| `BDX_DISPATCH_WEBHOOK_LABEL`       | Name shown for the webhook runner (for example its host). Default `Webhook agent runner`.                            |
 | `BDX_DISPATCH_WEBHOOK_URL`         | Base URL of the webhook runner: https, or http on loopback only. No credentials, query, or fragment.                 |
 | `BDX_DISPATCH_WEBHOOK_SECRET_FILE` | Preferred path to the shared HMAC secret (32+ characters), e.g. `/run/secrets/dispatch-webhook-secret` with Compose. |
 | `BDX_DISPATCH_WEBHOOK_SECRET`      | Local/development fallback only.                                                                                     |
@@ -196,6 +203,11 @@ changed file does not update a running process.
 
 `POST /api/projects/:id/dispatch` accepts only:
 
+Every body may also carry `provider` (`webhook` or `e2b`): launch there
+instead of on the default provider. It must be one the server lists in
+`GET /api/status` → `dispatch.providers`; anything else is refused before a
+record is written. It is not part of the idempotent payload.
+
 - `{ operation: "file", idempotency_key, notes, title?, issue_type?, priority?, labels?, status? }`
 - `{ operation: "tackle", idempotency_key, issue_id }`
 - `{ operation: "comment", idempotency_key, issue_id, text }`
@@ -244,8 +256,11 @@ where `role` is `operator` (the request and each follow-up) or `agent` (each
 finished run's sanitized summary or error, once per run). It is display state
 in `dispatch_turns`, never the launch prompt or worker logs.
 
-`GET /api/status` reports `dispatch.capabilities` for the active provider:
-`live_events`, `follow_up`, and `cancel`. `webhook` has no live events, so the
+`GET /api/status` reports `dispatch.capabilities` for the default provider
+and `dispatch.providers` (`id`, `label`, `capabilities`) for every configured
+one: `live_events`, `follow_up`, and `cancel`. A thread uses its own
+mission's provider's capabilities. `e2b` streams live events and supports
+follow-up and cancel. `webhook` has no live events, so the
 console polls run status and shows the reply when the run finishes. Follow-up
 and cancel are optional for a webhook runner; when it answers 404 the console
 shows that refusal.

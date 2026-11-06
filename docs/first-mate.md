@@ -39,14 +39,32 @@ when a request is signed and never stored, logged or sent to the browser; a
 runner that echoes it back gets it redacted. Restart the service after
 rotating it.
 
+### Chat runners
+
+A chat runs on one of the configured **chat runners**, chosen when it is
+created and kept for its life:
+
+| Runner   | Where the agent runs                                                                               | Needs                                                                                    |
+| -------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `remote` | The HTTP mate runner above (for example the forge guest, ADR-0016)                                 | `BDX_MATE_RUNNER_URL` and its secret                                                     |
+| `e2b`    | Sand: an E2B sandbox per chat, with model access only ([sand-e2b.md](sand-e2b.md#how-a-chat-runs)) | `BDX_E2B_API_KEY_FILE` and a model credential ([sand-e2b.md](sand-e2b.md#configuration)) |
+
+`BDX_MATE_RUNNERS` lists them, default first; unset means `remote`.
+`BDX_MATE_RUNNER_LABEL` and `BDX_E2B_LABEL` name them. With more than one
+place to run, the start screen's **Runs on** picker chooses where new chats
+(and new agent threads) go, and the chat header says where each chat runs.
+The `e2b` runner is the mate runner's own core running inside Beadsmith, so
+it follows the contract below exactly; it needs no URL or secret.
+
 ## What Beadsmith stores
 
 Two tables in `state.db` ([ADR-0004](../specs/decisions/0004-service-local-sqlite.md)):
 
 - `mate_chats`: id (`mc_` + 24 hex), owner account id, title, scope (a
-  project id, or null for every project), the runner `session_id` (a UUID
-  generated with the chat and kept for its life; never sent to the browser),
-  and timestamps.
+  project id, or null for every project), the chat runner (`remote` or `e2b`;
+  older chats read as `remote`), the runner `session_id` (a UUID generated
+  with the chat and kept for its life; never sent to the browser), and
+  timestamps.
 - `mate_events`: the events Beadsmith has relayed for a chat, in order,
   keyed by the runner's event id, with compact fields only. Text for `user`,
   `assistant`, `result` and `error`; name and status for a `tool_call` (never
@@ -62,17 +80,17 @@ without the runner and catch up from where it left off.
 All under `/api/mate`. Mutations carry the usual `x-bdx-request: 1` header;
 errors use the normal `{ error: { code, message } }` envelope.
 
-| Route                                | Does                                                                                                                                        |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/mate/status`               | `{ connected, reason?, reachable? }` for any signed-in viewer. `reason`: `admin_only` or `unconfigured`. `reachable`: cached runner health. |
-| `GET /api/mate/chats`                | `{ chats }`, the caller's own, most recently active first.                                                                                  |
-| `POST /api/mate/chats`               | `{ title?, scope? }` → `201 { chat }`. `409` past 100 chats.                                                                                |
-| `GET /api/mate/chats/:id`            | `{ chat, events }`: the stored log, oldest first (the latest 2,000 events).                                                                 |
-| `PATCH /api/mate/chats/:id`          | `{ title?, scope? }` → `{ chat }`. A new scope applies from the next message.                                                               |
-| `DELETE /api/mate/chats/:id`         | Stops the runner session, then deletes the chat. If the runner cannot stop it, the chat stays (`503`) so the delete can be retried.         |
-| `POST /api/mate/chats/:id/messages`  | `{ text, message_id? }` → `202`. With a runner: `{ event_id }`. Without: `{ events }`, the stored message and placeholder reply.            |
-| `GET /api/mate/chats/:id/events`     | `text/event-stream`, below. `503` without a runner.                                                                                         |
-| `POST /api/mate/chats/:id/interrupt` | `202`: stops the agent's current turn. The session keeps running.                                                                           |
+| Route                                | Does                                                                                                                                                                                                                       |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/mate/status`               | `{ connected, reason?, reachable?, runners? }` for any signed-in viewer. `reason`: `admin_only` or `unconfigured`. `reachable`: cached health of the default runner. `runners` (admins): `[{ id, label }]`, default first. |
+| `GET /api/mate/chats`                | `{ chats }`, the caller's own, most recently active first.                                                                                                                                                                 |
+| `POST /api/mate/chats`               | `{ title?, scope?, runner? }` → `201 { chat }`. `runner` must be configured (`400` otherwise); omitted, the default. `409` past 100 chats.                                                                                 |
+| `GET /api/mate/chats/:id`            | `{ chat, events }`: the stored log, oldest first (the latest 2,000 events).                                                                                                                                                |
+| `PATCH /api/mate/chats/:id`          | `{ title?, scope? }` → `{ chat }`. A new scope applies from the next message.                                                                                                                                              |
+| `DELETE /api/mate/chats/:id`         | Stops the runner session, then deletes the chat. If the runner cannot stop it, the chat stays (`503`) so the delete can be retried.                                                                                        |
+| `POST /api/mate/chats/:id/messages`  | `{ text, message_id? }` → `202`. With a runner: `{ event_id }`. Without: `{ events }`, the stored message and placeholder reply.                                                                                           |
+| `GET /api/mate/chats/:id/events`     | `text/event-stream`, below. `503` without a runner.                                                                                                                                                                        |
+| `POST /api/mate/chats/:id/interrupt` | `202`: stops the agent's current turn. The session keeps running.                                                                                                                                                          |
 
 `text` is trimmed and capped at 4,000 characters. `message_id`
 (`[A-Za-z0-9_-]{1,64}`) is generated by the browser once per message and

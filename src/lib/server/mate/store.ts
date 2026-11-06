@@ -12,7 +12,7 @@
  */
 import type { Client } from '@libsql/client';
 import { randomBytes, randomUUID } from 'node:crypto';
-import type { MateChat, MateEvent } from '#lib/mate.js';
+import { MATE_RUNNER_IDS, type MateChat, type MateEvent, type MateRunnerId } from '#lib/mate.js';
 import type { MissionEvent } from '#lib/mission-events.js';
 
 export const MATE_SCHEMA_SQL: string[] = [
@@ -22,6 +22,7 @@ export const MATE_SCHEMA_SQL: string[] = [
 		title TEXT NOT NULL,
 		scope TEXT,
 		session_id TEXT NOT NULL UNIQUE,
+		runner TEXT,
 		created_at TEXT NOT NULL,
 		updated_at TEXT NOT NULL
 	)`,
@@ -58,7 +59,10 @@ export interface MateStore {
 	listChats(owner_id: string, limit: number): Promise<MateChat[]>;
 	countChats(owner_id: string): Promise<number>;
 	getChat(owner_id: string, id: string): Promise<StoredMateChat | undefined>;
-	createChat(owner_id: string, input: { title: string; scope: string | null }): Promise<MateChat>;
+	createChat(
+		owner_id: string,
+		input: { title: string; scope: string | null; runner?: MateRunnerId }
+	): Promise<MateChat>;
 	updateChat(
 		owner_id: string,
 		id: string,
@@ -97,6 +101,10 @@ function toChat(value: unknown): StoredMateChat {
 		id: String(r.id),
 		title: String(r.title),
 		scope: optText(r.scope) ?? null,
+		// Chats from before runners could be chosen ran on the HTTP runner.
+		runner: (MATE_RUNNER_IDS as readonly unknown[]).includes(r.runner)
+			? (r.runner as MateRunnerId)
+			: 'remote',
 		session_id: String(r.session_id),
 		created_at: String(r.created_at),
 		updated_at: String(r.updated_at)
@@ -109,6 +117,7 @@ export function publicChat(chat: StoredMateChat): MateChat {
 		id: chat.id,
 		title: chat.title,
 		scope: chat.scope,
+		runner: chat.runner,
 		created_at: chat.created_at,
 		updated_at: chat.updated_at
 	};
@@ -217,7 +226,7 @@ const EVENT_COLUMNS =
 export function createMateStore(client: Client, now: () => Date = () => new Date()): MateStore {
 	async function getChat(owner_id: string, id: string): Promise<StoredMateChat | undefined> {
 		const result = await client.execute({
-			sql: `SELECT id, title, scope, session_id, created_at, updated_at
+			sql: `SELECT id, title, scope, session_id, runner, created_at, updated_at
 				FROM mate_chats WHERE id = ? AND owner_id = ?`,
 			args: [id, owner_id]
 		});
@@ -227,7 +236,7 @@ export function createMateStore(client: Client, now: () => Date = () => new Date
 	return {
 		async listChats(owner_id, limit) {
 			const result = await client.execute({
-				sql: `SELECT id, title, scope, session_id, created_at, updated_at FROM mate_chats
+				sql: `SELECT id, title, scope, session_id, runner, created_at, updated_at FROM mate_chats
 					WHERE owner_id = ? ORDER BY updated_at DESC, id LIMIT ?`,
 				args: [owner_id, limit]
 			});
@@ -247,12 +256,20 @@ export function createMateStore(client: Client, now: () => Date = () => new Date
 		async createChat(owner_id, input) {
 			const stamp = now().toISOString();
 			const id = `mc_${randomBytes(12).toString('hex')}`;
+			const runner = input.runner ?? 'remote';
 			await client.execute({
-				sql: `INSERT INTO mate_chats (id, owner_id, title, scope, session_id, created_at, updated_at)
-					VALUES (?, ?, ?, ?, ?, ?, ?)`,
-				args: [id, owner_id, input.title, input.scope, randomUUID(), stamp, stamp]
+				sql: `INSERT INTO mate_chats (id, owner_id, title, scope, session_id, runner, created_at, updated_at)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				args: [id, owner_id, input.title, input.scope, randomUUID(), runner, stamp, stamp]
 			});
-			return { id, title: input.title, scope: input.scope, created_at: stamp, updated_at: stamp };
+			return {
+				id,
+				title: input.title,
+				scope: input.scope,
+				runner,
+				created_at: stamp,
+				updated_at: stamp
+			};
 		},
 
 		async updateChat(owner_id, id, patch) {

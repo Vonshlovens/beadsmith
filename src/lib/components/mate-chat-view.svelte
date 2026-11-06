@@ -37,6 +37,7 @@
 	import { currentViewer } from '#lib/client/projects.svelte.js';
 	import type { MateChat } from '#lib/mate.js';
 	import { app_state } from '#lib/client/stores.svelte.js';
+	import { run_place } from '#lib/client/agent-runner.svelte.js';
 
 	interface Props {
 		chat: MateChat;
@@ -47,6 +48,13 @@
 	}
 
 	let { chat, focus_key = 0, onback, ondelete }: Props = $props();
+
+	/** Name the chat's runner only when there is more than one to tell apart. */
+	const runner_label = $derived(
+		run_place.runners.length > 1
+			? (run_place.runners.find((runner) => runner.id === chat.runner)?.label ?? 'removed runner')
+			: undefined
+	);
 
 	let confirming_delete = $state(false);
 	let deleting = $state(false);
@@ -247,7 +255,8 @@
 		<p class="chat-meta">
 			Started <time datetime={chat.created_at} {@attach tip(absoluteStamp(chat.created_at))}
 				>{absoluteStamp(chat.created_at)}</time
-			>
+			>{#if runner_label}
+				· on {runner_label}{/if}
 		</p>
 		<button
 			bind:this={delete_button}

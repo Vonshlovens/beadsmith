@@ -124,10 +124,24 @@ export interface DispatchProjectAllow {
 }
 
 /**
- * Agent dispatch providers this build can run. A new provider (for example
- * Overalls) adds its id here.
+ * Agent dispatch providers this build can run: `webhook` (any runner that
+ * implements the signed contract) and `e2b` (hosted sandboxes, shown as
+ * "Sand" by default). A new provider adds its id here.
  */
-export type DispatchProviderId = 'webhook';
+export const DISPATCH_PROVIDER_IDS = ['webhook', 'e2b'] as const;
+export type DispatchProviderId = (typeof DISPATCH_PROVIDER_IDS)[number];
+
+/** Why a requested provider is inactive; a class, never a value. */
+export type DispatchProviderError =
+	'invalid' | 'webhook_url_invalid' | 'webhook_secret_missing' | 'e2b_config_missing';
+
+/** One configured provider, as the agent console offers it. No key material. */
+export interface DispatchProviderInfo {
+	id: DispatchProviderId;
+	/** Operator-chosen name, e.g. the runner's machine or "Sand". */
+	label: string;
+	capabilities: DispatchCapabilities;
+}
 
 /** Public dispatch health. No key material. */
 export interface DispatchHealth {
@@ -140,12 +154,17 @@ export interface DispatchHealth {
 	 * hides every agent control; absent means the server did not say.
 	 */
 	viewer_can_launch?: boolean;
-	/** Active provider; `none` keeps the app read-only. */
+	/** Default provider (the first configured one); `none` keeps the app read-only. */
 	provider?: DispatchProviderId | 'none';
-	/** Why the requested provider is inactive; a class, never a value. */
-	provider_error?: 'invalid' | 'webhook_url_invalid' | 'webhook_secret_missing';
-	/** What the active provider can do; absent when dispatch is off. */
+	/** Why a requested provider is inactive; a class, never a value. */
+	provider_error?: DispatchProviderError;
+	/** What the default provider can do; absent when dispatch is off. */
 	capabilities?: DispatchCapabilities;
+	/**
+	 * Every usable provider, default first. A launch may name one of these;
+	 * missions keep the provider that launched them.
+	 */
+	providers?: DispatchProviderInfo[];
 }
 
 /**

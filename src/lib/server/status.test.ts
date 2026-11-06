@@ -257,19 +257,22 @@ describe('getStatus', () => {
 		});
 
 		const capabilities = { live_events: false, follow_up: true, cancel: true };
+		const providers = [{ id: 'webhook', label: 'Webhook agent runner', capabilities }];
 		expect(armed.dispatch).toEqual({
 			enabled: true,
 			key_configured: true,
 			armed: true,
 			provider: 'webhook',
-			capabilities
+			capabilities,
+			providers
 		});
 		expect(disarmed.dispatch).toEqual({
 			enabled: false,
 			key_configured: true,
 			armed: false,
 			provider: 'webhook',
-			capabilities
+			capabilities,
+			providers
 		});
 		expect(JSON.stringify(armed)).not.toContain('not-a-real-secret');
 	});

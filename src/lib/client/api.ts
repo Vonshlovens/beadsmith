@@ -8,6 +8,7 @@
 import { browser } from '$app/env';
 import { goto } from '$app/navigation';
 import type {
+	DispatchProviderId,
 	AccountRole,
 	AccountView,
 	AccountsResponse,
@@ -34,7 +35,13 @@ import type {
 } from '#lib/types.js';
 
 import type { Todo, TodoComment, TodoStatus } from '#lib/server/todos/store.js';
-import type { MateChat, MateChatDetail, MateSendResult, MateStatus } from '#lib/mate.js';
+import type {
+	MateChat,
+	MateChatDetail,
+	MateRunnerId,
+	MateSendResult,
+	MateStatus
+} from '#lib/mate.js';
 
 const BASE_URL = '/api';
 
@@ -178,6 +185,19 @@ export interface IssueFilters {
 	q?: string;
 	limit?: number;
 	include_closed?: boolean;
+}
+
+/** Fields every agent launch carries (the picked runner); see agent-runner.svelte.ts. */
+let launch_field: () => { provider?: DispatchProviderId } = () => ({});
+
+/**
+ * Let the runner picker add its choice to launch bodies. Kept as a hook so
+ * this module does not depend on runes state.
+ *
+ * @param source - Returns the fields to add.
+ */
+export function setLaunchFieldSource(source: () => { provider?: DispatchProviderId }) {
+	launch_field = source;
 }
 
 export const api = {
@@ -384,7 +404,7 @@ export const api = {
 		return request<{ request: DispatchRequest }>(
 			'POST',
 			`/projects/${encodeURIComponent(project_id)}/dispatch`,
-			{ ...init, body: { operation: 'file', ...body } }
+			{ ...init, body: { operation: 'file', ...launch_field(), ...body } }
 		);
 	},
 
@@ -401,7 +421,7 @@ export const api = {
 		return request<{ request: DispatchRequest }>(
 			'POST',
 			`/projects/${encodeURIComponent(project_id)}/dispatch`,
-			{ ...init, body: { operation: 'tackle', ...body } }
+			{ ...init, body: { operation: 'tackle', ...launch_field(), ...body } }
 		);
 	},
 
@@ -414,7 +434,7 @@ export const api = {
 		return request<{ request: DispatchRequest }>(
 			'POST',
 			`/projects/${encodeURIComponent(project_id)}/dispatch`,
-			{ ...init, body: { operation: 'comment', ...body } }
+			{ ...init, body: { operation: 'comment', ...launch_field(), ...body } }
 		);
 	},
 
@@ -427,7 +447,7 @@ export const api = {
 		return request<{ request: DispatchRequest }>(
 			'POST',
 			`/projects/${encodeURIComponent(project_id)}/dispatch`,
-			{ ...init, body: { operation: 'discuss', ...body } }
+			{ ...init, body: { operation: 'discuss', ...launch_field(), ...body } }
 		);
 	},
 
@@ -584,7 +604,10 @@ export const api = {
 		return request<{ chats: MateChat[] }>('GET', '/mate/chats', init);
 	},
 
-	createMateChat(body: { title?: string; scope: string | null }, init?: RequestInitLike) {
+	createMateChat(
+		body: { title?: string; scope: string | null; runner?: MateRunnerId },
+		init?: RequestInitLike
+	) {
 		return request<{ chat: MateChat }>('POST', '/mate/chats', { ...init, body });
 	},
 

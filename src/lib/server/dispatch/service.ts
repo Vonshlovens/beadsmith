@@ -1,4 +1,10 @@
-import type { DispatchTurn, IssueDetail, Mission, Project } from '#lib/types.js';
+import type {
+	DispatchProviderId,
+	DispatchTurn,
+	IssueDetail,
+	Mission,
+	Project
+} from '#lib/types.js';
 import type { MissionEvent } from '#lib/mission-events.js';
 import { encodeMissionEvent } from '#lib/mission-events.js';
 import { getEnv } from '../env.js';
@@ -46,12 +52,16 @@ export interface EnqueueDispatchInput {
 	actor: string;
 	payload: DispatchPayload;
 	issue?: IssueDetail;
+	/** Launch on this configured provider; omitted means the default one. */
+	provider?: DispatchProviderId;
 }
 
 export interface DispatchDeps {
 	store?: DispatchStore;
 	/** Dispatch provider; defaults to the configured one. */
 	provider?: AgentProvider;
+	/** Several providers, default first (tests); overrides `provider`. */
+	providers?: AgentProvider[];
 	configured?: boolean;
 	repositories?: Record<string, TackleRepositoryMapping>;
 	repositories_invalid?: boolean;
@@ -67,26 +77,40 @@ export interface DispatchDeps {
 const NOT_CONFIGURED_MESSAGE = 'Agent dispatch is not configured on this service.';
 export const MISSION_NOT_LAUNCHED_MESSAGE = 'This mission has not launched an agent yet.';
 
-/** The configured provider, honouring test injection. */
-function resolveProvider(deps: DispatchDeps): AgentProvider | undefined {
-	if (deps.provider !== undefined) return deps.provider;
-	return getAgentProvider();
+export const UNKNOWN_PROVIDER_MESSAGE = 'That agent runner is not configured on this service.';
+
+/**
+ * A configured provider, honouring test injection: `id`, or the default
+ * (first) one when `id` is omitted.
+ */
+function resolveProvider(deps: DispatchDeps, id?: DispatchProviderId): AgentProvider | undefined {
+	if (deps.providers !== undefined) {
+		return id === undefined ? deps.providers[0] : deps.providers.find((p) => p.id === id);
+	}
+	if (deps.provider !== undefined) {
+		return id === undefined || id === deps.provider.id ? deps.provider : undefined;
+	}
+	return getAgentProvider(getEnv(), id);
 }
 
-function requireProvider(deps: DispatchDeps): AgentProvider {
-	const provider = resolveProvider(deps);
-	if (provider === undefined) throw new DispatchError('forbidden', NOT_CONFIGURED_MESSAGE);
+function requireProvider(deps: DispatchDeps, id?: DispatchProviderId): AgentProvider {
+	const provider = resolveProvider(deps, id);
+	if (provider === undefined) {
+		throw new DispatchError(
+			'forbidden',
+			id === undefined ? NOT_CONFIGURED_MESSAGE : UNKNOWN_PROVIDER_MESSAGE
+		);
+	}
 	return provider;
 }
 
 /**
- * The provider that launched this mission, if it is still the configured
- * one. Rows without a known provider came from one this build no longer has.
+ * The provider that launched this mission, if it is still configured. Rows
+ * without a known provider came from one this build no longer has.
  */
 function providerForRecord(record: DispatchRecord, deps: DispatchDeps): AgentProvider | undefined {
-	const provider = resolveProvider(deps);
-	if (provider === undefined) return undefined;
-	return record.provider === provider.id ? provider : undefined;
+	if (record.provider === undefined) return undefined;
+	return resolveProvider(deps, record.provider);
 }
 
 function requireRecordProvider(record: DispatchRecord, deps: DispatchDeps): AgentProvider {
@@ -406,6 +430,9 @@ export async function enqueueDispatch(
 	if (!(deps.configured ?? resolveProvider(deps) !== undefined)) {
 		throw new DispatchError('forbidden', NOT_CONFIGURED_MESSAGE);
 	}
+	if (input.provider !== undefined && resolveProvider(deps, input.provider) === undefined) {
+		throw new DispatchError('forbidden', UNKNOWN_PROVIDER_MESSAGE);
+	}
 
 	const policy = await resolvePolicy(input.project.id, deps);
 	if (!policy.armed) {
@@ -466,7 +493,7 @@ export async function enqueueDispatch(
 
 	let provider: AgentProvider | undefined;
 	try {
-		provider = requireProvider(deps);
+		provider = requireProvider(deps, input.provider);
 		const launched = await provider.launch(plan.input);
 		const saved = await store.updateStatus(working.id, {
 			status: 'launched',
@@ -580,19 +607,21 @@ async function planLaunch(
 ): Promise<{ ok: true; input: AgentLaunchInput } | { ok: false; error_message: string }> {
 	const name = buildDispatchAgentName(record);
 	const prompt = buildDispatchPrompt(record);
+	const dolt_database = record.dolt_database;
 	if (record.operation === 'file') {
 		const checkout = await resolveFileCheckout(record.project_id, deps);
 		if (checkout.kind === 'invalid') {
 			return { ok: false, error_message: INVALID_FILE_CHECKOUT_MESSAGE };
 		}
 		if (checkout.kind === 'none') {
-			return { ok: true, input: { name, prompt, auto_create_pr: false } };
+			return { ok: true, input: { name, prompt, dolt_database, auto_create_pr: false } };
 		}
 		return {
 			ok: true,
 			input: {
 				name,
 				prompt,
+				dolt_database,
 				auto_create_pr: false,
 				repository: { url: checkout.mapping.url, starting_ref: checkout.mapping.ref }
 			}
@@ -602,12 +631,18 @@ async function planLaunch(
 	if (record.operation === 'discuss') {
 		return {
 			ok: true,
-			input: { name, prompt, auto_create_pr: false, ...(await discussCheckout(record, deps)) }
+			input: {
+				name,
+				prompt,
+				dolt_database,
+				auto_create_pr: false,
+				...(await discussCheckout(record, deps))
+			}
 		};
 	}
 
 	if (record.operation !== 'tackle') {
-		return { ok: true, input: { name, prompt, auto_create_pr: false } };
+		return { ok: true, input: { name, prompt, dolt_database, auto_create_pr: false } };
 	}
 
 	const resolved = await resolveLaunchMaps(deps);
@@ -630,6 +665,7 @@ async function planLaunch(
 		input: {
 			name,
 			prompt,
+			dolt_database,
 			auto_create_pr,
 			repository: { url: mapping.url, starting_ref: mapping.ref }
 		}

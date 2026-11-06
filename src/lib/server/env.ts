@@ -1,10 +1,12 @@
-import type { DispatchProviderId } from '#lib/types.js';
+import type { DispatchProviderError, DispatchProviderId } from '#lib/types.js';
+import { MATE_RUNNER_IDS, type MateRunnerId } from '#lib/mate.js';
 import { normalizeCloudflareAccessIssuer } from './cloudflare-access.js';
 import {
 	loadTackleRepositoriesFromEnv,
 	type TackleRepositoryMapping
 } from './dispatch/repositories.js';
 import { resolveStateDir } from './state/dir.js';
+import type { E2bBaseSettings } from './e2b/sandbox.js';
 
 export { resolveStateDir };
 
@@ -59,12 +61,21 @@ export interface ServerEnv {
 	secret_key_file?: string;
 	agent_actors: string[];
 	/**
-	 * Active agent dispatch provider. `BDX_DISPATCH_PROVIDER`
-	 * selects it; unset means `none`.
+	 * Default agent dispatch provider: the first usable entry of
+	 * `BDX_DISPATCH_PROVIDER`, or `none`.
 	 */
 	dispatch_provider: DispatchProviderId | 'none';
-	/** Why the requested provider is not active; absent when it is. */
-	dispatch_provider_error?: 'invalid' | 'webhook_url_invalid' | 'webhook_secret_missing';
+	/**
+	 * Every usable provider, in `BDX_DISPATCH_PROVIDER` order (a comma list;
+	 * the first is the default). A launch may pick any of them.
+	 */
+	dispatch_providers: DispatchProviderId[];
+	/** Display name per provider (`BDX_DISPATCH_WEBHOOK_LABEL`, `BDX_E2B_LABEL`). */
+	dispatch_labels: Record<DispatchProviderId, string>;
+	/** Why a requested provider is not active; absent when all are. */
+	dispatch_provider_error?: DispatchProviderError;
+	/** E2B sandbox settings when `e2b` is requested and complete. Paths, not secrets. */
+	dispatch_e2b?: E2bSettings;
 	/** `BDX_DISPATCH_WEBHOOK_URL`, validated (https, or http on loopback). */
 	dispatch_webhook_url?: string;
 	/**
@@ -81,8 +92,28 @@ export interface ServerEnv {
 	 * answers admins through the mate runner (docs/first-mate.md).
 	 */
 	mate_runner_url?: string;
-	/** Why the mate runner is not active although something was configured. */
-	mate_runner_error?: 'url_invalid' | 'secret_missing';
+	/** Why a requested chat runner is not active although something was configured. */
+	mate_runner_error?: 'url_invalid' | 'secret_missing' | 'invalid' | 'e2b_config_missing';
+	/**
+	 * Usable First Mate chat runners, default first: `BDX_MATE_RUNNERS`
+	 * (`remote`, `e2b`), or just `remote` when unset. A new chat may pick any
+	 * of them and keeps it for its life.
+	 */
+	mate_runners: MateRunnerId[];
+	/** Display names (`BDX_MATE_RUNNER_LABEL`; `BDX_E2B_LABEL` for e2b). */
+	mate_labels: Record<MateRunnerId, string>;
+	/** E2B chat settings when `e2b` is a usable chat runner. */
+	mate_e2b?: E2bMateSettings;
+}
+
+/** First Mate chats in E2B sandboxes: one sandbox per chat (docs/sand-e2b.md). */
+export interface E2bMateSettings extends E2bBaseSettings {
+	/** `BDX_E2B_MATE_IDLE_MINUTES`: a quiet chat's sandbox pauses after this. */
+	idle_minutes: number;
+	/** `BDX_E2B_MATE_MAX_SESSIONS`: live chat processes at once. */
+	max_sessions: number;
+	/** Where the runner keeps each chat's event log (under the state dir). */
+	state_dir: string;
 }
 
 export const DEFAULT_DOLT_PORT = 3306;
@@ -128,24 +159,208 @@ function resolveMateRunner(source: NodeJS.ProcessEnv): {
 	return { url };
 }
 
-function resolveDispatchProvider(source: NodeJS.ProcessEnv): {
-	provider: ServerEnv['dispatch_provider'];
-	error?: ServerEnv['dispatch_provider_error'];
-	webhook_url?: string;
+/** Every First Mate chat runner: the HTTP one above, and E2B sandboxes. */
+function resolveMateRunners(
+	source: NodeJS.ProcessEnv,
+	state_dir: string
+): {
+	runners: MateRunnerId[];
+	url?: string;
+	error?: ServerEnv['mate_runner_error'];
+	labels: Record<MateRunnerId, string>;
+	e2b?: E2bMateSettings;
 } {
-	const requested = source.BDX_DISPATCH_PROVIDER?.trim().toLowerCase() ?? '';
-	const webhook_url = parseWebhookUrl(source.BDX_DISPATCH_WEBHOOK_URL);
-	if (requested === '' || requested === 'none') return { provider: 'none', webhook_url };
-	if (requested === 'webhook') {
-		if (webhook_url === undefined) return { provider: 'none', error: 'webhook_url_invalid' };
-		const has_secret =
-			(source.BDX_DISPATCH_WEBHOOK_SECRET_FILE?.trim() ?? '') !== '' ||
-			(source.BDX_DISPATCH_WEBHOOK_SECRET?.trim() ?? '') !== '';
-		return has_secret
-			? { provider: 'webhook', webhook_url }
-			: { provider: 'none', error: 'webhook_secret_missing', webhook_url };
+	const remote = resolveMateRunner(source);
+	const requested = splitList(source.BDX_MATE_RUNNERS?.toLowerCase());
+	const labels: Record<MateRunnerId, string> = {
+		remote: parseLabel(source.BDX_MATE_RUNNER_LABEL, 'Mate runner'),
+		e2b: parseLabel(source.BDX_E2B_LABEL, DEFAULT_PROVIDER_LABELS.e2b)
+	};
+	const result: ReturnType<typeof resolveMateRunners> = {
+		runners: [],
+		url: remote.url,
+		error: remote.error,
+		labels
+	};
+	for (const entry of requested.length > 0 ? requested : ['remote']) {
+		if (!(MATE_RUNNER_IDS as readonly string[]).includes(entry)) {
+			result.error ??= 'invalid';
+			continue;
+		}
+		const id = entry as MateRunnerId;
+		if (id === 'remote') {
+			if (remote.url === undefined) continue;
+		} else {
+			const base = parseE2bBaseSettings(source);
+			if (base === undefined) {
+				result.error ??= 'e2b_config_missing';
+				continue;
+			}
+			result.e2b = {
+				...base,
+				idle_minutes: Math.min(parsePositiveInt(source.BDX_E2B_MATE_IDLE_MINUTES, 15), 60),
+				max_sessions: Math.min(parsePositiveInt(source.BDX_E2B_MATE_MAX_SESSIONS, 3), 20),
+				state_dir: `${state_dir}/sand-mate`
+			};
+		}
+		if (!result.runners.includes(id)) result.runners.push(id);
 	}
-	return { provider: 'none', error: 'invalid', webhook_url };
+	return result;
+}
+
+/** Default display names; operators rename them with the `*_LABEL` vars. */
+export const DEFAULT_PROVIDER_LABELS: Record<DispatchProviderId, string> = {
+	webhook: 'Webhook agent runner',
+	e2b: 'Sand'
+};
+const LABEL_PATTERN = /^[\p{L}\p{N} ._()-]{1,40}$/u;
+
+function parseLabel(raw: string | undefined, fallback: string): string {
+	const text = raw?.trim() ?? '';
+	return LABEL_PATTERN.test(text) ? text : fallback;
+}
+
+/**
+ * E2B sandbox settings (docs/sand-e2b.md). Every secret is a file path the
+ * provider reads at use; none is copied into the sandbox.
+ */
+export interface E2bSettings extends E2bBaseSettings {
+	/** `BDX_E2B_DOLT_ACCOUNTS_FILE`: JSON `{ "<database>": { "user", "password" } }`. */
+	dolt_accounts_file: string;
+	/** `BDX_E2B_DOLT_TAILNET_HOST` / `_PORT`: Dolt as the sandbox reaches it over the tailnet. */
+	dolt_tailnet_host: string;
+	dolt_tailnet_port: number;
+	/** `BDX_E2B_TAILSCALE_OAUTH_CLIENT_ID` / `_SECRET_FILE`: mints one ephemeral key per run. */
+	tailscale_client_id: string;
+	tailscale_client_secret_file: string;
+	/** `BDX_E2B_TAILSCALE_TAGS`: tags the sandbox node joins with. */
+	tailscale_tags: string[];
+	/** `BDX_E2B_GITHUB_APP_ID` / `_PRIVATE_KEY_FILE`: per-repository tokens. Unset: no checkouts. */
+	github_app_id?: string;
+	github_app_private_key_file?: string;
+	/** `BDX_E2B_MAX_RUN_MINUTES`: sandbox time limit while a run works. */
+	max_run_minutes: number;
+	/** `BDX_E2B_IDLE_MINUTES`: how long a finished sandbox waits for a follow-up before pausing. */
+	idle_minutes: number;
+}
+
+const TAILSCALE_TAG_PATTERN = /^tag:[a-z0-9-]{1,64}$/;
+const GITHUB_APP_ID_PATTERN = /^[0-9]{1,12}$/;
+
+function nonEmpty(raw: string | undefined): string | undefined {
+	const text = raw?.trim() ?? '';
+	return text === '' ? undefined : text;
+}
+
+/**
+ * The settings every E2B use needs (dispatch and First Mate): the E2B key,
+ * the template, and one model credential. Undefined when one is missing.
+ */
+export function parseE2bBaseSettings(source: NodeJS.ProcessEnv): E2bBaseSettings | undefined {
+	const api_key_file = nonEmpty(source.BDX_E2B_API_KEY_FILE);
+	const anthropic_api_key_file = nonEmpty(source.BDX_E2B_ANTHROPIC_API_KEY_FILE);
+	const claude_oauth_token_file = nonEmpty(source.BDX_E2B_CLAUDE_OAUTH_TOKEN_FILE);
+	if (api_key_file === undefined) return undefined;
+	if (anthropic_api_key_file === undefined && claude_oauth_token_file === undefined)
+		return undefined;
+	const allow_out = splitList(source.BDX_E2B_ALLOW_OUT);
+	return {
+		api_key_file,
+		template: nonEmpty(source.BDX_E2B_TEMPLATE) ?? 'beadsmith-agent',
+		// The API key wins when both are set.
+		...(anthropic_api_key_file === undefined
+			? { claude_oauth_token_file }
+			: { anthropic_api_key_file }),
+		allow_out: allow_out.length > 0 ? allow_out : undefined
+	};
+}
+
+/** Parse the E2B dispatch settings, or undefined when a required one is missing or invalid. */
+export function parseE2bSettings(source: NodeJS.ProcessEnv): E2bSettings | undefined {
+	const base = parseE2bBaseSettings(source);
+	const dolt_accounts_file = nonEmpty(source.BDX_E2B_DOLT_ACCOUNTS_FILE);
+	const tailscale_client_id = nonEmpty(source.BDX_E2B_TAILSCALE_OAUTH_CLIENT_ID);
+	const tailscale_client_secret_file = nonEmpty(source.BDX_E2B_TAILSCALE_OAUTH_CLIENT_SECRET_FILE);
+	if (
+		base === undefined ||
+		dolt_accounts_file === undefined ||
+		tailscale_client_id === undefined ||
+		tailscale_client_secret_file === undefined
+	) {
+		return undefined;
+	}
+	const tailscale_tags = splitList(source.BDX_E2B_TAILSCALE_TAGS);
+	const tags = tailscale_tags.length > 0 ? tailscale_tags : ['tag:beads-sandbox'];
+	if (!tags.every((tag) => TAILSCALE_TAG_PATTERN.test(tag))) return undefined;
+	const github_app_id = nonEmpty(source.BDX_E2B_GITHUB_APP_ID);
+	const github_app_private_key_file = nonEmpty(source.BDX_E2B_GITHUB_APP_PRIVATE_KEY_FILE);
+	if ((github_app_id === undefined) !== (github_app_private_key_file === undefined)) {
+		return undefined;
+	}
+	if (github_app_id !== undefined && !GITHUB_APP_ID_PATTERN.test(github_app_id)) return undefined;
+	return {
+		...base,
+		dolt_accounts_file,
+		dolt_tailnet_host: nonEmpty(source.BDX_E2B_DOLT_TAILNET_HOST) ?? 'beads',
+		dolt_tailnet_port: parsePositiveInt(source.BDX_E2B_DOLT_TAILNET_PORT, DEFAULT_DOLT_PORT),
+		tailscale_client_id,
+		tailscale_client_secret_file,
+		tailscale_tags: tags,
+		github_app_id,
+		github_app_private_key_file,
+		// E2B caps a sandbox at 1 h on Hobby and 24 h on Pro.
+		max_run_minutes: Math.min(parsePositiveInt(source.BDX_E2B_MAX_RUN_MINUTES, 55), 24 * 60),
+		idle_minutes: Math.min(parsePositiveInt(source.BDX_E2B_IDLE_MINUTES, 10), 60)
+	};
+}
+
+interface ResolvedDispatch {
+	providers: DispatchProviderId[];
+	error?: DispatchProviderError;
+	webhook_url?: string;
+	labels: Record<DispatchProviderId, string>;
+	e2b?: E2bSettings;
+}
+
+function resolveDispatchProvider(source: NodeJS.ProcessEnv): ResolvedDispatch {
+	const requested = splitList(source.BDX_DISPATCH_PROVIDER?.toLowerCase());
+	const webhook_url = parseWebhookUrl(source.BDX_DISPATCH_WEBHOOK_URL);
+	const labels: Record<DispatchProviderId, string> = {
+		webhook: parseLabel(source.BDX_DISPATCH_WEBHOOK_LABEL, DEFAULT_PROVIDER_LABELS.webhook),
+		e2b: parseLabel(source.BDX_E2B_LABEL, DEFAULT_PROVIDER_LABELS.e2b)
+	};
+	const resolved: ResolvedDispatch = { providers: [], webhook_url, labels };
+	const fail = (error: DispatchProviderError) => {
+		resolved.error ??= error;
+	};
+	for (const entry of requested) {
+		if (entry === 'none') continue;
+		if (entry === 'webhook') {
+			if (webhook_url === undefined) {
+				fail('webhook_url_invalid');
+				continue;
+			}
+			const has_secret =
+				(source.BDX_DISPATCH_WEBHOOK_SECRET_FILE?.trim() ?? '') !== '' ||
+				(source.BDX_DISPATCH_WEBHOOK_SECRET?.trim() ?? '') !== '';
+			if (!has_secret) {
+				fail('webhook_secret_missing');
+				continue;
+			}
+		} else if (entry === 'e2b') {
+			const e2b = parseE2bSettings(source);
+			if (e2b === undefined) {
+				fail('e2b_config_missing');
+				continue;
+			}
+			resolved.e2b = e2b;
+		} else {
+			fail('invalid');
+			continue;
+		}
+		if (!resolved.providers.includes(entry)) resolved.providers.push(entry);
+	}
+	return resolved;
 }
 
 /** Client-safe configuration class for the console. Never names an env var. */
@@ -310,7 +525,7 @@ export function readEnv(source: NodeJS.ProcessEnv = process.env): ServerEnv {
 
 	const tackle_repositories = loadTackleRepositoriesFromEnv(source);
 	const dispatch = resolveDispatchProvider(source);
-	const mate_runner = resolveMateRunner(source);
+	const mate_runner = resolveMateRunners(source, resolveStateDir(source));
 
 	return {
 		dolt_host,
@@ -351,13 +566,19 @@ export function readEnv(source: NodeJS.ProcessEnv = process.env): ServerEnv {
 				? source.BDX_SECRET_KEY_FILE.trim()
 				: undefined,
 		agent_actors: agent_actors.length > 0 ? agent_actors : ['agent'],
-		dispatch_provider: dispatch.provider,
+		dispatch_provider: dispatch.providers[0] ?? 'none',
+		dispatch_providers: dispatch.providers,
+		dispatch_labels: dispatch.labels,
 		dispatch_provider_error: dispatch.error,
 		dispatch_webhook_url: dispatch.webhook_url,
+		dispatch_e2b: dispatch.e2b,
 		tackle_repositories: tackle_repositories.mappings,
 		tackle_repositories_error: tackle_repositories.error,
 		mate_runner_url: mate_runner.url,
-		mate_runner_error: mate_runner.error
+		mate_runner_error: mate_runner.error,
+		mate_runners: mate_runner.runners,
+		mate_labels: mate_runner.labels,
+		mate_e2b: mate_runner.e2b
 	};
 }
 

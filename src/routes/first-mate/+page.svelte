@@ -23,8 +23,15 @@
 	import IssueId from '#lib/components/issue-id.svelte';
 	import MateChatView from '#lib/components/mate-chat-view.svelte';
 	import MateContextSelect from '#lib/components/mate-context-select.svelte';
+	import RunnerSelect from '#lib/components/runner-select.svelte';
 	import { api, errorMessage } from '#lib/client/api.js';
-	import { agentAvailability, isBusyStatus, missionVerb } from '#lib/client/agent.js';
+	import {
+		agentAvailability,
+		isBusyStatus,
+		missionProvider,
+		missionVerb
+	} from '#lib/client/agent.js';
+	import { run_place } from '#lib/client/agent-runner.svelte.js';
 	import { FIRST_MATE_PATH, threadHref } from '#lib/client/first-mate.js';
 	import { dispatchBadgeKey, relativeShort } from '#lib/client/format.js';
 	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
@@ -59,6 +66,16 @@
 	const selected = $derived(missions.find((mission) => mission.id === thread_id));
 	const active_count = $derived(missions.filter((mission) => isBusyStatus(mission.status)).length);
 	const is_open = $derived(thread_open || chat_id !== null);
+	/** Name each thread's runner only when there is more than one to tell apart. */
+	const several_runners = $derived((dispatch?.providers?.length ?? 0) > 1);
+	const selected_runner = $derived(
+		selected === undefined ? undefined : missionProvider(selected, dispatch)
+	);
+
+	// The server-rendered snapshot lands before the first poll.
+	$effect(() => {
+		run_place.syncProviders(dispatch?.providers);
+	});
 	const mounted = $derived(mate_chats.loaded);
 	const can_chat = $derived(mate_chats.can_chat);
 	const mate_reason = $derived(mate_chats.status?.reason);
@@ -278,6 +295,8 @@
 									<span class="row-meta">
 										{missionVerb(mission)}
 										{#if mission.issue_id}· {mission.issue_id}{/if}
+										{#if several_runners}· {missionProvider(mission, dispatch)?.label ??
+												'removed runner'}{/if}
 										<span class="sr-only">, {mission.status}</span>
 									</span>
 								</a>
@@ -313,6 +332,7 @@
 								·
 							{/if}
 							{selected?.project_name ?? ''}
+							{#if several_runners && selected_runner}· on {selected_runner.label}{/if}
 						</p>
 					</div>
 				</header>
@@ -381,6 +401,7 @@
 				>
 					{#snippet controls()}
 						<MateContextSelect bind:value={scope} disabled={starting || !can_chat} />
+						<RunnerSelect />
 						<button
 							class="btn btn-sm btn-ghost"
 							type="button"

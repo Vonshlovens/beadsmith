@@ -26,7 +26,12 @@ export const POST: RequestHandler = async ({ params, locals, request }) => {
 		if (!body.ok) {
 			return body.response;
 		}
-		const result = await sendMateMessage(owned.store, getMateRunner(), owned.chat, body.data);
+		const result = await sendMateMessage(
+			owned.store,
+			getMateRunner(owned.chat.runner),
+			owned.chat,
+			body.data
+		);
 		return jsonResponse(result, 202);
 	} catch (error) {
 		return error instanceof MateRunnerError

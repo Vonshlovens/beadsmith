@@ -77,6 +77,14 @@ export const DOCS: DocEntry[] = [
 			'Chatting with one long-lived agent that runs a crew, and the signed contract its runner implements.'
 	},
 	{
+		slug: 'sand',
+		path: 'docs/sand-e2b.md',
+		group: 'Use it',
+		title: 'Sand (E2B sandboxes)',
+		summary:
+			'Running missions and First Mate chats in hosted E2B sandboxes, with keys kept outside them.'
+	},
+	{
 		slug: 'agent-access',
 		path: 'docs/agent-access.md',
 		group: 'Use it',

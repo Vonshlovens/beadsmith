@@ -183,7 +183,7 @@ export function createWebhookProvider(deps: WebhookProviderDeps = {}): AgentProv
 
 	return {
 		id: 'webhook',
-		label: 'Webhook agent runner',
+		label: env.dispatch_labels.webhook,
 
 		async launch(input: AgentLaunchInput): Promise<AgentLaunch> {
 			const { status, json } = await call('POST', '/agents', {

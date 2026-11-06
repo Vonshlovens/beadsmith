@@ -6,6 +6,7 @@ import type {
 	DispatchStatus,
 	DispatchTurn
 } from '#lib/types.js';
+import { DISPATCH_PROVIDER_IDS } from '#lib/types.js';
 import { DispatchError, type DispatchPayload, type DispatchRecord } from './types.js';
 
 export interface CreateDispatchInput {
@@ -143,7 +144,9 @@ function rowToRecord(row: Record<string, unknown>): DispatchRecord {
 		actor: String(row.actor),
 		payload,
 		status: row.status as DispatchStatus,
-		provider: row.provider === 'webhook' ? row.provider : undefined,
+		provider: (DISPATCH_PROVIDER_IDS as readonly unknown[]).includes(row.provider)
+			? (row.provider as DispatchProviderId)
+			: undefined,
 		agent_id: asText(row.agent_id),
 		agent_url: asText(row.agent_url),
 		run_id: asText(row.run_id),

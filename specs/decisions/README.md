@@ -25,3 +25,4 @@ edit an ADR on every conversation — see `.agents/skills/architecture/SKILL.md`
 | [0015](./0015-scoped-agent-sandboxes.md) | Agents run in beads or repo sandboxes; Beadsmith relays their terminals to admins and never connects into personal devices |
 | [0016](./0016-first-mate-worker-runtime.md) | First Mate worker runtime |
 | [0017](./0017-native-desktop-prototype.md) | **Proposed.** A prototype native desktop client on Rune reads Dolt directly with the web app's read contract |
+| [0018](./0018-sand-e2b-sandboxes.md) | Sand: E2B sandboxes beside self-hosted runners, picked per chat and mission in First Mate |

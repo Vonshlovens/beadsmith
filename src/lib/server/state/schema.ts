@@ -156,6 +156,8 @@ export const mateChats = sqliteTable(
 		title: text('title').notNull(),
 		scope: text('scope'),
 		sessionId: text('session_id').notNull().unique(),
+		/** `remote` or `e2b` (#lib/mate.js); null on chats from before it existed. */
+		runner: text('runner'),
 		createdAt: text('created_at').notNull(),
 		updatedAt: text('updated_at').notNull()
 	},

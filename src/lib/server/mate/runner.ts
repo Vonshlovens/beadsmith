@@ -18,6 +18,8 @@ import { parseMissionEventJson, type MissionEvent } from '#lib/mission-events.js
 import { getEnv, type ServerEnv } from '../env.js';
 import { readGithubPullUrl, stripTerminalNoise } from '../dispatch/sanitize.js';
 import { signWebhookRequest } from '../dispatch/webhook-provider.js';
+import type { MateRunnerId, MateRunnerInfo } from '#lib/mate.js';
+import { createE2bMateRunner } from './e2b-runner.js';
 
 export const MATE_CONTRACT_VERSION = 1;
 export const MIN_MATE_SECRET_LENGTH = 32;
@@ -426,13 +428,33 @@ export function createMateRunner(deps: MateRunnerDeps = {}): MateRunner | undefi
 }
 
 let override: MateRunner | null | undefined;
+/** The in-process Sand runner holds live sessions, so there is one per process. */
+let sand: { key: string; runner: MateRunner } | undefined;
 
-/** The configured runner, or undefined when First Mate is not connected. */
-export function getMateRunner(): MateRunner | undefined {
+/** Configured chat runners with their labels, default first. */
+export function configuredMateRunners(env: ServerEnv = getEnv()): MateRunnerInfo[] {
+	return env.mate_runners.map((id) => ({ id, label: env.mate_labels[id] }));
+}
+
+/**
+ * A configured runner, or undefined when it is not configured. Without `id`,
+ * the default (first) one.
+ */
+export function getMateRunner(id?: MateRunnerId): MateRunner | undefined {
 	if (override !== undefined) {
 		return override ?? undefined;
 	}
-	return createMateRunner();
+	const env = getEnv();
+	const wanted = id ?? env.mate_runners[0];
+	if (wanted === undefined || !env.mate_runners.includes(wanted)) return undefined;
+	if (wanted === 'remote') return createMateRunner();
+	const settings = env.mate_e2b;
+	if (settings === undefined) return undefined;
+	const key = JSON.stringify(settings);
+	if (sand?.key !== key) {
+		sand = { key, runner: createE2bMateRunner({ settings }) };
+	}
+	return sand.runner;
 }
 
 /** Replace the runner (tests only): null forces "not configured", undefined restores the env. */

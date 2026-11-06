@@ -118,10 +118,14 @@ dispatch like any other caller.
 
 ### Where agents run
 
-Target, **not implemented yet**
-([ADR-0015](../specs/decisions/0015-scoped-agent-sandboxes.md)). Today the
-only provider is the webhook runner, and Beadsmith holds no connection to any
-agent machine.
+Target, **partly implemented**
+([ADR-0015](../specs/decisions/0015-scoped-agent-sandboxes.md)). First Mate
+can run in a Firecracker guest on a self-hosted host
+([ADR-0016](../specs/decisions/0016-first-mate-worker-runtime.md)), and
+missions and chats can run on Sand, one E2B sandbox each, with model and
+GitHub keys added by E2B's egress and mission sandboxes on the tailnet under
+their own tag ([ADR-0018](../specs/decisions/0018-sand-e2b-sandboxes.md)).
+Beadsmith holds no terminal connection to any agent machine.
 
 A machine that runs agents is classified by what it holds, not by where it
 runs:

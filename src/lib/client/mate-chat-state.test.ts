@@ -28,6 +28,7 @@ const chat = {
 	id: 'mc_test',
 	title: 'Test',
 	scope: null,
+	runner: 'remote' as const,
 	created_at: '2026-01-01',
 	updated_at: '2026-01-01'
 };

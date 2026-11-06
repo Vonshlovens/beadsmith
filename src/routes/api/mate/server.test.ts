@@ -174,6 +174,19 @@ describe('chats', () => {
 		});
 		expect(((await patched.json()) as { chat: { scope: null } }).chat.scope).toBeNull();
 	});
+
+	it('keeps the runner a chat was created on, and refuses one not configured', async () => {
+		// The test env configures no chat runner, so only the default applies.
+		expect((await call(CREATE, { body: { scope: null, runner: 'e2b' } })).status).toBe(400);
+		expect((await call(CREATE, { body: { scope: null, runner: 'cloud' } })).status).toBe(400);
+		const chat = await createChat(ADMIN, { scope: null });
+		expect(chat).toMatchObject({ runner: 'remote' });
+		await store.createChat(ADMIN.id, { title: 'On Sand', scope: null, runner: 'e2b' });
+		const listed = (await (await call(LIST)).json()) as {
+			chats: { title: string; runner: string }[];
+		};
+		expect(listed.chats.find((entry) => entry.title === 'On Sand')?.runner).toBe('e2b');
+	});
 });
 
 describe('POST messages without a runner', () => {

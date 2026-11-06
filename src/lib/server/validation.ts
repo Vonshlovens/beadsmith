@@ -1,11 +1,16 @@
 import { z } from 'zod';
 import { errorResponse } from './security.js';
-import type { ThemePreference } from '#lib/types.js';
+import { DISPATCH_PROVIDER_IDS, type ThemePreference } from '#lib/types.js';
 import type { FileCheckoutMapping } from './dispatch/file-maps.js';
 import { parseGitHubRepositoryUrl, parseGitRef } from './dispatch/repositories.js';
 import type { TackleRepositoryMapping } from './dispatch/repositories.js';
 import { normalizeEndpoint } from './backup/s3.js';
-import { CHAT_ID_PATTERN, MAX_MESSAGE_CHARS, MESSAGE_ID_PATTERN } from '#lib/mate.js';
+import {
+	CHAT_ID_PATTERN,
+	MATE_RUNNER_IDS,
+	MAX_MESSAGE_CHARS,
+	MESSAGE_ID_PATTERN
+} from '#lib/mate.js';
 
 /** Zod validation shared by the active, read-only HTTP surface. */
 
@@ -63,9 +68,13 @@ const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
 /** Follow-up and discuss messages share one cap; they are the free-form steer fields. */
 export const FOLLOW_UP_TEXT_MAX = 4000;
 
+/** Optional launch target: one of the configured providers (checked by the service). */
+const dispatch_provider_schema = z.enum(DISPATCH_PROVIDER_IDS).optional();
+
 const file_dispatch_schema = z
 	.object({
 		operation: z.literal('file'),
+		provider: dispatch_provider_schema,
 		idempotency_key: z.string().regex(IDEMPOTENCY_KEY_PATTERN, 'invalid idempotency key'),
 		notes: z.string().trim().min(1).max(8000),
 		title: z.string().trim().min(1).max(200).optional(),
@@ -81,6 +90,7 @@ const file_dispatch_schema = z
 const tackle_dispatch_schema = z
 	.object({
 		operation: z.literal('tackle'),
+		provider: dispatch_provider_schema,
 		idempotency_key: z.string().regex(IDEMPOTENCY_KEY_PATTERN, 'invalid idempotency key'),
 		issue_id: issue_id_schema,
 		destination_status: z.enum(['open', 'in_progress', 'blocked', 'deferred', 'closed']).optional()
@@ -90,6 +100,7 @@ const tackle_dispatch_schema = z
 const comment_dispatch_schema = z
 	.object({
 		operation: z.literal('comment'),
+		provider: dispatch_provider_schema,
 		idempotency_key: z.string().regex(IDEMPOTENCY_KEY_PATTERN, 'invalid idempotency key'),
 		issue_id: issue_id_schema,
 		text: z.string().trim().min(1).max(8000)
@@ -99,6 +110,7 @@ const comment_dispatch_schema = z
 const discuss_dispatch_schema = z
 	.object({
 		operation: z.literal('discuss'),
+		provider: dispatch_provider_schema,
 		idempotency_key: z.string().regex(IDEMPOTENCY_KEY_PATTERN, 'invalid idempotency key'),
 		issue_id: issue_id_schema,
 		intent: z.enum(['discuss', 'elaborate', 'close']),
@@ -390,7 +402,9 @@ const mate_title_schema = z.string().trim().min(1).max(200);
 export const create_mate_chat_schema = z
 	.object({
 		title: mate_title_schema.optional(),
-		scope: project_id_schema.nullable().default(null)
+		scope: project_id_schema.nullable().default(null),
+		/** Where the chat runs; must be configured. Omitted: the default runner. */
+		runner: z.enum(MATE_RUNNER_IDS).optional()
 	})
 	.strict();
 

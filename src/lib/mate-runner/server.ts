@@ -24,25 +24,32 @@ const MESSAGE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SCOPE_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 
-export interface RunnerOptions {
-	secret: string;
+/** What the runner core needs: chat logs and a way to start an agent. */
+export interface RunnerCoreOptions {
 	store: ChatStore;
 	spawn: SpawnAgent;
 	/** Live agent processes at once; idle ones are stopped to make room. */
 	max_live_sessions?: number;
 	now?: () => Date;
+}
+
+export interface RunnerOptions extends RunnerCoreOptions {
+	secret: string;
 	heartbeat_ms?: number;
 }
 
 // No parameter properties: Node runs this file with type stripping only.
-class HttpError extends Error {
+/** A refusal with the HTTP status the contract gives it. */
+export class RunnerFault extends Error {
 	readonly status: number;
 
 	constructor(status: number, message: string) {
 		super(message);
+		this.name = 'RunnerFault';
 		this.status = status;
 	}
 }
+const HttpError = RunnerFault;
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
 	const text = JSON.stringify(body);
@@ -75,22 +82,30 @@ function sseFrame(event: MissionEvent): string {
 	return `id: ${event.id}\ndata: ${JSON.stringify(encodeMissionEvent(event))}\n\n`;
 }
 
-export function createRunnerHandler(options: RunnerOptions) {
+/**
+ * The runner without its transport: chat sessions, admission and message
+ * handling. The HTTP handler below serves it to a remote Beadsmith; Beadsmith
+ * also runs it in-process for chats in E2B sandboxes (src/lib/server/mate/e2b-runner.ts).
+ */
+export function createRunnerCore(options: RunnerCoreOptions) {
 	const now = options.now ?? (() => new Date());
 	const max_live = options.max_live_sessions ?? 3;
-	const heartbeat_ms = options.heartbeat_ms ?? HEARTBEAT_MS;
 	const sessions = new Map<string, AgentSession>();
 	if (!Number.isInteger(max_live) || max_live < 1) throw new Error('invalid session limit');
 	// Serialize mutations across awaits so eviction, deletion and admission cannot race.
 	let mutations: Promise<unknown> = Promise.resolve();
 	let closing = false;
-	function mutate(action: () => Promise<void>): Promise<void> {
+	function mutate<T>(action: () => Promise<T>): Promise<T> {
 		const next = mutations.then(() => {
-			if (closing) throw new HttpError(503, 'The runner is shutting down.');
+			if (closing) throw new RunnerFault(503, 'The runner is shutting down.');
 			return action();
 		});
 		mutations = next.catch(() => undefined);
 		return next;
+	}
+
+	function requireChat(chat_id: string): void {
+		if (!CHAT_ID_PATTERN.test(chat_id)) throw new RunnerFault(400, 'Invalid chat id.');
 	}
 
 	function session(chat_id: string): AgentSession {
@@ -110,36 +125,31 @@ export function createRunnerHandler(options: RunnerOptions) {
 			.filter(([, s]) => !s.busy)
 			.sort(([, a], [, b]) => a.last_active - b.last_active);
 		const oldest = idle[0];
-		if (oldest === undefined) throw new HttpError(503, 'Every agent session is busy.');
+		if (oldest === undefined) throw new RunnerFault(503, 'Every agent session is busy.');
 		await oldest[1].stop();
 	}
 
-	async function postMessage(chat_id: string, body: string, res: ServerResponse): Promise<void> {
-		let input: Record<string, unknown>;
-		try {
-			const parsed: unknown = JSON.parse(body);
-			if (typeof parsed !== 'object' || parsed === null) throw new Error();
-			input = parsed as Record<string, unknown>;
-		} catch {
-			throw new HttpError(400, 'The body must be a JSON object.');
-		}
+	async function postMessage(
+		chat_id: string,
+		input: Record<string, unknown>
+	): Promise<{ event_id: string }> {
 		const { session_id, prompt, scope, message_id } = input;
 		if (typeof session_id !== 'string' || !SESSION_ID_PATTERN.test(session_id)) {
-			throw new HttpError(400, 'session_id must be a UUID.');
+			throw new RunnerFault(400, 'session_id must be a UUID.');
 		}
 		if (typeof message_id !== 'string' || !MESSAGE_ID_PATTERN.test(message_id)) {
-			throw new HttpError(400, 'message_id is required.');
+			throw new RunnerFault(400, 'message_id is required.');
 		}
 		if (typeof prompt !== 'string' || prompt.trim().length === 0) {
-			throw new HttpError(400, 'prompt is required.');
+			throw new RunnerFault(400, 'prompt is required.');
 		}
-		if (prompt.length > MAX_PROMPT_CHARS) throw new HttpError(400, 'prompt is too long.');
+		if (prompt.length > MAX_PROMPT_CHARS) throw new RunnerFault(400, 'prompt is too long.');
 		if (
 			scope !== null &&
 			scope !== undefined &&
 			(typeof scope !== 'string' || !SCOPE_PATTERN.test(scope))
 		) {
-			throw new HttpError(400, 'scope must be a project id or null.');
+			throw new RunnerFault(400, 'scope must be a project id or null.');
 		}
 
 		const log = options.store.get(chat_id);
@@ -151,15 +161,14 @@ export function createRunnerHandler(options: RunnerOptions) {
 				created_at: now().toISOString()
 			});
 		} else if (log.meta.session_id !== session_id) {
-			throw new HttpError(409, 'This chat belongs to another session.');
+			throw new RunnerFault(409, 'This chat belongs to another session.');
 		}
 
 		const existing = log.user(message_id);
 		if (existing !== undefined) {
 			if (existing.type === 'user' && existing.text !== prompt)
-				throw new HttpError(409, 'message_id already has a different prompt.');
-			sendJson(res, 202, { event_id: existing.id });
-			return;
+				throw new RunnerFault(409, 'message_id already has a different prompt.');
+			return { event_id: existing.id };
 		}
 		const agent = session(chat_id);
 		if (!agent.running) await reserveSlot(chat_id);
@@ -170,7 +179,68 @@ export function createRunnerHandler(options: RunnerOptions) {
 		log.setMeta({ ...log.meta!, scope: nextScope });
 		const { event } = log.appendUser(prompt, message_id);
 		agent.send(prompt, previousScope === nextScope ? undefined : nextScope);
-		sendJson(res, 202, { event_id: event.id });
+		return { event_id: event.id };
+	}
+
+	return {
+		get closing(): boolean {
+			return closing;
+		},
+		/** Send one user message (idempotent per `message_id`). */
+		sendMessage(chat_id: string, input: Record<string, unknown>): Promise<{ event_id: string }> {
+			requireChat(chat_id);
+			return mutate(() => postMessage(chat_id, input));
+		},
+		/**
+		 * Replay the chat's events after `after`, then pass on new ones until
+		 * the returned function is called.
+		 */
+		follow(chat_id: string, after: string | undefined, listener: (event: MissionEvent) => void) {
+			requireChat(chat_id);
+			const log = options.store.get(chat_id);
+			for (const event of log.after(after)) listener(event);
+			return log.subscribe(listener);
+		},
+		/** Interrupt the running turn; the session survives. */
+		interrupt(chat_id: string): void {
+			requireChat(chat_id);
+			sessions.get(chat_id)?.interrupt();
+		},
+		/** Stop the session and forget the chat. */
+		deleteChat(chat_id: string): Promise<void> {
+			requireChat(chat_id);
+			return mutate(async () => {
+				await sessions.get(chat_id)?.stop();
+				sessions.delete(chat_id);
+				options.store.remove(chat_id);
+			});
+		},
+		async close(): Promise<void> {
+			closing = true;
+			await mutations;
+			await Promise.all([...sessions.values()].map((agent) => agent.stop()));
+		}
+	};
+}
+
+export type RunnerCore = ReturnType<typeof createRunnerCore>;
+
+export function createRunnerHandler(options: RunnerOptions) {
+	const now = options.now ?? (() => new Date());
+	const heartbeat_ms = options.heartbeat_ms ?? HEARTBEAT_MS;
+	const core = createRunnerCore(options);
+
+	async function postMessage(chat_id: string, body: string, res: ServerResponse): Promise<void> {
+		let input: Record<string, unknown>;
+		try {
+			const parsed: unknown = JSON.parse(body);
+			if (typeof parsed !== 'object' || parsed === null) throw new Error();
+			input = parsed as Record<string, unknown>;
+		} catch {
+			throw new HttpError(400, 'The body must be a JSON object.');
+		}
+		const { event_id } = await core.sendMessage(chat_id, input);
+		sendJson(res, 202, { event_id });
 	}
 
 	function streamEvents(
@@ -179,7 +249,6 @@ export function createRunnerHandler(options: RunnerOptions) {
 		req: IncomingMessage,
 		res: ServerResponse
 	): void {
-		const log = options.store.get(chat_id);
 		res.writeHead(200, {
 			'content-type': 'text/event-stream',
 			'cache-control': 'no-store',
@@ -187,8 +256,7 @@ export function createRunnerHandler(options: RunnerOptions) {
 			'x-accel-buffering': 'no'
 		});
 		res.write(': connected\n\n');
-		for (const event of log.after(after)) res.write(sseFrame(event));
-		const unsubscribe = log.subscribe((event) => res.write(sseFrame(event)));
+		const unsubscribe = core.follow(chat_id, after, (event) => res.write(sseFrame(event)));
 		const heartbeat = setInterval(() => res.write(': ping\n\n'), heartbeat_ms);
 		const close = () => {
 			clearInterval(heartbeat);
@@ -200,7 +268,7 @@ export function createRunnerHandler(options: RunnerOptions) {
 
 	const handle = async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
 		try {
-			if (closing) throw new HttpError(503, 'The runner is shutting down.');
+			if (core.closing) throw new HttpError(503, 'The runner is shutting down.');
 			const method = req.method ?? 'GET';
 			const target = req.url ?? '/';
 			const body = method === 'GET' || method === 'DELETE' ? '' : await readBody(req);
@@ -232,18 +300,14 @@ export function createRunnerHandler(options: RunnerOptions) {
 			const action = match[2];
 
 			if (action === '/messages' && method === 'POST') {
-				await mutate(() => postMessage(chat_id, body, res));
+				await postMessage(chat_id, body, res);
 			} else if (action === '/events' && method === 'GET') {
 				streamEvents(chat_id, url.searchParams.get('after') ?? undefined, req, res);
 			} else if (action === '/interrupt' && method === 'POST') {
-				sessions.get(chat_id)?.interrupt();
+				core.interrupt(chat_id);
 				sendJson(res, 202, { ok: true });
 			} else if (action === undefined && method === 'DELETE') {
-				await mutate(async () => {
-					await sessions.get(chat_id)?.stop();
-					sessions.delete(chat_id);
-					options.store.remove(chat_id);
-				});
+				await core.deleteChat(chat_id);
 				res.writeHead(204).end();
 			} else {
 				throw new HttpError(405, 'Method not allowed.');
@@ -253,18 +317,12 @@ export function createRunnerHandler(options: RunnerOptions) {
 				res.end();
 				return;
 			}
-			if (error instanceof HttpError) {
+			if (error instanceof RunnerFault) {
 				sendJson(res, error.status, { error: error.message });
 			} else {
 				sendJson(res, 500, { error: 'The runner failed.' });
 			}
 		}
 	};
-	return Object.assign(handle, {
-		close: async () => {
-			closing = true;
-			await mutations;
-			await Promise.all([...sessions.values()].map((agent) => agent.stop()));
-		}
-	});
+	return Object.assign(handle, { close: () => core.close() });
 }
