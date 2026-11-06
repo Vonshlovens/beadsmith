@@ -24,6 +24,14 @@ let
     install -m 0700 -o root -g root ${./files/dolt/entrypoint.sh} ${root}/entrypoint.sh
     install -m 0640 -o root -g root ${./files/dolt/config.yaml} ${root}/servercfg.d/config.yaml
   '';
+  applyGrants = pkgs.writeShellApplication {
+    name = "beads-dolt-grants";
+    runtimeInputs = [
+      pkgs.coreutils
+      config.virtualisation.docker.package
+    ];
+    text = builtins.readFile ./files/dolt/apply-grants.sh;
+  };
 in
 {
   virtualisation.docker = {
@@ -62,6 +70,31 @@ in
     serviceConfig = {
       ExecStartPre = lib.mkBefore [ "${installConfig}" ];
       RestartSec = "10s";
+    };
+  };
+
+  # The account grants of ADR 0013, applied after every Dolt start
+  # (files/dolt/apply-grants.sh). PartOf and WantedBy tie it to the container:
+  # it stops with Dolt and runs again when Dolt starts, including the restart
+  # in the nightly backup. Accounts and passwords stay with the restored data.
+  systemd.services.beads-dolt-grants = {
+    description = "Apply the Dolt account grants of ADR 0013";
+    after = [ "docker-beads-dolt.service" ];
+    requires = [ "docker-beads-dolt.service" ];
+    partOf = [ "docker-beads-dolt.service" ];
+    wantedBy = [
+      "multi-user.target"
+      "docker-beads-dolt.service"
+    ];
+    unitConfig.ConditionPathExists = "${root}/data/.doltcfg/privileges.db";
+    environment = {
+      DOLT_CONTAINER = "beads-dolt";
+      DOLT_ROOT_PASSWORD_FILE = config.sops.secrets.beads-dolt-root-password.path;
+    };
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      ExecStart = "${applyGrants}/bin/beads-dolt-grants";
     };
   };
 }
