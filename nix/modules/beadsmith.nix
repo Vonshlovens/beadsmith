@@ -22,6 +22,13 @@ let
     better-auth-secret = "BETTER_AUTH_SECRET_FILE";
     master-key = "BDX_SECRET_KEY_FILE";
     mate-runner-secret = "BDX_MATE_RUNNER_SECRET_FILE";
+    # Sand, agents in E2B sandboxes (docs/sand-e2b.md).
+    e2b-api-key = "BDX_E2B_API_KEY_FILE";
+    e2b-anthropic-api-key = "BDX_E2B_ANTHROPIC_API_KEY_FILE";
+    e2b-claude-oauth-token = "BDX_E2B_CLAUDE_OAUTH_TOKEN_FILE";
+    e2b-dolt-accounts = "BDX_E2B_DOLT_ACCOUNTS_FILE";
+    e2b-tailscale-oauth-secret = "BDX_E2B_TAILSCALE_OAUTH_CLIENT_SECRET_FILE";
+    e2b-github-app-key = "BDX_E2B_GITHUB_APP_PRIVATE_KEY_FILE";
   };
 in
 {

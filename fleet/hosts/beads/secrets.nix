@@ -64,6 +64,22 @@ in
       beads-web-mate-runner-secret = beadsWeb;
       # Identifying HTTPS origin; keep its value outside the public Nix source.
       beads-web-mate-runner-url = beadsWeb;
+      # --- Sand: agents in E2B sandboxes (docs/sand-e2b.md) ------------------
+      # E2B team API key.
+      beads-web-e2b-api-key = beadsWeb;
+      # Claude subscription token from `claude setup-token`; E2B's egress
+      # adds it for api.anthropic.com, the sandbox sees a placeholder.
+      beads-web-e2b-claude-oauth-token = beadsWeb;
+      # JSON { "<database>": { "user": "sbx_<database>", "password": ... } }:
+      # one Dolt account per project, rights on that database only.
+      beads-web-e2b-dolt-accounts = beadsWeb;
+      # Tailscale OAuth client (Auth Keys: write, tag:beads-sandbox): mints
+      # one single-use ephemeral key per mission.
+      beads-web-e2b-tailscale-oauth-client-id = root;
+      beads-web-e2b-tailscale-oauth-secret = beadsWeb;
+      # GitHub App for checkouts: per-run, one-repository installation tokens.
+      beads-web-e2b-github-app-id = root;
+      beads-web-e2b-github-app-key = beadsWeb;
       # Cloudflare Access settings, today in /etc/beads-web/beads-web.env.
       # Not secrets as such, but the owner supplies them (docs/operations/host-beads.md).
       beads-web-cf-access-issuer = root;
@@ -83,6 +99,15 @@ in
         BDX_CF_ACCESS_AUDIENCE=${config.sops.placeholder.beads-web-cf-access-audience}
         BDX_CF_ACCESS_ALLOWED_EMAILS=${config.sops.placeholder.beads-web-cf-access-allowed-emails}
         BDX_MATE_RUNNER_URL=${config.sops.placeholder.beads-web-mate-runner-url}
+      '';
+      restartUnits = [ "beadsmith.service" ];
+    };
+
+    # Identifiers for Sand: not secret, but kept out of the public tree.
+    templates."beads-web-e2b.env" = {
+      content = ''
+        BDX_E2B_TAILSCALE_OAUTH_CLIENT_ID=${config.sops.placeholder.beads-web-e2b-tailscale-oauth-client-id}
+        BDX_E2B_GITHUB_APP_ID=${config.sops.placeholder.beads-web-e2b-github-app-id}
       '';
       restartUnits = [ "beadsmith.service" ];
     };
