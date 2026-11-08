@@ -41,6 +41,11 @@ systemd credentials, never by reading `/run/secrets` itself.
 | `beads-web-mate-runner-secret`        | Signs First Mate requests to the runner                             | Rotate together with `mate-runner-secret` in `forge.yaml`; restart both services          |
 | `beads-web-mate-runner-url`           | Runner HTTPS origin, with no path prefix                            | Update when the runner origin changes; restart Beadsmith                                 |
 | `beads-web-cf-access-issuer`, `-audience`, `-allowed-emails` | Cloudflare Access settings for Beadsmith    | Change in Cloudflare, then here                                                            |
+| `beads-web-e2b-api-key`               | Sand: E2B team API key ([docs/sand-e2b.md](../../docs/sand-e2b.md))  | New key in E2B's dashboard, then here; restart Beadsmith                                  |
+| `beads-web-e2b-claude-oauth-token`    | Sand: Claude subscription token (`claude setup-token`)               | New token, then here; E2B's egress injects it, sandboxes never hold it                    |
+| `beads-web-e2b-dolt-accounts`         | Sand: JSON of per-project `sbx_<database>` Dolt accounts            | `ALTER USER` as root, then here; one account per database, never `*.*`                    |
+| `beads-web-e2b-tailscale-oauth-client-id`, `-secret` | Sand: Tailscale OAuth client that mints per-run keys | Revoke and recreate in Tailscale admin (Auth Keys: write, `tag:beads-sandbox`)            |
+| `beads-web-e2b-github-app-id`, `-key` | Sand: GitHub App for per-run, one-repository tokens                 | Generate a new private key on the App, then here; delete the old key                      |
 
 The `beads_bd_writer` password is deliberately not here: it lives only on the
 operator's machines and in their password manager

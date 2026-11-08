@@ -5,6 +5,7 @@
 let
   s = config.sops.secrets;
   accessEnv = config.sops.templates."beads-web-access.env".path;
+  e2bEnv = config.sops.templates."beads-web-e2b.env".path;
 in
 {
   services.beadsmith = {
@@ -20,18 +21,32 @@ in
       better-auth-secret = s.beads-web-better-auth-secret.path;
       master-key = s.beads-web-master-key.path;
       mate-runner-secret = s.beads-web-mate-runner-secret.path;
+      e2b-api-key = s.beads-web-e2b-api-key.path;
+      e2b-claude-oauth-token = s.beads-web-e2b-claude-oauth-token.path;
+      e2b-dolt-accounts = s.beads-web-e2b-dolt-accounts.path;
+      e2b-tailscale-oauth-secret = s.beads-web-e2b-tailscale-oauth-secret.path;
+      e2b-github-app-key = s.beads-web-e2b-github-app-key.path;
     };
     environment = {
       BEADS_DOLT_SERVER_HOST = "127.0.0.1";
       BEADS_DOLT_SERVER_PORT = "3306";
       BEADS_DOLT_SERVER_USER = "beads_web_reader";
-      # No agent dispatch provider on this host yet (docs/file-tackle-dispatch.md).
-      BDX_DISPATCH_PROVIDER = "none";
+      # Missions run in E2B sandboxes (docs/sand-e2b.md). First Mate chats
+      # go to forge's mate runner by default, or to a sandbox when the chat
+      # picks Sand under "Runs on".
+      BDX_DISPATCH_PROVIDER = "e2b";
+      BDX_MATE_RUNNERS = "remote,e2b";
+      # The template sandbox/e2b/build-template.ts builds (its default name).
+      BDX_E2B_TEMPLATE = "beadsmith-agent";
     };
     # BDX_ALLOWED_HOSTS, BDX_PUBLIC_ORIGIN (from BEADS_PUBLIC_HOST, kept out
     # of this public repository) and BDX_CF_ACCESS_ISSUER / _AUDIENCE /
     # _ALLOWED_EMAILS and BDX_MATE_RUNNER_URL, rendered by sops-nix (secrets.nix).
-    environmentFiles = [ accessEnv ];
+    # BDX_E2B_TAILSCALE_OAUTH_CLIENT_ID and BDX_E2B_GITHUB_APP_ID, likewise.
+    environmentFiles = [
+      accessEnv
+      e2bEnv
+    ];
   };
 
   systemd.services.beadsmith = {
@@ -43,7 +58,10 @@ in
     serviceConfig.ExecStartPre = lib.mkBefore [
       "+${pkgs.writeShellScript "beadsmith-require-secrets" ''
         for f in ${
-          lib.concatStringsSep " " (lib.attrValues config.services.beadsmith.credentials ++ [ accessEnv ])
+          lib.concatStringsSep " " (lib.attrValues config.services.beadsmith.credentials ++ [
+            accessEnv
+            e2bEnv
+          ])
         }; do
           if [ ! -r "$f" ]; then
             echo "$f is missing; did sops-nix decrypt fleet/secrets/beads.yaml?" >&2
