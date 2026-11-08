@@ -408,4 +408,13 @@ describe('run files', () => {
 			error_message: 'The agent exited with code 2 before reporting a result.'
 		});
 	});
+
+	it('names the setup step that failed', () => {
+		expect(runUpdateFromFiles({ exists: true, exit_code: 10, cancelled: false }, '')).toMatchObject(
+			{ status: 'failed', error_message: 'The sandbox could not join the tailnet.' }
+		);
+		expect(runUpdateFromFiles({ exists: true, exit_code: 13, cancelled: false }, '')).toMatchObject(
+			{ error_message: 'The sandbox joined the tailnet but Dolt did not answer.' }
+		);
+	});
 });

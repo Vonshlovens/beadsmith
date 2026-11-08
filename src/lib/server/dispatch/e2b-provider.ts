@@ -159,6 +159,17 @@ export function parseRunFiles(stdout: string): RunFiles {
 	};
 }
 
+/**
+ * Setup failures `sandbox/e2b/beadsmith-run` reports by exit code, before
+ * the agent starts. Details are in the run's setup.log in the sandbox.
+ */
+const SETUP_FAILURES: Record<number, string> = {
+	10: 'The sandbox could not join the tailnet.',
+	11: 'The sandbox could not clone the repository.',
+	12: 'The sandbox could not open its working directory.',
+	13: 'The sandbox joined the tailnet but Dolt did not answer.'
+};
+
 /** A run's files → the provider-neutral run update. */
 export function runUpdateFromFiles(files: RunFiles, redact: string): AgentRunUpdate {
 	if (!files.exists) {
@@ -189,7 +200,8 @@ export function runUpdateFromFiles(files: RunFiles, redact: string): AgentRunUpd
 		...base,
 		error_message:
 			result === undefined
-				? `The agent exited with code ${files.exit_code} before reporting a result.`
+				? (SETUP_FAILURES[files.exit_code] ??
+					`The agent exited with code ${files.exit_code} before reporting a result.`)
 				: (result.text ?? 'The agent run failed.')
 	};
 }
