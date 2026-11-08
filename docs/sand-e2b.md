@@ -91,7 +91,19 @@ single-use key per run.
 
 The sandbox runs `tailscaled` in userspace mode (no TUN device needed) and
 forwards `127.0.0.1:3306` to `BDX_E2B_DOLT_TAILNET_HOST` (default `beads`)
-for `bd`.
+for `bd`. E2B gives a sandbox only a link-local address, which `tailscaled`
+treats as no network at all, so `beadsmith-run` first puts a private address
+on the sandbox's unused `dummy0`. It then waits for Dolt's greeting before
+starting the agent: the tailnet policy reaches the Dolt host a few seconds
+after a new node joins. It also writes a server-mode `.beads/` into the
+working directory when the checkout has none, because `bd` will not run
+without one.
+
+The template's `bd` must match the schema of the databases sandboxes open,
+which may be older than the version `nix/overlay.nix` pins (see
+`BD_VERSION` in [`sandbox/e2b/build-template.ts`](../sandbox/e2b/build-template.ts)).
+A newer `bd` on an older schema fails with errors such as
+`table not found: leases`.
 
 ### 3. Dolt accounts (dispatch)
 
@@ -221,18 +233,21 @@ be reached, the chat stays so the delete can be retried.
 
 ## Before relying on it
 
-These parts are built from E2B's, Tailscale's and GitHub's documentation and
-covered by unit tests with fakes. They have not yet run against the live
-services, so check them on the first mission and chat:
+Checked against the live services:
 
 - Claude Code reaches the model through E2B's egress, with the placeholder
-  replaced (an answer at all proves it).
+  replaced.
+- `tailscaled` in userspace mode joins through E2B's egress (relayed over
+  DERP on 443), and `bd` reaches Dolt through the local forward and targets
+  the project with `BEADS_DOLT_SERVER_DATABASE`.
+
+Not yet checked:
+
 - `git clone` and `gh pr create` work with the injected GitHub headers.
-- `tailscaled` in userspace mode joins through E2B's egress (over DERP on
-  443), and `bd` reaches Dolt through the local forward and targets the
-  project with `BEADS_DOLT_SERVER_DATABASE`.
 - A paused chat resumes and continues its Claude Code session.
 
-`~/.beadsmith/runs/<run>/setup.log` and `stderr.log` in a mission's sandbox,
-and `~/.beadsmith/tailscale/tailscaled.log`, say what went wrong. Open them
-from E2B's dashboard or CLI; the mission's agent id is the sandbox id.
+A failed setup step shows in the thread by name (joining the tailnet,
+reaching Dolt, cloning). `~/.beadsmith/runs/<run>/setup.log` and
+`stderr.log` in a mission's sandbox, and
+`~/.beadsmith/tailscale/tailscaled.log`, say what went wrong. Open them from
+E2B's dashboard or CLI; the mission's agent id is the sandbox id.

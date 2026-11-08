@@ -8,14 +8,17 @@
  * The name defaults to `beadsmith-agent` (BDX_E2B_TEMPLATE). Rebuild after
  * changing this file or `beadsmith-run`; running sandboxes keep the old build.
  *
- * Versions are pinned. bd matches nix/overlay.nix and is checksum-verified;
+ * Versions are pinned. bd is checksum-verified and matches the schema of the
+ * Beads databases sandboxes open, not nix/overlay.nix: the maintainer's
+ * projects are still on bd 1.1's schema, and bd 1.3 fails on them
+ * ("table not found: leases"). Move it with the databases' own migration;
  * Claude Code is an npm `stable` release at least three days old, like the
  * rest of the repository's dependencies (pnpm-workspace.yaml).
  */
 import { Template, defaultBuildLogger } from 'e2b';
 
-const BD_VERSION = '1.3.1';
-const BD_SHA256_LINUX_AMD64 = '3219443a9734b89b93fb16ee8d65844759fa1b3cd3cf139c606b7353cfb0715c';
+const BD_VERSION = '1.1.0';
+const BD_SHA256_LINUX_AMD64 = 'b0f3dd607c3fb989ee08d0a6854fba80d0402971eb108f9af6170bc14d491a34';
 const CLAUDE_CODE_VERSION = '2.1.311';
 
 const name = process.argv[2] ?? 'beadsmith-agent';

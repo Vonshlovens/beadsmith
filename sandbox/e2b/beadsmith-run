@@ -52,7 +52,15 @@ ts() { tailscale --socket="$ts_sock" "$@"; }
 pkill -f "tailscaled .*--socket=$ts_sock" 2>/dev/null
 pkill -f "socat TCP-LISTEN:${BEADS_DOLT_SERVER_PORT:-3306}" 2>/dev/null
 sleep 0.5
-tailscaled --tun=userspace-networking --state=mem: --socket="$ts_sock" \
+# E2B gives the sandbox only a link-local address (169.254.0.x). tailscaled
+# does not count link-local as a usable network, decides the machine is
+# offline and pauses its control client, so `tailscale up` waits forever.
+# One private address on the unused dummy0 is enough to unpause it; nothing
+# routes to it. Already present after a resume: ignore the error.
+sudo -n ip link set dummy0 up 2>/dev/null
+sudo -n ip addr add 10.254.254.1/32 dev dummy0 2>/dev/null
+# Debian installs the daemon in /usr/sbin, which is not on the user's PATH.
+/usr/sbin/tailscaled --tun=userspace-networking --state=mem: --socket="$ts_sock" \
 	--statedir="$ts_dir" >"$ts_dir/tailscaled.log" 2>&1 &
 for _ in $(seq 1 50); do [ -S "$ts_sock" ] && break; sleep 0.2; done
 
@@ -74,10 +82,22 @@ dolt_host="${BEADSMITH_DOLT_TAILNET_HOST:-beads}"
 dolt_port="${BEADSMITH_DOLT_TAILNET_PORT:-3306}"
 socat "TCP-LISTEN:${BEADS_DOLT_SERVER_PORT:-3306},bind=127.0.0.1,reuseaddr,fork" \
 	"EXEC:tailscale --socket=$ts_sock nc $dolt_host $dolt_port" &
-for _ in $(seq 1 25); do
-	(echo >"/dev/tcp/127.0.0.1/${BEADS_DOLT_SERVER_PORT:-3306}") 2>/dev/null && break
-	sleep 0.2
+# Wait for Dolt's greeting, not just the local listener: Beads' tailnet
+# policy reaches host beads a few seconds after this node joins, and until
+# then its packets are dropped and a connection hangs instead of failing.
+dolt_up=0
+for _ in $(seq 1 30); do
+	if timeout 3 bash -c 'exec 3<>"/dev/tcp/127.0.0.1/$1" && head -c 1 <&3 >/dev/null' _ \
+		"${BEADS_DOLT_SERVER_PORT:-3306}" 2>/dev/null; then
+		dolt_up=1
+		break
+	fi
+	sleep 2
 done
+if [ "$dolt_up" -ne 1 ]; then
+	echo "Dolt did not answer over the tailnet ($dolt_host:$dolt_port)"
+	finish 13
+fi
 
 # --- Checkout (first run only) -----------------------------------------------
 if [ ! -d "$work" ]; then
@@ -92,6 +112,21 @@ if [ ! -d "$work" ]; then
 	fi
 fi
 cd "$work" || finish 12
+
+# bd needs a .beads/ workspace even when BEADS_DOLT_* says where the server
+# is, and .beads/ is usually not committed. Write a server-mode one unless
+# the checkout brought its own; the environment overrides its values anyway.
+if [ ! -f .beads/metadata.json ]; then
+	mkdir -p .beads
+	chmod 700 .beads
+	printf '{"database":"dolt","backend":"dolt","dolt_mode":"server","dolt_server_host":"127.0.0.1","dolt_server_port":%s,"dolt_database":"%s"}\n' \
+		"${BEADS_DOLT_SERVER_PORT:-3306}" "${BEADS_DOLT_SERVER_DATABASE:-}" >.beads/metadata.json
+	# Never push or sync from a sandbox: Dolt is the shared server.
+	printf 'no-push: true\ndolt:\n  local-only: true\n' >.beads/config.yaml
+	if git rev-parse --git-dir >/dev/null 2>&1; then
+		grep -qxF '.beads/' .git/info/exclude 2>/dev/null || echo '.beads/' >>.git/info/exclude
+	fi
+fi
 
 # --- The agent ----------------------------------------------------------------
 args=(-p --output-format stream-json --verbose --dangerously-skip-permissions)
