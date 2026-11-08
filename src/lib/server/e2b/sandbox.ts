@@ -42,7 +42,12 @@ export interface E2bBaseSettings {
 	allow_out?: string[];
 }
 
-/** Read the configured model credential. */
+/**
+ * Read the configured model credential. Keys and tokens never contain
+ * whitespace, but one copied from a wrapped terminal line (`claude
+ * setup-token` prints a long one) does, and E2B then refuses the whole
+ * sandbox because the header value is invalid. Drop it here.
+ */
 export async function readModelCredential(
 	settings: E2bBaseSettings,
 	read_secret: (path: string, what: string) => Promise<string>
@@ -50,13 +55,21 @@ export async function readModelCredential(
 	if (settings.anthropic_api_key_file !== undefined) {
 		return {
 			kind: 'api_key',
-			value: await read_secret(settings.anthropic_api_key_file, 'Anthropic API key')
+			value: stripWhitespace(
+				await read_secret(settings.anthropic_api_key_file, 'Anthropic API key')
+			)
 		};
 	}
 	return {
 		kind: 'oauth_token',
-		value: await read_secret(settings.claude_oauth_token_file ?? '', 'Claude OAuth token')
+		value: stripWhitespace(
+			await read_secret(settings.claude_oauth_token_file ?? '', 'Claude OAuth token')
+		)
 	};
+}
+
+function stripWhitespace(value: string): string {
+	return value.replace(/\s+/g, '');
 }
 
 /** The env Claude Code needs to try the model at all; values are placeholders. */
