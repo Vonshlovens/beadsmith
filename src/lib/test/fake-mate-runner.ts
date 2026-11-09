@@ -132,7 +132,12 @@ export function createFakeMateRunner(secret = FAKE_RUNNER_SECRET): FakeMateRunne
 				if (seen !== undefined) {
 					return json(202, { event_id: seen });
 				}
-				const event_id = append(chat_id, { type: 'user', text: payload.prompt });
+				// The real runner records the message id on the user event (event-log.ts).
+				const event_id = append(chat_id, {
+					type: 'user',
+					text: payload.prompt,
+					message_id: payload.message_id
+				});
 				chat.messages.set(payload.message_id, event_id);
 				return json(202, { event_id });
 			}

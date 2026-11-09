@@ -44,7 +44,7 @@ import {
 } from './repositories.js';
 import { mergeTackleMaps } from './tackle-maps.js';
 import { DispatchError, type DispatchPayload, type DispatchRecord } from './types.js';
-import type { DispatchStore, ListDispatchFilter } from './store.js';
+import { chatNoticeKey, type DispatchStore, type ListDispatchFilter } from './store.js';
 
 export interface EnqueueDispatchInput {
 	idempotency_key: string;
@@ -74,6 +74,12 @@ export interface DispatchDeps {
 	sleep?: (delay_ms: number) => Promise<void>;
 	max_poll_attempts?: number;
 	policy?: DispatchPolicy;
+	/**
+	 * Tell a chat-launched mission's chat its outcome (ADR-0020 rule 5).
+	 * Called, not awaited, on every terminal transition of such a mission;
+	 * defaults to `deliverCrewNotice`, which skips outcomes already told.
+	 */
+	notify_chat?: (record: DispatchRecord) => Promise<unknown>;
 }
 
 const NOT_CONFIGURED_MESSAGE = 'Agent dispatch is not configured on this service.';
@@ -161,7 +167,8 @@ async function persistRunUpdate(
 	store: DispatchStore,
 	request_id: string,
 	run_id: string,
-	update: AgentRunUpdate
+	update: AgentRunUpdate,
+	deps: DispatchDeps
 ): Promise<DispatchRecord | undefined> {
 	const saved = await store.updateStatus(request_id, {
 		status: update.status,
@@ -183,8 +190,46 @@ async function persistRunUpdate(
 			result_summary: update.result_summary,
 			error_message: update.error_message
 		});
+		notifyChat(saved, deps);
 	}
 	return saved;
+}
+
+async function defaultNotifyChat(record: DispatchRecord): Promise<unknown> {
+	// Imported on use: the notice module reaches the chat runners, which load
+	// the crew tools, which import this module.
+	const notices = await import('../crew/notices.js');
+	return notices.deliverCrewNotice(record, await notices.defaultCrewNoticeDeps());
+}
+
+/**
+ * Tell the launching chat a mission's outcome, in the background. Status
+ * bookkeeping never waits on the chat's runner and never fails because of it.
+ */
+function notifyChat(record: DispatchRecord | undefined, deps: DispatchDeps): void {
+	if (record?.chat_id === undefined || chatNoticeKey(record) === undefined) return;
+	try {
+		void (deps.notify_chat ?? defaultNotifyChat)(record).catch(() => {});
+	} catch {
+		// A notifier that throws synchronously is as good as a deferred notice.
+	}
+}
+
+/**
+ * A launch that fails synchronously answers the crew tool that asked for it,
+ * so its chat already knows: record that instead of sending a notice too.
+ */
+async function markChatToldAtLaunch(
+	store: DispatchStore,
+	record: DispatchRecord | undefined
+): Promise<void> {
+	const key = record === undefined ? undefined : chatNoticeKey(record);
+	if (record?.chat_id === undefined || key === undefined) return;
+	try {
+		await store.markChatNotice(record.id, key);
+	} catch {
+		// At worst the chat hears the outcome twice.
+	}
 }
 
 /**
@@ -282,7 +327,8 @@ async function resolveRunId(
 async function refreshDispatchRecord(
 	record: DispatchRecord,
 	store: DispatchStore,
-	provider: AgentProvider
+	provider: AgentProvider,
+	deps: DispatchDeps
 ): Promise<DispatchRecord> {
 	const resolved = await resolveRunId(record, store, provider);
 	if (resolved.agent_id === undefined || resolved.run_id === undefined) {
@@ -290,7 +336,7 @@ async function refreshDispatchRecord(
 	}
 	const update = await provider.getRun(resolved.agent_id, resolved.run_id);
 	return (
-		(await persistRunUpdate(store, resolved.id, resolved.run_id, update)) ?? {
+		(await persistRunUpdate(store, resolved.id, resolved.run_id, update, deps)) ?? {
 			...resolved,
 			...update
 		}
@@ -320,7 +366,7 @@ async function followDispatchRecord(
 				resolved.agent_id,
 				resolved.run_id,
 				async (update) => {
-					await persistRunUpdate(store, resolved.id, run_id, update);
+					await persistRunUpdate(store, resolved.id, run_id, update, deps);
 				}
 			);
 			if (stream_outcome === 'terminal') {
@@ -336,7 +382,7 @@ async function followDispatchRecord(
 	for (let attempt = 0; attempt < attempts; attempt += 1) {
 		try {
 			const update = await provider.getRun(resolved.agent_id, run_id);
-			await persistRunUpdate(store, resolved.id, run_id, update);
+			await persistRunUpdate(store, resolved.id, run_id, update, deps);
 			if (isTerminalRunStatus(update.status)) {
 				return;
 			}
@@ -488,6 +534,7 @@ export async function enqueueDispatch(
 		await appendAgentTurn(store, working.id, undefined, 'failed', {
 			error_message: plan.error_message
 		});
+		await markChatToldAtLaunch(store, failed);
 		return {
 			request: toPublicDispatch(failed ?? { ...working, status: 'failed' }),
 			created: true
@@ -529,6 +576,7 @@ export async function enqueueDispatch(
 			error_message: message
 		});
 		await appendAgentTurn(store, working.id, undefined, 'failed', { error_message: message });
+		await markChatToldAtLaunch(store, failed);
 		return {
 			request: toPublicDispatch(failed ?? { ...working, status: 'failed' }),
 			created: true
@@ -755,7 +803,7 @@ export async function getDispatch(
 	const provider = providerForRecord(record, deps);
 	if (isFollowableStatus(record.status) && provider !== undefined) {
 		try {
-			current = await refreshDispatchRecord(record, store, provider);
+			current = await refreshDispatchRecord(record, store, provider, deps);
 		} catch {
 			// GET returns the last durable state when the provider is unavailable.
 		}
@@ -820,7 +868,7 @@ export async function cancelDispatch(
 	let current = record;
 	if (isFollowableStatus(current.status)) {
 		try {
-			current = await refreshDispatchRecord(current, store, provider);
+			current = await refreshDispatchRecord(current, store, provider, deps);
 		} catch {
 			current = record;
 		}
@@ -842,7 +890,7 @@ export async function cancelDispatch(
 	} catch (error) {
 		if (error instanceof DispatchError && error.code === 'conflict') {
 			try {
-				current = await refreshDispatchRecord(current, store, provider);
+				current = await refreshDispatchRecord(current, store, provider, deps);
 			} catch {
 				throw error;
 			}
@@ -854,15 +902,17 @@ export async function cancelDispatch(
 	}
 
 	try {
-		current = await refreshDispatchRecord(current, store, provider);
+		current = await refreshDispatchRecord(current, store, provider, deps);
 	} catch {
 		const cancelled = await store.updateStatus(current.id, { status: 'cancelled' });
 		await appendAgentTurn(store, current.id, current.run_id, 'cancelled', {});
+		notifyChat(cancelled, deps);
 		return toPublicDispatch(cancelled ?? { ...current, status: 'cancelled' });
 	}
 	if (!isTerminalDispatchStatus(current.status)) {
 		const cancelled = await store.updateStatus(current.id, { status: 'cancelled' });
 		await appendAgentTurn(store, current.id, current.run_id, 'cancelled', {});
+		notifyChat(cancelled, deps);
 		current = cancelled ?? { ...current, status: 'cancelled' };
 	}
 	return toPublicDispatch(current);
@@ -906,7 +956,7 @@ export async function followUpDispatch(
 	let current = record;
 	if (isFollowableStatus(current.status)) {
 		try {
-			current = await refreshDispatchRecord(current, store, provider);
+			current = await refreshDispatchRecord(current, store, provider, deps);
 		} catch {
 			current = record;
 		}

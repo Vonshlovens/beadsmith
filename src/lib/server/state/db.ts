@@ -81,7 +81,9 @@ const DISPATCH_COLUMN_MIGRATIONS = [
 	{ name: 'git_pr_url', sql: 'ALTER TABLE dispatch_requests ADD COLUMN git_pr_url TEXT' },
 	{ name: 'provider', sql: 'ALTER TABLE dispatch_requests ADD COLUMN provider TEXT' },
 	// The First Mate chat whose crew tool launched the mission (ADR-0020 rule 5).
-	{ name: 'chat_id', sql: 'ALTER TABLE dispatch_requests ADD COLUMN chat_id TEXT' }
+	{ name: 'chat_id', sql: 'ALTER TABLE dispatch_requests ADD COLUMN chat_id TEXT' },
+	// The outcome that chat was last told (`chatNoticeKey`), so it hears each once.
+	{ name: 'chat_notice', sql: 'ALTER TABLE dispatch_requests ADD COLUMN chat_notice TEXT' }
 ] as const;
 
 export interface StateStore {

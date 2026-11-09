@@ -162,6 +162,12 @@ recorded for this message.
   can settle a pending message even before its POST response arrives. The
   field is optional for older events; only the same bounded identifier
   format is accepted.
+- Beadsmith sends some messages itself: a **crew notice** tells the agent
+  that a mission it launched with a crew tool has finished. Its
+  `message_id` starts with `crew-` (and is derived from the mission and its
+  outcome, so a repeat is dropped); the browser may not use that prefix, and
+  the chat shows such `user` events as a labelled crew update, not as yours.
+  A runner needs nothing special for them.
 - `scope` is the opaque Beadsmith project id the chat is about (`d_` and the
   Dolt database name, which may itself contain underscores), or null for
   every project. It may change between messages.

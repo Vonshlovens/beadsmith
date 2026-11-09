@@ -1,4 +1,5 @@
 import type { RequestHandler } from './$types';
+import { defaultCrewNoticeDeps, deliverDueCrewNotices } from '#lib/server/crew/notices.js';
 import { getMateRunner } from '#lib/server/mate/runner.js';
 import { ownedChat } from '#lib/server/mate/route.js';
 import { mateEventStream, SSE_HEADERS } from '#lib/server/mate/service.js';
@@ -14,6 +15,10 @@ import { mate_event_id_schema, parseValue } from '#lib/server/validation.js';
  * an `event: runner_error` frame, then the stream closes and EventSource
  * reconnects. Closing the browser closes only this relay: the session keeps
  * running on the runner. `503` when no runner is configured.
+ *
+ * Opening the chat also retries crew notices it is still owed (missions it
+ * launched that finished while its runner was unavailable), in the
+ * background; they arrive on this stream like any other message.
  */
 export const GET: RequestHandler = async ({ params, locals, request, url }) => {
 	let owned;
@@ -38,6 +43,9 @@ export const GET: RequestHandler = async ({ params, locals, request, url }) => {
 		}
 		after = parsed.data;
 	}
+	void defaultCrewNoticeDeps()
+		.then((deps) => deliverDueCrewNotices(owned.chat.id, deps))
+		.catch(() => {});
 	const stream = mateEventStream({
 		store: owned.store,
 		runner,

@@ -76,6 +76,21 @@ export const MAX_MESSAGE_CHARS = 4000;
 /** `message_id`: generated once per message, reused on a retry. */
 export const MESSAGE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
+/**
+ * Message ids Beadsmith itself sends with: a crew notice, the short
+ * system-authored message that tells a chat's agent a mission it launched has
+ * finished (ADR-0020 rule 5). The runner contract has no author field, but it
+ * carries the message id through to the stored `user` event, so the prefix is
+ * what marks the event as Beadsmith's rather than the user's. The browser may
+ * not send ids with this prefix.
+ */
+export const CREW_NOTICE_PREFIX = 'crew-';
+
+/** Whether a stored event is a crew notice rather than something the user typed. */
+export function isCrewNotice(event: MissionEvent): boolean {
+	return event.type === 'user' && event.message_id?.startsWith(CREW_NOTICE_PREFIX) === true;
+}
+
 /** Server-generated chat ids. */
 export const CHAT_ID_PATTERN = /^mc_[a-f0-9]{24}$/;
 

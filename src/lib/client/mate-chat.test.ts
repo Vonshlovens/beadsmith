@@ -40,6 +40,21 @@ describe('chatHref', () => {
 });
 
 describe('groupMateEvents', () => {
+	it('shows a crew notice as the crew’s, not yours, and starts a new row', () => {
+		const bubbles = groupMateEvents([
+			ev({ type: 'user', id: 'e1', text: 'tackle web-12', message_id: 'b6c1f0de' }),
+			ev({
+				type: 'user',
+				id: 'e2',
+				text: '[crew] Tackle on web-12 succeeded.',
+				message_id: 'crew-ab12'
+			}),
+			ev({ type: 'assistant', id: 'e3', text: 'The PR is up, captain.' })
+		]);
+		expect(bubbles.map((bubble) => bubble.role)).toEqual(['you', 'crew', 'mate']);
+		expect(placeMateRows(bubbles).map((row) => row.head)).toEqual([true, true, true]);
+	});
+
 	it('groups a turn into one bubble, with tool calls upserted', () => {
 		const bubbles = groupMateEvents([
 			ev({ type: 'user', id: 'e1', text: 'tackle it' }),

@@ -183,3 +183,24 @@ The launch limit (`launch-limit.ts`, `BDX_CREW_LAUNCH_LIMIT` per
 sliding window per chat; a replay or a refused launch gives its slot back.
 Results carry `launched`, `operation`, `project`, `issue_id` and
 `mission_id`.
+
+**Crew notices.** `src/lib/server/crew/notices.ts`. Every terminal
+transition of a mission with a `chat_id` (the follower's stream or poll, a
+refresh, a cancel) hands the row to `deliverCrewNotice` in the background;
+dispatch never waits on it. The outcome is the current run's terminal status
+(`chatNoticeKey`, `<status>:<run_id>`), so a follow-up run reports again.
+`dispatch_requests.chat_notice` records the outcome the chat was last told,
+which makes a repeat observation, a second process or a restart a no-op; the
+message id, `crew-` and a hash of the mission and outcome, lets the runner
+drop a racing duplicate. A launch that fails synchronously is marked told
+without a message, since the tool result already said so. When the chat's
+runner is unconfigured or down the notice stays due, and opening the chat
+(`GET /api/mate/chats/:id/events`) delivers what is owed; a deleted chat, a
+banned owner or a runner conflict marks it told instead of retrying forever.
+The text is one line: `[crew] Tackle on <issue> (<project>) succeeded.`,
+the PR link, at most 280 characters of the summary or error, the mission id
+for `show_mission`, and "Tell the captain." The runner contract has no author
+field, so the `crew-` message-id prefix is what marks the stored `user` event
+as Beadsmith's (`isCrewNotice`); the browser may not send that prefix, and the
+chat renders those events as a labelled crew update. Missions have no
+"needs input" state yet, so only finished, failed and cancelled are told.
