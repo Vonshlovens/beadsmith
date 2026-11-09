@@ -287,7 +287,12 @@ export function createSdkDriver(api_key: () => Promise<string>): SandboxDriver {
 				timeoutMs: input.timeout_ms,
 				metadata: input.metadata,
 				envs: input.envs,
-				network: toSdkNetwork(input.network),
+				network: {
+					...toSdkNetwork(input.network),
+					// Public service URLs must require E2B's traffic token, regardless
+					// of the project default. SDK command/file access stays authenticated.
+					allowPublicTraffic: false
+				},
 				// Pause, not kill, so the next message or follow-up resumes the session.
 				lifecycle: { onTimeout: 'pause' }
 			});

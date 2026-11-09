@@ -122,6 +122,11 @@ is undocumented.
 
 - Shared E2B driver, egress plan and model credentials:
   [`src/lib/server/e2b/sandbox.ts`](../../src/lib/server/e2b/sandbox.ts).
+  Creation explicitly disables public inbound traffic for missions and chats;
+  sandbox service URLs require E2B's traffic access token. This enforces the
+  scoped sandbox boundary independently of the project's default. Existing
+  sandboxes retain their original setting and need the inventory and safe
+  replacement procedure in the [operator guide](../../docs/sand-e2b.md#inbound-access).
 - Dispatch provider:
   [`src/lib/server/dispatch/e2b-provider.ts`](../../src/lib/server/dispatch/e2b-provider.ts),
   stream mapping in `claude-stream.ts`, per-run credentials in

@@ -52,8 +52,10 @@ reality**. Search `src/` before treating a spec as implemented.
   First Mate's **Runs on** picker chooses where new work goes; each mission
   and chat keeps its runner. Model and GitHub keys are added by E2B's egress,
   never inside the sandbox; mission sandboxes join the tailnet with
-  single-use tagged keys and hold only their project's Dolt account. Beadsmith
-  drives E2B in-process, reusing the mate runner core for chats
+  single-use tagged keys and hold only their project's Dolt account. New
+  mission and chat sandboxes explicitly require a traffic token for inbound
+  service URLs; existing sandboxes need inventory and replacement if public.
+  Beadsmith drives E2B in-process, reusing the mate runner core for chats
   ([ADR-0018](decisions/0018-sand-e2b-sandboxes.md)).
 - First Mate chats on Sand get **crew tools**: one transport-free MCP tool
   module in Beadsmith (Beads reads, todo writes, mission launches) run as
