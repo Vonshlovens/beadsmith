@@ -19,7 +19,12 @@ export const MISSION_EVENT_TYPES = [
 
 export type MissionEventType = (typeof MISSION_EVENT_TYPES)[number];
 
-export type MissionToolCallStatus = 'running' | 'completed';
+/**
+ * `failed`: the tool returned an error (Claude Code's `tool_result` with
+ * `is_error`). Only the status crosses; the error text is tool output and
+ * stays out of the event.
+ */
+export type MissionToolCallStatus = 'running' | 'completed' | 'failed';
 
 export type MissionResultStatus = 'succeeded' | 'cancelled' | 'failed';
 
@@ -113,7 +118,7 @@ export function isMissionEvent(value: unknown): value is MissionEvent {
 				asNonEmptyText(value.call_id) !== undefined &&
 				typeof value.name === 'string' &&
 				TOOL_NAME_PATTERN.test(value.name) &&
-				(value.status === 'running' || value.status === 'completed')
+				(value.status === 'running' || value.status === 'completed' || value.status === 'failed')
 			);
 		case 'result':
 			return (

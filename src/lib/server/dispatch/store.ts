@@ -55,6 +55,8 @@ export const TURN_TEXT_MAX = 8000;
 export interface ListDispatchFilter {
 	project_id?: string;
 	issue_id?: string;
+	/** Missions a First Mate chat's crew tools launched (ADR-0020 rule 5). */
+	chat_id?: string;
 	limit: number;
 }
 
@@ -274,6 +276,10 @@ export function createDispatchStore(client: Client): DispatchStore {
 			if (filter.issue_id !== undefined) {
 				clauses.push("json_extract(payload_json, '$.issue_id') = ?");
 				args.push(filter.issue_id);
+			}
+			if (filter.chat_id !== undefined) {
+				clauses.push('chat_id = ?');
+				args.push(filter.chat_id);
 			}
 			args.push(filter.limit);
 			const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';

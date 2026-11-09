@@ -19,6 +19,11 @@ import { DELETE, GET as GET_ONE, PATCH } from './chats/[id]/+server.js';
 import { GET as EVENTS } from './chats/[id]/events/+server.js';
 import { POST as INTERRUPT } from './chats/[id]/interrupt/+server.js';
 import { POST as SEND } from './chats/[id]/messages/+server.js';
+import { GET as MISSIONS } from './chats/[id]/missions/+server.js';
+
+vi.mock('#lib/server/discovery.js', () => ({
+	discoverProjects: vi.fn(async () => [{ id: 'd_web', name: 'Web' }])
+}));
 
 const ADMIN = { id: 'u1', email: 'admin@example.com', name: 'Admin', role: 'admin' as const };
 const OTHER = { id: 'u2', email: 'other@example.com', name: 'Other', role: 'admin' as const };
@@ -455,5 +460,46 @@ describe('crew notices', () => {
 		await readFrames(await call(EVENTS, { id: chat.id }), 10);
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		expect(fake.events(chat.id).filter((event) => event.type === 'user')).toHaveLength(1);
+	});
+});
+
+describe('GET /api/mate/chats/:id/missions', () => {
+	async function launch(chat_id: string | undefined, key: string, issue_id: string) {
+		const { record } = await dispatch.create({
+			idempotency_key: key,
+			project_id: 'd_web',
+			dolt_database: 'web',
+			operation: 'tackle',
+			actor: ADMIN.email,
+			payload: { operation: 'tackle', issue_id },
+			...(chat_id === undefined ? {} : { chat_id })
+		});
+		return record;
+	}
+
+	it('lists only the missions this chat launched, with project names', async () => {
+		const chat = await createChat();
+		const other = await createChat();
+		const mine = await launch(chat.id, 'crew:mine-1', 'web-1');
+		await launch(other.id, 'crew:other-1', 'web-2');
+		await launch(undefined, 'browser-key-1', 'web-3');
+
+		const response = await call(MISSIONS, { id: chat.id });
+		expect(response.status).toBe(200);
+		const { missions } = (await response.json()) as {
+			missions: { id: string; issue_id?: string; project_name: string }[];
+		};
+		expect(missions).toEqual([
+			expect.objectContaining({ id: mine.id, issue_id: 'web-1', project_name: 'Web' })
+		]);
+		// Which chat launched it stays server-side.
+		expect(JSON.stringify(missions)).not.toContain(chat.id);
+	});
+
+	it('is private to the chat owner', async () => {
+		const chat = await createChat();
+		await launch(chat.id, 'crew:mine-2', 'web-1');
+		expect((await call(MISSIONS, { id: chat.id, user: OTHER })).status).toBe(404);
+		expect((await call(MISSIONS, { id: chat.id, user: undefined })).status).toBe(401);
 	});
 });

@@ -121,7 +121,7 @@ export class ClaudeStreamMapper {
 						type: 'tool_call',
 						call_id: block.tool_use_id,
 						name: this.tool_names.get(block.tool_use_id) ?? 'tool',
-						status: 'completed'
+						status: block.is_error === true ? 'failed' : 'completed'
 					});
 				}
 			}

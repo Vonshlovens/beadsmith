@@ -41,6 +41,26 @@ describe('ClaudeStreamMapper', () => {
 		).toEqual([{ type: 'result', status: 'succeeded', text: 'Two ready.', duration_ms: 1234 }]);
 	});
 
+	it('marks a tool result with is_error as a failed call, without its output', () => {
+		const mapper = new ClaudeStreamMapper();
+		mapper.map({
+			type: 'assistant',
+			message: { content: [{ type: 'tool_use', id: 't', name: 'mcp__crew__show_issue' }] }
+		});
+		const events = mapper.map({
+			type: 'user',
+			message: {
+				content: [
+					{ type: 'tool_result', tool_use_id: 't', is_error: true, content: 'no such issue' }
+				]
+			}
+		});
+		expect(events).toEqual([
+			{ type: 'tool_call', call_id: 't', name: 'mcp__crew__show_issue', status: 'failed' }
+		]);
+		expect(JSON.stringify(events)).not.toContain('no such issue');
+	});
+
 	it('never forwards tool inputs or outputs', () => {
 		const mapper = new ClaudeStreamMapper();
 		const events = [

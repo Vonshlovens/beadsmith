@@ -90,6 +90,17 @@ once (`dispatch_requests.chat_notice`); if the runner is down, opening the
 chat delivers what is owed. The chat shows these as a labelled crew update,
 not as your message.
 
+In the transcript, crew tool calls read as short activity lines in words
+("Checked ready work", "Requested a Tackle mission") rather than tool names;
+a launch line says the mission was requested, because the call can still be
+refused. Each mission the chat started shows as a card under the agent's
+message it came from: operation, issue, project, live status, run time, the
+pull request, a link to its thread and, while its runner can cancel it,
+Stop. The cards come from `GET /api/mate/chats/:id/missions` and refresh when
+a launch tool returns, when a crew notice arrives, and every 12 seconds while
+one is still working. Tool arguments and results are not shown: chats keep
+only each call's name and status.
+
 Mission tools need dispatch configured (`BDX_DISPATCH_PROVIDER`); without it
 they answer with the reason, and the read and todo tools still work. Chats on
 the `remote` runner have no crew tools yet: the forge guest keeps its own
@@ -129,6 +140,7 @@ errors use the normal `{ error: { code, message } }` envelope.
 | `DELETE /api/mate/chats/:id`         | Stops the runner session, then deletes the chat. If the runner cannot stop it, the chat stays (`503`) so the delete can be retried.                                                                                        |
 | `POST /api/mate/chats/:id/messages`  | `{ text, message_id? }` → `202`. With a runner: `{ event_id }`. Without: `{ events }`, the stored message and placeholder reply.                                                                                           |
 | `GET /api/mate/chats/:id/events`     | `text/event-stream`, below. `503` without a runner.                                                                                                                                                                        |
+| `GET /api/mate/chats/:id/missions`   | `{ missions }`: the missions this chat's crew tools launched, newest first (at most 50), in the `/api/missions` shape. Which chat launched a mission is never in the payload.                                              |
 | `POST /api/mate/chats/:id/interrupt` | `202`: stops the agent's current turn. The session keeps running.                                                                                                                                                          |
 
 `text` is trimmed and capped at 4,000 characters. `message_id`

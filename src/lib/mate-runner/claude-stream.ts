@@ -102,7 +102,12 @@ export class ClaudeStreamMapper {
 			const name = this.#tools.get(id);
 			if (name === undefined) continue;
 			this.#tools.delete(id);
-			events.push({ type: 'tool_call', call_id: id, name, status: 'completed' });
+			events.push({
+				type: 'tool_call',
+				call_id: id,
+				name,
+				status: block.is_error === true ? 'failed' : 'completed'
+			});
 		}
 		return events;
 	}

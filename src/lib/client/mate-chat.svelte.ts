@@ -10,10 +10,20 @@
  */
 import { run_place } from '#lib/client/agent-runner.svelte.js';
 import { browser } from '$app/env';
+import { isBusyStatus, isFollowedMission, THREAD_POLL_MS } from '#lib/client/agent.js';
 import { api, errorMessage } from '#lib/client/api.js';
+import { statusSnapshot } from '#lib/client/projects.svelte.js';
 import { isMissionEvent } from '#lib/mission-events.js';
-import { chatTitle, isWorking, mergeEvents } from '#lib/client/mate-chat.js';
+import { chatTitle, isWorking, mergeEvents, touchesMissions } from '#lib/client/mate-chat.js';
 import type { MateChat, MateEvent, MateStatus } from '#lib/mate.js';
+import type { DispatchRequest, Mission } from '#lib/types.js';
+
+/**
+ * How often the open chat re-reads its missions that are still running.
+ * Slower than a mission thread's own poll: these are glanceable cards, and
+ * a finished mission also arrives as a crew notice, which refreshes at once.
+ */
+export const CHAT_MISSION_POLL_MS = THREAD_POLL_MS * 3;
 
 /** A message on its way, until its `user` event comes back. */
 export interface PendingMessage {
@@ -65,7 +75,19 @@ class MateChats {
 	stream_error = $state<string | null>(null);
 	interrupting = $state(false);
 
+	/** Missions the open chat's crew tools launched (ADR-0020 rule 5). */
+	missions = $state<Mission[]>([]);
+	/** Their first read failed; the chat itself still works. */
+	missions_error = $state<string | null>(null);
+	/** Mission ids with a cancel request in flight. */
+	cancelling = $state<Record<string, boolean>>({});
+	/** Why a mission's cancel failed, by mission id, until the next try. */
+	cancel_errors = $state<Record<string, string>>({});
+
 	#generation = 0;
+	/** Bumped per missions read; a reply from an older read is dropped. */
+	#missions_seq = 0;
+	#mission_poll: ReturnType<typeof setInterval> | null = null;
 	#source: EventSource | null = null;
 	#loading: Promise<void> | null = null;
 
@@ -138,6 +160,7 @@ class MateChats {
 			}
 			this.#add(detail.events);
 			this.#upsertChat(detail.chat);
+			void this.loadMissions(id);
 			if (this.connected) {
 				this.#follow(id);
 			}
@@ -164,6 +187,97 @@ class MateChats {
 		this.action_error = null;
 		this.scope_saving = false;
 		this.opening = false;
+		this.missions = [];
+		this.missions_error = null;
+		this.cancelling = {};
+		this.cancel_errors = {};
+		this.#syncMissionPoll();
+	}
+
+	/**
+	 * Read the open chat's missions. A failure keeps the cards already shown
+	 * (they are stale, not gone) and only says so when there are none.
+	 *
+	 * @param id - The open chat's id.
+	 */
+	async loadMissions(id: string) {
+		const generation = this.#generation;
+		// Opening, polling and crew events can overlap; only the newest read
+		// may land, or an older answer could hide a card that just appeared.
+		const seq = ++this.#missions_seq;
+		try {
+			const { missions } = await api.mateChatMissions(id);
+			if (this.#generation !== generation || seq !== this.#missions_seq) return;
+			this.missions = missions;
+			this.missions_error = null;
+		} catch (error) {
+			if (this.#generation !== generation || seq !== this.#missions_seq) return;
+			this.missions_error = errorMessage(error);
+		}
+		this.#syncMissionPoll();
+	}
+
+	/**
+	 * Cancel a mission the chat launched, as its thread's Stop does. The card
+	 * shows the status the server answers with; the crew notice follows.
+	 *
+	 * @param mission - One of `missions`.
+	 */
+	async cancelMission(mission: Mission) {
+		if (this.cancelling[mission.id]) return;
+		const generation = this.#generation;
+		this.cancelling[mission.id] = true;
+		delete this.cancel_errors[mission.id];
+		try {
+			const { request } = await api.cancelDispatch(mission.project_id, mission.id);
+			if (this.#generation === generation) this.#updateMission(request);
+		} catch (error) {
+			if (this.#generation === generation) {
+				this.cancel_errors[mission.id] = `Could not stop it. ${errorMessage(error)}`;
+			}
+		} finally {
+			if (this.#generation === generation) delete this.cancelling[mission.id];
+		}
+	}
+
+	#updateMission(request: DispatchRequest) {
+		this.missions = this.missions.map((mission) =>
+			mission.id === request.id ? { ...mission, ...request } : mission
+		);
+		this.#syncMissionPoll();
+	}
+
+	/**
+	 * Poll while any mission the chat shows is still working and followed.
+	 * Each read goes through the mission's own status route, which also
+	 * records a finished run (the missions list only reads what is stored).
+	 */
+	#syncMissionPoll() {
+		const dispatch = statusSnapshot()?.dispatch ?? null;
+		const busy = this.missions.filter(
+			(mission) => isBusyStatus(mission.status) && isFollowedMission(mission, dispatch)
+		);
+		if (busy.length === 0 || this.open_id === null) {
+			if (this.#mission_poll !== null) clearInterval(this.#mission_poll);
+			this.#mission_poll = null;
+			return;
+		}
+		if (this.#mission_poll !== null) return;
+		const generation = this.#generation;
+		this.#mission_poll = setInterval(() => {
+			if (this.#generation !== generation) return;
+			for (const mission of this.missions) {
+				if (!isBusyStatus(mission.status)) continue;
+				void api
+					.dispatch(mission.project_id, mission.id)
+					.then(({ request }) => {
+						if (this.#generation === generation) this.#updateMission(request);
+					})
+					.catch(() => {
+						// A missed poll keeps the last status; the next one tries again.
+					});
+			}
+		}, CHAT_MISSION_POLL_MS);
 	}
 
 	/**
@@ -348,6 +462,10 @@ class MateChats {
 			this.interrupt_requested = false;
 		const before = this.events.length;
 		this.events = mergeEvents(this.events, incoming);
+		// Opening reads the missions itself, once, after the stored history.
+		if (this.open_id !== null && !this.opening && touchesMissions(incoming)) {
+			void this.loadMissions(this.open_id);
+		}
 		const ids = new Set(this.events.map((event) => event.id));
 		const messages = new Set(
 			[...this.events, ...incoming].flatMap((event) =>

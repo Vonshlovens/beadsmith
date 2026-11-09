@@ -3,11 +3,13 @@ import { api } from './api.js';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$app/env', () => ({ browser: true }));
+// Unknown dispatch health: every mission counts as followed.
+vi.mock('#lib/client/projects.svelte.js', () => ({ statusSnapshot: () => null }));
 
 // Exercise the state machine without a DOM. Svelte's field initializers are
 // identities here; rendering/reactive scheduling still needs browser QA.
 vi.stubGlobal('$state', <T>(value: T) => value);
-const { mate_chats: chats } = await import('./mate-chat.svelte.js');
+const { mate_chats: chats, CHAT_MISSION_POLL_MS } = await import('./mate-chat.svelte.js');
 
 class FakeSource {
 	static CLOSED = 2;
@@ -41,6 +43,7 @@ beforeEach(() => {
 	chats.drafts = {};
 	chats.status = { connected: true, reachable: true };
 	vi.spyOn(api, 'mateChat').mockResolvedValue({ chat, events: [] });
+	vi.spyOn(api, 'mateChatMissions').mockResolvedValue({ missions: [] });
 });
 afterEach(() => {
 	chats.close();
@@ -302,4 +305,97 @@ it('keeps the stop acknowledgment for an active turn when a follow-up send fails
 	expect(chats.interrupt_requested).toBe(true);
 	source.onmessage!({ data: JSON.stringify({ type: 'result', id: 'e2', status: 'cancelled' }) });
 	expect(chats.interrupt_requested).toBe(false);
+});
+
+const MISSION = {
+	id: 'dq_1',
+	project_id: 'd_web',
+	project_name: 'Web',
+	operation: 'tackle' as const,
+	status: 'running' as const,
+	issue_id: 'web-1',
+	agent_id: 'sbx1',
+	actor: 'admin@example.com',
+	created_at: '2026-01-01T00:00:00.000Z',
+	updated_at: '2026-01-01T00:00:00.000Z'
+};
+
+it('loads the chat’s missions once on open, and again when a crew notice arrives', async () => {
+	vi.mocked(api.mateChat).mockResolvedValue({
+		chat,
+		events: [{ type: 'user', id: 'n0', text: '[crew] old', at: '2026-01-01', message_id: 'crew-0' }]
+	});
+	vi.mocked(api.mateChatMissions).mockResolvedValue({ missions: [MISSION] });
+	await chats.open(chat.id);
+	await vi.waitFor(() => expect(chats.missions).toEqual([MISSION]));
+	expect(api.mateChatMissions).toHaveBeenCalledTimes(1);
+
+	FakeSource.instances[0]!.onmessage!({
+		data: JSON.stringify({ type: 'user', id: 'n1', text: '[crew] done', message_id: 'crew-1' })
+	});
+	await vi.waitFor(() => expect(api.mateChatMissions).toHaveBeenCalledTimes(2));
+});
+
+it('drops an older missions read that answers after a newer one', async () => {
+	await chats.open(chat.id);
+	await vi.waitFor(() => expect(api.mateChatMissions).toHaveBeenCalledTimes(1));
+	let answerOld!: (value: { missions: (typeof MISSION)[] }) => void;
+	vi.mocked(api.mateChatMissions)
+		.mockImplementationOnce(() => new Promise((resolve) => (answerOld = resolve)))
+		.mockResolvedValueOnce({ missions: [MISSION] });
+	const older = chats.loadMissions(chat.id);
+	await chats.loadMissions(chat.id);
+	answerOld({ missions: [] });
+	await older;
+	expect(chats.missions).toEqual([MISSION]);
+});
+
+it('keeps shown missions when a reload fails, and says so only when there are none', async () => {
+	vi.mocked(api.mateChatMissions).mockRejectedValueOnce(new Error('offline'));
+	await chats.open(chat.id);
+	await vi.waitFor(() => expect(chats.missions_error).toBeTruthy());
+	vi.mocked(api.mateChatMissions).mockResolvedValue({ missions: [MISSION] });
+	await chats.loadMissions(chat.id);
+	expect(chats.missions_error).toBeNull();
+	vi.mocked(api.mateChatMissions).mockRejectedValueOnce(new Error('offline'));
+	await chats.loadMissions(chat.id);
+	expect(chats.missions).toEqual([MISSION]);
+});
+
+it('cancels a mission, showing the answered status or why it failed', async () => {
+	vi.mocked(api.mateChatMissions).mockResolvedValue({ missions: [MISSION] });
+	await chats.open(chat.id);
+	await vi.waitFor(() => expect(chats.missions).toHaveLength(1));
+
+	vi.spyOn(api, 'cancelDispatch').mockRejectedValueOnce(new Error('runner down'));
+	await chats.cancelMission(chats.missions[0]!);
+	expect(chats.cancel_errors[MISSION.id]).toContain('runner down');
+	expect(chats.cancelling[MISSION.id]).toBeUndefined();
+
+	vi.mocked(api.cancelDispatch).mockResolvedValueOnce({
+		request: { ...MISSION, status: 'cancelled' }
+	});
+	await chats.cancelMission(chats.missions[0]!);
+	expect(api.cancelDispatch).toHaveBeenLastCalledWith('d_web', 'dq_1');
+	expect(chats.missions[0]).toMatchObject({ status: 'cancelled', project_name: 'Web' });
+	expect(chats.cancel_errors[MISSION.id]).toBeUndefined();
+});
+
+it('polls a running mission through its status route until it finishes', async () => {
+	vi.useFakeTimers();
+	try {
+		vi.mocked(api.mateChatMissions).mockResolvedValue({ missions: [MISSION] });
+		const status = vi
+			.spyOn(api, 'dispatch')
+			.mockResolvedValue({ request: { ...MISSION, status: 'succeeded' } });
+		await chats.open(chat.id);
+		await vi.waitFor(() => expect(chats.missions).toHaveLength(1));
+		await vi.advanceTimersByTimeAsync(CHAT_MISSION_POLL_MS);
+		expect(status).toHaveBeenCalledWith('d_web', 'dq_1');
+		expect(chats.missions[0]?.status).toBe('succeeded');
+		await vi.advanceTimersByTimeAsync(CHAT_MISSION_POLL_MS * 2);
+		expect(status).toHaveBeenCalledTimes(1);
+	} finally {
+		vi.useRealTimers();
+	}
 });

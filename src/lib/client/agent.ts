@@ -280,3 +280,36 @@ export function formatElapsed(ms: number): string {
 	}
 	return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`;
 }
+
+/** What a mission card in a First Mate chat offers right now. */
+export interface MissionCardState {
+	/** Still working, and this service still follows it. */
+	busy: boolean;
+	/** Stop is offered: busy, launched, and its runner can cancel. */
+	can_cancel: boolean;
+	/** A pull request link safe to show, once there is one. */
+	pr_url?: string;
+}
+
+/**
+ * The card state for a chat's mission, by the same rules as its thread:
+ * no Stop for a run nothing follows, or a runner that cannot cancel.
+ *
+ * @param mission - The mission.
+ * @param dispatch - Current dispatch health, or null before it loads.
+ */
+export function missionCardState(
+	mission: Pick<DispatchRequest, 'status' | 'agent_id' | 'provider' | 'git_pr_url'>,
+	dispatch: Pick<DispatchView, 'provider' | 'capabilities' | 'providers'> | null
+): MissionCardState {
+	const busy = isBusyStatus(mission.status) && isFollowedMission(mission, dispatch);
+	const can_cancel =
+		busy &&
+		mission.agent_id !== undefined &&
+		missionProvider(mission, dispatch)?.capabilities?.cancel === true;
+	return {
+		busy,
+		can_cancel,
+		...(isSafeRunUrl(mission.git_pr_url) ? { pr_url: mission.git_pr_url } : {})
+	};
+}

@@ -5,6 +5,7 @@ import {
 	formatElapsed,
 	intentAllowed,
 	isFollowedMission,
+	missionCardState,
 	missionProvider,
 	isSafeRunUrl,
 	missionVerb
@@ -179,5 +180,54 @@ describe('formatElapsed', () => {
 		expect(formatElapsed(187_000)).toBe('3:07');
 		expect(formatElapsed(3_900_000)).toBe('1h 05m');
 		expect(formatElapsed(-5)).toBe('0s');
+	});
+});
+
+describe('missionCardState', () => {
+	const caps = (cancel: boolean) => ({ live_events: true, follow_up: true, cancel });
+	const dispatch = {
+		armed: true,
+		provider: 'e2b' as const,
+		capabilities: caps(true),
+		providers: [
+			{ id: 'e2b' as const, label: 'Sand', capabilities: caps(true) },
+			{ id: 'webhook' as const, label: 'home box', capabilities: caps(false) }
+		]
+	};
+	const running = { status: 'running' as const, agent_id: 'sbx1', provider: 'e2b' as const };
+
+	it('offers Stop while a followed run can be cancelled', () => {
+		expect(missionCardState(running, dispatch)).toEqual({ busy: true, can_cancel: true });
+	});
+
+	it('offers no Stop before launch, on a runner that cannot cancel, or once finished', () => {
+		expect(missionCardState({ status: 'queued' }, dispatch)).toEqual({
+			busy: true,
+			can_cancel: false
+		});
+		expect(missionCardState({ ...running, provider: 'webhook' }, dispatch).can_cancel).toBe(false);
+		expect(missionCardState({ ...running, status: 'succeeded' }, dispatch)).toEqual({
+			busy: false,
+			can_cancel: false
+		});
+		expect(missionCardState({ ...running, status: 'cancelled' }, dispatch).busy).toBe(false);
+		expect(missionCardState({ ...running, status: 'failed' }, dispatch).busy).toBe(false);
+	});
+
+	it('is not busy when nothing follows the run any more', () => {
+		expect(missionCardState({ ...running, provider: 'forge' as never }, dispatch)).toEqual({
+			busy: false,
+			can_cancel: false
+		});
+	});
+
+	it('shows only a safe pull request link', () => {
+		const done = { status: 'succeeded' as const };
+		expect(
+			missionCardState({ ...done, git_pr_url: 'https://github.com/o/r/pull/1' }, dispatch).pr_url
+		).toBe('https://github.com/o/r/pull/1');
+		expect(
+			missionCardState({ ...done, git_pr_url: 'javascript:alert(1)' }, dispatch).pr_url
+		).toBeUndefined();
 	});
 });
