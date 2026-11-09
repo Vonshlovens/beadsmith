@@ -78,6 +78,11 @@ export interface DispatchRecord {
 	git_pr_url?: string;
 	/** First Mate chat whose crew tool launched it (ADR-0020 rule 5). */
 	chat_id?: string;
+	/**
+	 * The outcome last reported to that chat (`chatNoticeKey`), so each run's
+	 * outcome is told once, across restarts.
+	 */
+	chat_notice?: string;
 	created_at: string;
 	updated_at: string;
 }

@@ -5,7 +5,8 @@ import { readEnv } from '#lib/server/env.js';
 import { createMateRunner, setMateRunner } from '#lib/server/mate/runner.js';
 import { resetMateHealthCache } from '#lib/server/mate/service.js';
 import { createMateStore, type MateStore } from '#lib/server/mate/store.js';
-import { initStateSchema, setMateStore } from '#lib/server/state/db.js';
+import { createDispatchStore, type DispatchStore } from '#lib/server/dispatch/store.js';
+import { initStateSchema, setDispatchStore, setMateStore } from '#lib/server/state/db.js';
 import {
 	createFakeMateRunner,
 	FAKE_RUNNER_SECRET,
@@ -23,6 +24,8 @@ const ADMIN = { id: 'u1', email: 'admin@example.com', name: 'Admin', role: 'admi
 const OTHER = { id: 'u2', email: 'other@example.com', name: 'Other', role: 'admin' as const };
 
 let store: MateStore;
+let dispatch: DispatchStore;
+let client: ReturnType<typeof createClient>;
 let fake: FakeMateRunner;
 
 function connect() {
@@ -39,16 +42,20 @@ function connect() {
 }
 
 beforeEach(async () => {
-	const client = createClient({ url: ':memory:' });
+	client = createClient({ url: ':memory:' });
 	await initStateSchema(client);
 	store = createMateStore(client);
 	setMateStore(store);
+	// Opening a chat retries crew notices from the dispatch store.
+	dispatch = createDispatchStore(client);
+	setDispatchStore(dispatch);
 	setMateRunner(null);
 	resetMateHealthCache();
 });
 
 afterEach(() => {
 	setMateStore(undefined);
+	setDispatchStore(undefined);
 	setMateRunner(undefined);
 });
 
@@ -217,6 +224,10 @@ describe('POST messages without a runner', () => {
 		expect((await call(SEND, { id: chat.id, body: { text: 'a', message_id: 'a b' } })).status).toBe(
 			400
 		);
+		// Crew notices are Beadsmith's; a browser cannot send one.
+		expect(
+			(await call(SEND, { id: chat.id, body: { text: 'a', message_id: 'crew-0123' } })).status
+		).toBe(400);
 	});
 });
 
@@ -401,5 +412,48 @@ describe('with a runner', () => {
 		expect((await call(DELETE, { id: chat.id })).status).toBe(200);
 		expect(fake.deleted).toEqual([chat.id]);
 		expect(await store.getChat(ADMIN.id, chat.id)).toBeUndefined();
+	});
+});
+
+describe('crew notices', () => {
+	beforeEach(() => {
+		connect();
+	});
+
+	it('delivers a notice the chat is still owed when it opens, once', async () => {
+		await client.execute(
+			`INSERT INTO auth_user (id, name, email, role, banned, created_at, updated_at)
+				VALUES ('u1', 'Admin', 'admin@example.com', 'admin', 0, 0, 0)`
+		);
+		const chat = await createChat();
+		const { record } = await dispatch.create({
+			idempotency_key: 'crew:route',
+			project_id: 'd_web',
+			dolt_database: 'web',
+			operation: 'tackle',
+			actor: ADMIN.email,
+			payload: { operation: 'tackle', issue_id: 'web-12' },
+			chat_id: chat.id
+		});
+		// It finished while the chat's runner could not take the notice.
+		await dispatch.updateStatus(record.id, { status: 'succeeded', run_id: 'run-1' });
+
+		fake.end_after_replay = true;
+		await readFrames(await call(EVENTS, { id: chat.id }), 10);
+		await vi.waitFor(() =>
+			expect(fake.events(chat.id).filter((event) => event.type === 'user')).toHaveLength(1)
+		);
+		const [notice] = fake.events(chat.id);
+		expect(notice).toMatchObject({ type: 'user', message_id: expect.stringMatching(/^crew-/) });
+		expect((notice as { text: string }).text).toContain(
+			'[crew] Tackle on web-12 (d_web) succeeded.'
+		);
+		await vi.waitFor(async () =>
+			expect((await dispatch.get(record.id))?.chat_notice).toBe('succeeded:run-1')
+		);
+
+		await readFrames(await call(EVENTS, { id: chat.id }), 10);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(fake.events(chat.id).filter((event) => event.type === 'user')).toHaveLength(1);
 	});
 });

@@ -66,7 +66,10 @@ the template points Node (Claude Code) at that bundle with
    when both are set.
 
 That is all First Mate chats need: add `e2b` to `BDX_MATE_RUNNERS` and
-restart. Dispatch needs the next three steps too.
+restart. Their crew tools read and route todos with nothing more; the tools
+that start missions use the configured dispatch provider, so dispatch (on Sand
+or a webhook runner) must be set up for those. Dispatch on Sand needs the
+next three steps too.
 
 ### 2. Tailnet (dispatch)
 
@@ -264,6 +267,13 @@ Not yet checked:
 
 - `git clone` and `gh pr create` work with the injected GitHub headers.
 - A paused chat resumes and continues its Claude Code session.
+- The crew relay in a real chat sandbox. It is unit-tested with fakes and the
+  relay script under local Node only. To check it: start a Sand chat and ask
+  First Mate to list its `mcp__crew__` tools and run `list_projects`; kill
+  the relay's serve process from E2B's CLI and confirm the next tool call
+  still answers (Beadsmith restarts serve, the stdio side reconnects); let
+  the chat pause, send a message, and confirm `.crew/` and `AGENTS.md` are
+  rewritten and tools answer again.
 
 A failed setup step shows in the thread by name (joining the tailnet,
 reaching Dolt, cloning). `~/.beadsmith/runs/<run>/setup.log` and

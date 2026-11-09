@@ -88,12 +88,38 @@ export interface DispatchStore {
 	appendTurn(request_id: string, turn: AppendTurnInput, now?: () => Date): Promise<void>;
 	/** Turns for one mission, oldest first. */
 	listTurns(request_id: string): Promise<DispatchTurn[]>;
+	/** Record that the launching chat has been told the outcome `key`. */
+	markChatNotice(id: string, key: string): Promise<void>;
+	/**
+	 * A chat's finished missions whose current outcome it has not been told
+	 * yet, oldest first.
+	 */
+	listChatNoticesDue(chat_id: string, limit: number): Promise<DispatchRecord[]>;
+}
+
+/**
+ * Which outcome a chat-launched mission is in, for telling its chat once: the
+ * terminal status of the current run. A follow-up starts a new run, so its
+ * outcome is a new notice. Undefined while the mission is still working.
+ * `listChatNoticesDue` computes the same key in SQL.
+ */
+export function chatNoticeKey(
+	record: Pick<DispatchRecord, 'status' | 'run_id'>
+): string | undefined {
+	if (
+		record.status !== 'succeeded' &&
+		record.status !== 'cancelled' &&
+		record.status !== 'failed'
+	) {
+		return undefined;
+	}
+	return `${record.status}:${record.run_id ?? ''}`;
 }
 
 const DISPATCH_SELECT = `SELECT
 	id, idempotency_key, project_id, dolt_database, operation, actor, payload_json,
 	status, provider, agent_id, agent_url, run_id, error_message,
-	result_summary, duration_ms, git_pr_url, chat_id,
+	result_summary, duration_ms, git_pr_url, chat_id, chat_notice,
 	created_at, updated_at
 FROM dispatch_requests`;
 
@@ -157,6 +183,7 @@ function rowToRecord(row: Record<string, unknown>): DispatchRecord {
 		duration_ms: asNonNegativeInteger(row.duration_ms),
 		git_pr_url: asText(row.git_pr_url),
 		chat_id: asText(row.chat_id),
+		chat_notice: asText(row.chat_notice),
 		created_at: String(row.created_at),
 		updated_at: String(row.updated_at)
 	};
@@ -364,6 +391,25 @@ export function createDispatchStore(client: Client): DispatchStore {
 				args: [request_id]
 			});
 			return result.rows.map((row) => rowToTurn(row as Record<string, unknown>));
+		},
+
+		async markChatNotice(id: string, key: string): Promise<void> {
+			await client.execute({
+				sql: 'UPDATE dispatch_requests SET chat_notice = ? WHERE id = ?',
+				args: [key, id]
+			});
+		},
+
+		async listChatNoticesDue(chat_id: string, limit: number): Promise<DispatchRecord[]> {
+			const result = await client.execute({
+				sql: `${DISPATCH_SELECT}
+					WHERE chat_id = ?
+						AND status IN ('succeeded', 'cancelled', 'failed')
+						AND (chat_notice IS NULL OR chat_notice != status || ':' || COALESCE(run_id, ''))
+					ORDER BY datetime(updated_at), id LIMIT ?`,
+				args: [chat_id, limit]
+			});
+			return result.rows.map((row) => rowToRecord(row as Record<string, unknown>));
 		}
 	};
 }

@@ -9,12 +9,15 @@
 	 *
 	 * The agent can speak unasked, so one of its messages may follow another.
 	 * Tool calls are compact chips, thinking folds away, errors sit inline.
+	 * Crew notices (Beadsmith telling the agent a mission it started has
+	 * finished) are quiet system rows, labelled, so they never read as yours.
 	 * Stop interrupts the agent's current turn; the session keeps running.
 	 */
 	import { tip } from '#lib/client/tooltip.js';
 	import { tick, untrack } from 'svelte';
 	import ArrowDownIcon from 'phosphor-svelte/lib/ArrowDownIcon';
 	import ArrowLeftIcon from 'phosphor-svelte/lib/ArrowLeftIcon';
+	import BroadcastIcon from 'phosphor-svelte/lib/BroadcastIcon';
 	import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
 	import CommandIcon from 'phosphor-svelte/lib/CommandIcon';
 	import CopyIcon from 'phosphor-svelte/lib/CopyIcon';
@@ -31,7 +34,8 @@
 		initials,
 		placeMateRows,
 		type MateBubble,
-		type MatePart
+		type MatePart,
+		type MateRole
 	} from '#lib/client/mate-chat.js';
 	import { mate_chats, type PendingMessage } from '#lib/client/mate-chat.svelte.js';
 	import { currentViewer } from '#lib/client/projects.svelte.js';
@@ -77,7 +81,7 @@
 	const my_initials = $derived(initials(viewer?.name, viewer?.email));
 
 	type Row =
-		| { kind: 'bubble'; key: string; role: 'you' | 'mate'; at: string; bubble: MateBubble }
+		| { kind: 'bubble'; key: string; role: MateRole; at: string; bubble: MateBubble }
 		| { kind: 'pending'; key: string; role: 'you'; at: string; item: PendingMessage };
 
 	/** Stored messages, then sends not yet in the transcript. */
@@ -331,6 +335,7 @@
 					class="msg"
 					class:is-head={row.head}
 					class:is-you={row.role === 'you'}
+					class:is-crew={row.role === 'crew'}
 					class:is-failed={(row.kind === 'bubble' && row.bubble.result?.status === 'failed') ||
 						(row.kind === 'pending' && row.item.error !== undefined)}
 				>
@@ -340,6 +345,8 @@
 								<span class="avatar is-mate" aria-hidden="true"
 									><SteeringWheelIcon size={17} weight="bold" /></span
 								>
+							{:else if row.role === 'crew'}
+								<span class="crew-mark" aria-hidden="true"><BroadcastIcon size={16} /></span>
 							{:else}
 								<span class="avatar" aria-hidden="true">{my_initials}</span>
 							{/if}
@@ -351,7 +358,11 @@
 					</div>
 					<div class="msg-main">
 						<p class="msg-hd" class:sr-only={!row.head}>
-							<span class="sr-only">{row.role === 'you' ? 'You' : 'First Mate'}, </span>
+							{#if row.role === 'crew'}
+								<span class="crew-lbl">Crew update</span>
+							{:else}
+								<span class="sr-only">{row.role === 'you' ? 'You' : 'First Mate'}, </span>
+							{/if}
 							<time datetime={row.at} {@attach tip(absoluteStamp(row.at))}>{clockTime(row.at)}</time
 							>
 						</p>
@@ -378,6 +389,10 @@
 						{:else if row.role === 'you'}
 							{#each row.bubble.parts as part (part.id)}
 								{#if part.kind === 'text'}<p class="body">{part.text}</p>{/if}
+							{/each}
+						{:else if row.role === 'crew'}
+							{#each row.bubble.parts as part (part.id)}
+								{#if part.kind === 'text'}<p class="crew-body">{part.text}</p>{/if}
 							{/each}
 						{:else}
 							<div class="parts">
@@ -730,6 +745,28 @@
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 	}
+	/* A crew notice: Beadsmith's message to the agent, not the operator's.
+	   No avatar box and smaller, secondary text, so it reads as a system line;
+	   the label says who sent it. */
+	.crew-mark {
+		display: grid;
+		place-items: center;
+		width: 32px;
+		height: 24px;
+		color: var(--tx-dim);
+	}
+	.crew-lbl {
+		font-weight: 600;
+		color: var(--tx-mid);
+	}
+	.crew-body {
+		margin: 0;
+		font-size: var(--t-sm);
+		line-height: 1.5;
+		color: var(--tx-mid);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
 	.body.is-pending {
 		color: var(--tx-mid);
 	}
@@ -918,8 +955,11 @@
 		.chat {
 			--gutter: 32px;
 		}
-		.avatar {
+		.avatar,
+		.crew-mark {
 			width: 28px;
+		}
+		.avatar {
 			height: 28px;
 		}
 		.chat-meta {

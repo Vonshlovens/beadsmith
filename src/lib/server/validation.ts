@@ -7,6 +7,7 @@ import type { TackleRepositoryMapping } from './dispatch/repositories.js';
 import { normalizeEndpoint } from './backup/s3.js';
 import {
 	CHAT_ID_PATTERN,
+	CREW_NOTICE_PREFIX,
 	MATE_RUNNER_IDS,
 	MAX_MESSAGE_CHARS,
 	MESSAGE_ID_PATTERN
@@ -421,7 +422,12 @@ export const update_mate_chat_schema = z
 export const mate_message_schema = z
 	.object({
 		text: z.string().trim().min(1).max(MAX_MESSAGE_CHARS),
-		message_id: z.string().regex(MESSAGE_ID_PATTERN, 'invalid message id').optional()
+		message_id: z
+			.string()
+			.regex(MESSAGE_ID_PATTERN, 'invalid message id')
+			// Crew notices are Beadsmith's own messages; a browser may not pose as one.
+			.refine((id) => !id.startsWith(CREW_NOTICE_PREFIX), 'invalid message id')
+			.optional()
 	})
 	.strict();
 

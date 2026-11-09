@@ -1526,3 +1526,153 @@ describe('discuss missions and conversation turns', () => {
 		expect(await listDispatchTurns(OTHER_PROJECT.id, record.id, { store })).toBeUndefined();
 	});
 });
+
+describe('chat notices (ADR-0020 rule 5)', () => {
+	const CHAT_PAYLOAD = { operation: 'tackle' as const, issue_id: 'beads-web-42' };
+
+	function finishingProvider(observations: number): AgentProvider {
+		return {
+			...providerWithLaunch(vi.fn(async () => ({ agent_id: 'bc-chat', run_id: 'run-chat' }))),
+			// The stream reports the outcome, then a reconnect reports it again.
+			streamRun: vi.fn(async (_agent_id, _run_id, on_update) => {
+				for (let i = 0; i < observations; i += 1) {
+					await on_update({
+						status: 'succeeded',
+						result_summary: 'Opened a pull request.',
+						git_pr_url: 'https://github.com/example-org/beads-web/pull/7'
+					});
+				}
+				return 'terminal' as const;
+			})
+		};
+	}
+
+	async function launch(
+		chat_id: string | undefined,
+		provider: AgentProvider,
+		notify_chat: (record: unknown) => Promise<unknown>,
+		key = 'crew:aaaaaaaa'
+	) {
+		let background: Promise<void> | undefined;
+		const result = await enqueueDispatch(
+			{
+				idempotency_key: key,
+				project: PROJECT,
+				actor: 'owner@example.com',
+				payload: CHAT_PAYLOAD,
+				...(chat_id === undefined ? {} : { chat_id })
+			},
+			{
+				store,
+				provider,
+				configured: true,
+				policy: ALLOW_ALL,
+				repositories: BEADS_WEB_MAP,
+				notify_chat,
+				schedule_background: (task) => {
+					background = task();
+				}
+			}
+		);
+		await background;
+		return result;
+	}
+
+	it('hands a chat-launched mission’s outcome to the notifier', async () => {
+		const notify_chat = vi.fn(async () => 'sent');
+		const result = await launch('mc_aaaaaaaaaaaaaaaaaaaaaaaa', finishingProvider(1), notify_chat);
+		expect(notify_chat).toHaveBeenCalledOnce();
+		expect(notify_chat).toHaveBeenCalledWith(
+			expect.objectContaining({
+				id: result.request.id,
+				chat_id: 'mc_aaaaaaaaaaaaaaaaaaaaaaaa',
+				status: 'succeeded',
+				run_id: 'run-chat',
+				git_pr_url: 'https://github.com/example-org/beads-web/pull/7'
+			})
+		);
+	});
+
+	it('never notifies for a mission without a chat', async () => {
+		const notify_chat = vi.fn(async () => 'sent');
+		await launch(undefined, finishingProvider(2), notify_chat);
+		expect(notify_chat).not.toHaveBeenCalled();
+	});
+
+	it('tells the chat once when the outcome is observed twice', async () => {
+		const { createMateStore } = await import('../mate/store.js');
+		const { deliverCrewNotice } = await import('../crew/notices.js');
+		const client = createClient({ url: ':memory:' });
+		await initStateSchema(client);
+		store = createDispatchStore(client);
+		const mate = createMateStore(client);
+		await client.execute(
+			`INSERT INTO auth_user (id, name, email, role, banned, created_at, updated_at)
+				VALUES ('u1', 'u1', 'owner@example.com', 'admin', 0, 0, 0)`
+		);
+		const chat = await mate.createChat('u1', { title: 't', scope: null });
+		const sendMessage = vi.fn(async () => ({ event_id: 'e1' }));
+		const runner = { sendMessage } as never;
+		const deliveries: Promise<unknown>[] = [];
+		const notify_chat = (record: unknown) => {
+			const delivery = deliverCrewNotice(record as never, {
+				dispatch: store,
+				mate,
+				runnerFor: () => runner
+			});
+			deliveries.push(delivery);
+			return delivery;
+		};
+
+		await launch(chat.id, finishingProvider(2), notify_chat);
+		await Promise.all(deliveries);
+
+		expect(sendMessage).toHaveBeenCalledOnce();
+		expect(sendMessage).toHaveBeenCalledWith(
+			chat.id,
+			expect.objectContaining({
+				message_id: expect.stringMatching(/^crew-[a-f0-9]{40}$/),
+				prompt: expect.stringContaining('[crew] Tackle on beads-web-42')
+			})
+		);
+	});
+
+	it('marks a launch failure as told instead of notifying: the tool result already said so', async () => {
+		const notify_chat = vi.fn(async () => 'sent');
+		const provider = providerWithLaunch(async () => {
+			throw new DispatchError('unavailable', 'The agent could not be launched.');
+		});
+		const result = await launch('mc_aaaaaaaaaaaaaaaaaaaaaaaa', provider, notify_chat);
+		expect(result.request.status).toBe('failed');
+		expect(notify_chat).not.toHaveBeenCalled();
+		expect(await store.listChatNoticesDue('mc_aaaaaaaaaaaaaaaaaaaaaaaa', 10)).toEqual([]);
+	});
+
+	it('notifies a cancel of a chat-launched mission', async () => {
+		const { record } = await store.create({
+			idempotency_key: 'crew:cancel',
+			project_id: PROJECT.id,
+			dolt_database: PROJECT.dolt_database,
+			operation: 'tackle',
+			actor: 'owner@example.com',
+			payload: CHAT_PAYLOAD,
+			chat_id: 'mc_aaaaaaaaaaaaaaaaaaaaaaaa'
+		});
+		await store.updateStatus(record.id, {
+			status: 'running',
+			provider: 'webhook',
+			agent_id: 'bc-steer',
+			run_id: 'run-live'
+		});
+		const notify_chat = vi.fn(async () => 'sent');
+		await cancelDispatch(PROJECT.id, record.id, {
+			store,
+			provider: providerWithLaunch(vi.fn()),
+			configured: true,
+			policy: ALLOW_ALL,
+			notify_chat,
+			schedule_background: NO_BACKGROUND
+		});
+		expect(notify_chat).toHaveBeenCalledWith(expect.objectContaining({ status: 'cancelled' }));
+	});
+});

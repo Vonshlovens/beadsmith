@@ -8,7 +8,7 @@
  * events into bubbles rather than pairing questions with answers.
  */
 import { FIRST_MATE_PATH } from '#lib/client/first-mate.js';
-import type { MateEvent } from '#lib/mate.js';
+import { isCrewNotice, type MateEvent } from '#lib/mate.js';
 import type { MissionResultStatus, MissionToolCallStatus } from '#lib/mission-events.js';
 
 export { MAX_MESSAGE_CHARS, UNWIRED_REPLY, chatTitle } from '#lib/mate.js';
@@ -43,10 +43,16 @@ export type MatePart =
 	  }
 	| { kind: 'error'; id: string; message: string };
 
+export type MateRole = 'you' | 'mate' | 'crew';
+
 export interface MateBubble {
 	/** The first event's id. */
 	id: string;
-	role: 'you' | 'mate';
+	/**
+	 * Who it is from: you, First Mate, or `crew`, Beadsmith telling the agent
+	 * a mission it launched has finished (a crew notice, ADR-0020 rule 5).
+	 */
+	role: MateRole;
 	/** When the bubble's first event arrived. */
 	at: string;
 	parts: MatePart[];
@@ -56,7 +62,7 @@ export interface MateBubble {
 
 /**
  * Group a chat's events into bubbles. Each `user` event is one bubble of
- * yours. The agent's events gather into one bubble until its turn's `result`;
+ * yours, or of the crew when it is a crew notice. The agent's events gather into one bubble until its turn's `result`;
  * whatever it says after that, asked or not, starts the next one. Each
  * `assistant` event is a whole block of text: consecutive blocks become
  * paragraphs. A tool call shows once, with its latest status; one still
@@ -107,7 +113,8 @@ export function groupMateEvents(events: readonly MateEvent[]): MateBubble[] {
 				open = null;
 				bubbles.push({
 					id: event.id,
-					role: 'you',
+					// Sent as a user message, but by Beadsmith, not by you.
+					role: isCrewNotice(event) ? 'crew' : 'you',
 					at: event.at,
 					parts: [{ kind: 'text', id: event.id, text: event.text }]
 				});
@@ -267,7 +274,7 @@ export function clockTime(iso: string): string {
  * @param now - The current time, for Today and Yesterday.
  */
 export function placeMateRows(
-	items: readonly { role: 'you' | 'mate'; at: string }[],
+	items: readonly { role: MateRole; at: string }[],
 	now = Date.now()
 ): MateRowPlacement[] {
 	return items.map((item, index) => {

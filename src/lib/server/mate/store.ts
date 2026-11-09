@@ -77,6 +77,12 @@ export interface MateStore {
 	 */
 	crewCaller(session_id: string): Promise<CrewCaller | undefined>;
 	/**
+	 * The chat a crew notice goes to, whoever owns it. Undefined when the chat
+	 * is gone or its owner is banned, as for `crewCaller`. Server-internal:
+	 * never answer a browser request with it.
+	 */
+	noticeChat(chat_id: string): Promise<StoredMateChat | undefined>;
+	/**
 	 * Store events in order, skipping ids the chat already has. Returns the
 	 * ones that were new. Callers check ownership first.
 	 */
@@ -125,6 +131,12 @@ function toChat(value: unknown): StoredMateChat {
 		created_at: String(r.created_at),
 		updated_at: String(r.updated_at)
 	};
+}
+
+/** Whether an `auth_user` row's ban is in force at `at`. */
+function banned(r: Record<string, unknown>, at: Date): boolean {
+	const expires = r.ban_expires === null ? undefined : Number(r.ban_expires);
+	return Number(r.banned ?? 0) !== 0 && (expires === undefined || expires > at.getTime());
 }
 
 /** A chat without its session id, for the browser. */
@@ -321,10 +333,7 @@ export function createMateStore(client: Client, now: () => Date = () => new Date
 			});
 			if (result.rows[0] === undefined) return undefined;
 			const r = row(result.rows[0]);
-			const expires = r.ban_expires === null ? undefined : Number(r.ban_expires);
-			const banned =
-				Number(r.banned ?? 0) !== 0 && (expires === undefined || expires > now().getTime());
-			if (banned) return undefined;
+			if (banned(r, now())) return undefined;
 			return {
 				chat_id: String(r.id),
 				owner_id: String(r.owner_id),
@@ -332,6 +341,19 @@ export function createMateStore(client: Client, now: () => Date = () => new Date
 				role: accountRole(optText(r.role)),
 				scope: optText(r.scope) ?? null
 			};
+		},
+
+		async noticeChat(chat_id) {
+			const result = await client.execute({
+				sql: `SELECT c.id, c.title, c.scope, c.session_id, c.runner, c.created_at, c.updated_at,
+						u.banned, u.ban_expires
+					FROM mate_chats c JOIN auth_user u ON u.id = c.owner_id
+					WHERE c.id = ?`,
+				args: [chat_id]
+			});
+			if (result.rows[0] === undefined) return undefined;
+			const r = row(result.rows[0]);
+			return banned(r, now()) ? undefined : toChat(r);
 		},
 
 		async deleteChat(owner_id, id) {

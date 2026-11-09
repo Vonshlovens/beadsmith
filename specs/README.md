@@ -55,6 +55,12 @@ reality**. Search `src/` before treating a spec as implemented.
   single-use tagged keys and hold only their project's Dolt account. Beadsmith
   drives E2B in-process, reusing the mate runner core for chats
   ([ADR-0018](decisions/0018-sand-e2b-sandboxes.md)).
+- First Mate chats on Sand get **crew tools**: one transport-free MCP tool
+  module in Beadsmith (Beads reads, todo writes, mission launches) run as
+  the chat's owner, relayed over the E2B process channel with no credential
+  or inbound path in the sandbox. Beads changes stay delegated to missions,
+  which record their chat and report their outcome back to it as a crew
+  notice ([ADR-0020](decisions/0020-first-mate-crew-tools.md)).
 - Target, partly shipped (0016, 0018): **agents run in scoped sandboxes**. A beads sandbox
   (the orchestrator) holds per-project Dolt grants and asks for repository
   work through dispatch; a repo sandbox reaches one repository. Model and
