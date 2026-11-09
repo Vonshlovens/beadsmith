@@ -98,6 +98,49 @@ describe('initStateSchema', () => {
 			chat_id: null
 		});
 	});
+
+	it('marks missions that ended before chat notices existed as already told', async () => {
+		const existing = createClient({ url: ':memory:' });
+		await existing.execute(`CREATE TABLE dispatch_requests (
+			id TEXT PRIMARY KEY,
+			idempotency_key TEXT NOT NULL UNIQUE,
+			project_id TEXT NOT NULL,
+			dolt_database TEXT NOT NULL,
+			operation TEXT NOT NULL,
+			actor TEXT NOT NULL,
+			payload_json TEXT NOT NULL,
+			status TEXT NOT NULL,
+			agent_id TEXT,
+			agent_url TEXT,
+			run_id TEXT,
+			error_message TEXT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			chat_id TEXT
+		)`);
+		const at = '2026-11-09T00:00:00.000Z';
+		for (const [id, status] of [
+			['dq_done', 'succeeded'],
+			['dq_live', 'launched']
+		]) {
+			await existing.execute({
+				sql: `INSERT INTO dispatch_requests (id, idempotency_key, project_id, dolt_database,
+					operation, actor, payload_json, status, run_id, created_at, updated_at, chat_id)
+					VALUES (?, ?, 'd_a', 'a', 'tackle', 'web', '{}', ?, 'run-1', ?, ?, 'mc_1')`,
+				args: [id, `idem-${id}`, status, at, at]
+			});
+		}
+
+		await initStateSchema(existing);
+
+		const rows = await existing.execute(
+			'SELECT id, chat_notice FROM dispatch_requests ORDER BY id'
+		);
+		expect(rows.rows.map((row) => ({ ...row }))).toEqual([
+			{ id: 'dq_done', chat_notice: 'succeeded:run-1' },
+			{ id: 'dq_live', chat_notice: null }
+		]);
+	});
 });
 
 describe('settings', () => {

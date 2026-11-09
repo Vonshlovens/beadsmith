@@ -83,7 +83,15 @@ const DISPATCH_COLUMN_MIGRATIONS = [
 	// The First Mate chat whose crew tool launched the mission (ADR-0020 rule 5).
 	{ name: 'chat_id', sql: 'ALTER TABLE dispatch_requests ADD COLUMN chat_id TEXT' },
 	// The outcome that chat was last told (`chatNoticeKey`), so it hears each once.
-	{ name: 'chat_notice', sql: 'ALTER TABLE dispatch_requests ADD COLUMN chat_notice TEXT' }
+	{
+		name: 'chat_notice',
+		sql: 'ALTER TABLE dispatch_requests ADD COLUMN chat_notice TEXT',
+		// Missions that ended before notices existed were never owed one: mark
+		// them told, or the first chat open after the upgrade would announce
+		// old outcomes as news.
+		then: `UPDATE dispatch_requests SET chat_notice = status || ':' || COALESCE(run_id, '')
+			WHERE chat_id IS NOT NULL AND status IN ('succeeded', 'cancelled', 'failed')`
+	}
 ] as const;
 
 export interface StateStore {
@@ -115,6 +123,7 @@ export async function initStateSchema(client: Client): Promise<void> {
 	for (const migration of DISPATCH_COLUMN_MIGRATIONS) {
 		if (!existing.has(migration.name)) {
 			await client.execute(migration.sql);
+			if ('then' in migration) await client.execute(migration.then);
 		}
 	}
 	await client.execute(
