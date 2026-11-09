@@ -265,7 +265,14 @@ export const route_todo = defineTool({
 		if (result.request === undefined) {
 			throw new CrewToolError(`Todo ${input.todo_id} is routed, but its mission is gone.`);
 		}
-		return launchResult(project, result.request, result.created, {
+		// A replay returns the todo's existing mission, which may live in another
+		// project than the one asked for: name the mission's own project, or a
+		// follow-up or cancel aimed at the requested one would miss it.
+		const mission_project =
+			result.request.project_id === project.id
+				? project
+				: await resolveCrewProject(ctx, deps, result.request.project_id);
+		return launchResult(mission_project, result.request, result.created, {
 			todo: compactTodo(result.todo)
 		});
 	}

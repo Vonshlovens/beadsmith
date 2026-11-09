@@ -234,6 +234,26 @@ describe('todo tools', () => {
 		expect(again).toMatchObject({ launched: false, mission_id: first.mission_id });
 		expect(launches).toHaveBeenCalledTimes(1);
 	});
+
+	it('route_todo replaying a mission in another project names that project', async () => {
+		const todo = await todo_store.create({ title: 'Route me once', created_by: 'u_admin' });
+		const first = await ok(
+			'route_todo',
+			{ todo_id: todo.id, project: 'beta' },
+			{ tool_use_id: 'toolu_c' }
+		);
+		const again = await ok(
+			'route_todo',
+			{ todo_id: todo.id, project: 'alpha' },
+			{ tool_use_id: 'toolu_d' }
+		);
+		expect(again).toMatchObject({
+			launched: false,
+			mission_id: first.mission_id,
+			project: { id: 'd_beta', name: 'beta' }
+		});
+		expect(again.mission.project_name).toBe('beta');
+	});
 });
 
 describe('mission tools', () => {
