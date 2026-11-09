@@ -14,6 +14,7 @@ import type { Client } from '@libsql/client';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { MATE_RUNNER_IDS, type MateChat, type MateEvent, type MateRunnerId } from '#lib/mate.js';
 import type { MissionEvent } from '#lib/mission-events.js';
+import { accountRole, type AccountRole } from '../auth/roles.js';
 
 export const MATE_SCHEMA_SQL: string[] = [
 	`CREATE TABLE IF NOT EXISTS mate_chats (
@@ -70,6 +71,12 @@ export interface MateStore {
 	): Promise<MateChat | undefined>;
 	deleteChat(owner_id: string, id: string): Promise<boolean>;
 	/**
+	 * Who a runner session acts for (crew tools, ADR-0020 rule 3): the chat,
+	 * its owner and the owner's current role. Undefined when the chat is gone,
+	 * or its owner is gone or banned, so a call from a stale sandbox is refused.
+	 */
+	crewCaller(session_id: string): Promise<CrewCaller | undefined>;
+	/**
 	 * Store events in order, skipping ids the chat already has. Returns the
 	 * ones that were new. Callers check ownership first.
 	 */
@@ -85,6 +92,13 @@ export interface MateStore {
 	listEvents(chat_id: string, options: { after?: string; limit: number }): Promise<MateEvent[]>;
 	/** The newest event id that came from the runner: the catch-up cursor. */
 	lastRunnerEventId(chat_id: string): Promise<string | undefined>;
+}
+
+export interface CrewCaller {
+	chat_id: string;
+	owner_id: string;
+	role: AccountRole;
+	scope: string | null;
 }
 
 function row(value: unknown): Record<string, unknown> {
@@ -292,6 +306,29 @@ export function createMateStore(client: Client, now: () => Date = () => new Date
 			}
 			const chat = await getChat(owner_id, id);
 			return chat === undefined ? undefined : publicChat(chat);
+		},
+
+		async crewCaller(session_id) {
+			// Role and ban are read on every call, not cached with the sandbox: a
+			// demotion or ban takes effect on the chat's next tool call.
+			const result = await client.execute({
+				sql: `SELECT c.id, c.owner_id, c.scope, u.role, u.banned, u.ban_expires
+					FROM mate_chats c JOIN auth_user u ON u.id = c.owner_id
+					WHERE c.session_id = ?`,
+				args: [session_id]
+			});
+			if (result.rows[0] === undefined) return undefined;
+			const r = row(result.rows[0]);
+			const expires = r.ban_expires === null ? undefined : Number(r.ban_expires);
+			const banned =
+				Number(r.banned ?? 0) !== 0 && (expires === undefined || expires > now().getTime());
+			if (banned) return undefined;
+			return {
+				chat_id: String(r.id),
+				owner_id: String(r.owner_id),
+				role: accountRole(optText(r.role)),
+				scope: optText(r.scope) ?? null
+			};
 		},
 
 		async deleteChat(owner_id, id) {

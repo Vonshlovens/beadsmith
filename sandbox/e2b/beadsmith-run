@@ -9,7 +9,8 @@
 #
 #   pid          the agent's process (and process group) id
 #   events.jsonl Claude Code's stream-json event log
-#   stderr.log   the agent's stderr (never sent to Beadsmith)
+#   stderr.log   the agent's stderr (its end goes to Beadsmith's server log on
+#                failure, never to the browser)
 #   started_ms   finished_ms   exit   (exit code; written last)
 #   cancelled    created by the provider before it stops the run
 #   setup.log    this script's own output

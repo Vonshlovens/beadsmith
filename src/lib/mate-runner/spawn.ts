@@ -53,6 +53,9 @@ export function claudeArgs(launch: AgentLaunch): string[] {
 	if (launch.scope !== null) {
 		args.push('--append-system-prompt', scopePrompt(launch.scope));
 	}
+	if (launch.mcp_config !== undefined) {
+		args.push('--mcp-config', launch.mcp_config);
+	}
 	return args;
 }
 

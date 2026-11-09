@@ -48,7 +48,7 @@ import {
 	readDoltAccount,
 	readSecretFile
 } from './sandbox-credentials.js';
-import { readGithubPullUrl } from './sanitize.js';
+import { readGithubPullUrl, sanitizeResultSummary } from './sanitize.js';
 import { DispatchError } from './types.js';
 import {
 	buildSandboxNetwork,
@@ -85,7 +85,15 @@ export interface E2bProviderDeps {
 	mint_tailscale_key?: () => Promise<string>;
 	mint_github_token?: (repository_url: string, write: boolean) => Promise<string>;
 	read_dolt_account?: (database: string) => Promise<{ user: string; password: string }>;
+	/**
+	 * Server-side diagnostics: E2B errors and the end of a failed run's logs.
+	 * The browser only ever gets the fixed messages below.
+	 */
+	log?: (message: string) => void;
 }
+
+/** Characters of each log file kept for the server log when a run fails. */
+const FAILURE_TAIL_BYTES = 2_000;
 
 function requireSandboxId(value: string): string {
 	if (!SANDBOX_ID_PATTERN.test(value)) throw new DispatchError('unavailable', 'Invalid agent id.');
@@ -215,6 +223,9 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 	const idle_ms = settings.idle_minutes * 60_000;
 	/** Terminal results already read, so a paused sandbox is not resumed to re-read them. */
 	const finished = new Map<string, AgentRunUpdate>();
+	const sink = deps.log ?? ((message: string) => console.warn(message));
+	// E2B errors can echo request headers; strip credential shapes first.
+	const log = (message: string) => sink(sanitizeResultSummary(message, '') ?? message);
 
 	const mintTailscale =
 		deps.mint_tailscale_key ??
@@ -291,6 +302,23 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		return parseRunFiles(stdout);
 	}
 
+	/**
+	 * Put the end of a failed run's stderr and setup logs in the server log,
+	 * redacted like a result summary. Read once: the result is cached after.
+	 */
+	async function logFailure(sandbox: SandboxRef, run_id: string, code: number, redact: string) {
+		const dir = `${RUNS_DIR}/${run_id}`;
+		try {
+			const { stdout } = await sandbox.exec(
+				`tail -c ${FAILURE_TAIL_BYTES} '${dir}/stderr.log' 2>/dev/null; echo '--- setup.log'; tail -c ${FAILURE_TAIL_BYTES} '${dir}/setup.log' 2>/dev/null`
+			);
+			const tail = sanitizeResultSummary(stdout, redact) ?? '(no output)';
+			log(`Sand mission ${sandbox.id}/${run_id} exited ${code}: ${tail}`);
+		} catch (error) {
+			log(`Sand mission ${sandbox.id}/${run_id} exited ${code}; logs unreadable: ${String(error)}`);
+		}
+	}
+
 	async function latestRunId(sandbox: SandboxRef): Promise<string | undefined> {
 		const { stdout } = await sandbox.exec(`ls -1 '${RUNS_DIR}' 2>/dev/null`);
 		const runs = stdout
@@ -360,6 +388,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 				});
 			} catch (error) {
 				if (error instanceof DispatchError) throw error;
+				log(`Sand mission: E2B could not create a sandbox: ${String(error)}`);
 				throw new DispatchError('unavailable', `${deps.label} could not create a sandbox.`);
 			}
 			try {
@@ -368,6 +397,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 				// Do not leave a sandbox behind that will never report.
 				await sandbox.kill().catch(() => undefined);
 				if (error instanceof DispatchError) throw error;
+				log(`Sand mission ${sandbox.id}: the agent could not start: ${String(error)}`);
 				throw new DispatchError('unavailable', `${deps.label} could not start the agent.`);
 			}
 			return { agent_id: sandbox.id, run_id: 'r1' };
@@ -406,7 +436,12 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 					error_message: 'The sandbox ended before the run reported a result.'
 				};
 			}
-			const update = runUpdateFromFiles(await readRun(sandbox, run_id), await redactionFor(info));
+			const files = await readRun(sandbox, run_id);
+			const redact = await redactionFor(info);
+			const update = runUpdateFromFiles(files, redact);
+			if (update.status === 'failed' && files.exit_code !== undefined && files.exit_code !== 0) {
+				await logFailure(sandbox, run_id, files.exit_code, redact);
+			}
 			if (update.status !== 'running') {
 				finished.set(key, update);
 				// Finished: wait briefly for a follow-up, then pause (lifecycle onTimeout).

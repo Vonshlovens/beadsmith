@@ -44,10 +44,10 @@ rotating it.
 A chat runs on one of the configured **chat runners**, chosen when it is
 created and kept for its life:
 
-| Runner   | Where the agent runs                                                                               | Needs                                                                                    |
-| -------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `remote` | The HTTP mate runner above (for example the forge guest, ADR-0016)                                 | `BDX_MATE_RUNNER_URL` and its secret                                                     |
-| `e2b`    | Sand: an E2B sandbox per chat, with model access only ([sand-e2b.md](sand-e2b.md#how-a-chat-runs)) | `BDX_E2B_API_KEY_FILE` and a model credential ([sand-e2b.md](sand-e2b.md#configuration)) |
+| Runner   | Where the agent runs                                                                        | Needs                                                                                    |
+| -------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `remote` | The HTTP mate runner above (for example the forge guest, ADR-0016)                          | `BDX_MATE_RUNNER_URL` and its secret                                                     |
+| `e2b`    | Sand: an E2B sandbox per chat, with crew tools ([sand-e2b.md](sand-e2b.md#how-a-chat-runs)) | `BDX_E2B_API_KEY_FILE` and a model credential ([sand-e2b.md](sand-e2b.md#configuration)) |
 
 `BDX_MATE_RUNNERS` lists them, default first; unset means `remote`.
 `BDX_MATE_RUNNER_LABEL` and `BDX_E2B_LABEL` name them. With more than one

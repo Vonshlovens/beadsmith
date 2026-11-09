@@ -66,7 +66,10 @@ let one admin choice in First Mate ("Runs on") pick where new work goes.
    rights on that database only, from an operator file; a project without
    one cannot launch on Sand.
 5. **Sand chats match the forge guest.** Model access only: no tailnet, Dolt
-   or repository access, the same standing instructions.
+   or repository access, the same standing instructions. (Amended by
+   [0020](./0020-first-mate-crew-tools.md): Sand chats get crew tools over
+   the E2B process channel and their own standing instructions; still no
+   tailnet, Dolt or repository access.)
 6. **Beadsmith drives E2B itself.** The dispatch provider and the chat runner
    run inside the Beadsmith process, so Sand needs no service of its own to
    deploy. The chat runner reuses the mate runner's core

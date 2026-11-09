@@ -140,3 +140,23 @@ browser. A chat's scope is only the default project for tools that need one;
 it does not narrow what the owner can read, because the browser does not.
 Results are compact JSON, string fields cut at 2,000 characters with a note
 saying how much was dropped, and the whole result kept under 24,000.
+
+**Sand bridge.** `src/lib/server/mate/crew-bridge.ts`. On every create and
+resume the runner writes `/home/user/mate/.crew/relay.cjs` (dependency-free
+Node), `.crew/mcp.json` (one stdio server, `crew`, so tools appear as
+`mcp__crew__<name>`) and First Mate's `AGENTS.md`, which replaces the
+template's text; nothing depends on a template rebuild. The relay's `serve`
+side runs as an E2B interactive command and owns a unix socket (mode 0600);
+the `stdio` side, which Claude Code launches, connects to it and reconnects
+if serve restarts. A frame is one line of JSON, `{"conn": n, "line":
+"<JSON-RPC text>"}`, in both directions; `conn` numbers the stdio
+connection. Beadsmith accepts at most 256 KiB per frame, validates the shape
+strictly, and drops and logs anything else. The caller is resolved on every
+frame from the session id (`MateStore.crewCaller`: the chat, its owner, the
+owner's current role, refused when the owner is banned or the chat is gone).
+The relay is restarted up to five times per Claude Code process and killed
+with it. `AgentLaunch.mcp_config` adds `--mcp-config` to the shared
+`claudeArgs`. E2B create and connect errors and a 2,000-character stderr
+tail on a bad exit go to the server log only, stripped of credential shapes;
+the dispatch provider logs a failed run's `stderr.log` and `setup.log` tails
+the same way.

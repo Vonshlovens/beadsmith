@@ -145,3 +145,45 @@ describe('events', () => {
 		expect(await store.lastRunnerEventId(chat.id)).toBe('e1');
 	});
 });
+
+describe('crewCaller', () => {
+	async function addUser(id: string, role: string | null, banned = 0, ban_expires?: number) {
+		await client.execute({
+			sql: `INSERT INTO auth_user (id, name, email, role, banned, ban_expires, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, 0, 0)`,
+			args: [id, id, `${id}@example.test`, role, banned, ban_expires ?? null]
+		});
+	}
+
+	it('names the chat, its owner and the owner’s current role', async () => {
+		await addUser('u1', 'admin');
+		const chat = await store.createChat('u1', { title: 't', scope: 'd_web' });
+		const session = (await store.getChat('u1', chat.id))!.session_id;
+		expect(await store.crewCaller(session)).toEqual({
+			chat_id: chat.id,
+			owner_id: 'u1',
+			role: 'admin',
+			scope: 'd_web'
+		});
+		// A demotion applies on the next call.
+		await client.execute("UPDATE auth_user SET role = 'member' WHERE id = 'u1'");
+		expect((await store.crewCaller(session))?.role).toBe('member');
+	});
+
+	it('refuses an unknown session, a deleted chat and a banned owner', async () => {
+		await addUser('u1', 'admin');
+		await addUser('u2', 'admin', 1);
+		await addUser('u3', 'admin', 1, Date.UTC(2020, 0, 1));
+		expect(await store.crewCaller('no-such-session')).toBeUndefined();
+		const own = async (owner: string) => {
+			const chat = await store.createChat(owner, { title: 't', scope: null });
+			return { chat, session: (await store.getChat(owner, chat.id))!.session_id };
+		};
+		const one = await own('u1');
+		await store.deleteChat('u1', one.chat.id);
+		expect(await store.crewCaller(one.session)).toBeUndefined();
+		expect(await store.crewCaller((await own('u2')).session)).toBeUndefined();
+		// A ban that has expired no longer refuses.
+		expect((await store.crewCaller((await own('u3')).session))?.owner_id).toBe('u3');
+	});
+});
