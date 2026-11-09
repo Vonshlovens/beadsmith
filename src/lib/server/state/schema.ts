@@ -63,6 +63,8 @@ export const dispatchRequests = sqliteTable('dispatch_requests', {
 	resultSummary: text('result_summary'),
 	durationMs: integer('duration_ms'),
 	gitPrUrl: text('git_pr_url'),
+	/** First Mate chat that launched it through a crew tool; null otherwise. */
+	chatId: text('chat_id'),
 	createdAt: text('created_at').notNull(),
 	updatedAt: text('updated_at').notNull()
 });

@@ -76,6 +76,8 @@ export interface DispatchRecord {
 	result_summary?: string;
 	duration_ms?: number;
 	git_pr_url?: string;
+	/** First Mate chat whose crew tool launched it (ADR-0020 rule 5). */
+	chat_id?: string;
 	created_at: string;
 	updated_at: string;
 }

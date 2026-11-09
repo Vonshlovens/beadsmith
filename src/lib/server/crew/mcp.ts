@@ -6,10 +6,12 @@
  * with `isError`, so a confused or hostile chat agent cannot break the bridge
  * that carries it. Framing and transport belong to the caller.
  */
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { roleCan } from '../auth/roles.js';
 import { safeError } from '../security.js';
 import { READ_TOOLS } from './read-tools.js';
+import { WRITE_TOOLS } from './write-tools.js';
 import {
 	boundedJson,
 	CrewToolError,
@@ -19,7 +21,7 @@ import {
 } from './registry.js';
 
 /** Every crew tool, in the order `tools/list` returns them. */
-export const CREW_TOOLS: CrewTool[] = [...READ_TOOLS];
+export const CREW_TOOLS: CrewTool[] = [...READ_TOOLS, ...WRITE_TOOLS];
 
 /** Newest first; an `initialize` asking for another version gets the newest. */
 export const MCP_PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'] as const;
@@ -27,7 +29,10 @@ export const CREW_SERVER_INFO = { name: 'beadsmith-crew', version: '1.0.0' } as 
 
 const INSTRUCTIONS =
 	'Beadsmith crew tools act as the owner of this chat. Read tools return compact JSON; ' +
-	'long text is cut and says so. Use list_projects for project ids.';
+	'long text is cut and says so. Use list_projects for project ids. Todo tools change the ' +
+	"owner's todo list directly. Beads changes go through missions: file_issue, comment_issue, " +
+	'tackle_issue and discuss_issue each start an agent with its own thread; say what you ' +
+	'started (operation, project, issue, mission id). Launches per chat are rate limited.';
 
 /** JSON-RPC 2.0 error codes used here. */
 export const JSONRPC_ERRORS = {
@@ -53,8 +58,27 @@ const request_schema = z.object({
 
 const call_params_schema = z.object({
 	name: z.string().max(200),
-	arguments: z.record(z.string(), z.unknown()).optional()
+	arguments: z.record(z.string(), z.unknown()).optional(),
+	_meta: z.record(z.string(), z.unknown()).optional()
 });
+
+/** Claude Code names each MCP call with its tool use id in `_meta`. */
+const TOOL_USE_ID_KEY = 'claudecode/toolUseId';
+
+/**
+ * The call's identity across retries: the client's tool use id, or a hash of
+ * the tool and its validated arguments when the client sends none.
+ */
+function callId(tool: CrewTool, meta: Record<string, unknown> | undefined, input: unknown): string {
+	const tool_use_id = meta?.[TOOL_USE_ID_KEY];
+	if (typeof tool_use_id === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(tool_use_id)) {
+		return `use:${tool_use_id}`;
+	}
+	const digest = createHash('sha256')
+		.update(`${tool.name}\0${JSON.stringify(input)}`)
+		.digest('hex');
+	return `args:${digest}`;
+}
 
 function ok(id: JsonRpcId, result: unknown): JsonRpcResponse {
 	return { jsonrpc: '2.0', id, result };
@@ -143,7 +167,9 @@ export function createCrewMcpHandler(
 			);
 		}
 		try {
-			return ok(id, toolText(boundedJson(await tool.handler(ctx, input.data, deps)), false));
+			const call_ref = { id: callId(tool, call.data._meta, input.data) };
+			const result = await tool.handler(ctx, input.data, deps, call_ref);
+			return ok(id, toolText(boundedJson(result), false));
 		} catch (error) {
 			if (error instanceof CrewToolError) {
 				return ok(id, toolText(error.message, true));

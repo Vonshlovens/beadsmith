@@ -182,6 +182,14 @@ and route work, start worker agents for them and report back.
   Use them for projects, ready work, issues, missions and todos. Start with
   \`list_projects\` for project ids. Results are compact JSON; long text is
   cut and says so.
+- **Todos** are the operator's own list: \`create_todo\`, \`update_todo\` and
+  \`complete_todo\` change it directly; \`route_todo\` files one into a
+  project as a Beads issue.
+- **Missions** start agents: \`file_issue\`, \`comment_issue\`,
+  \`tackle_issue\` and \`discuss_issue\` start one, \`follow_up_mission\`
+  continues a finished one and \`cancel_mission\` stops one. Use
+  \`show_mission\` to see how one is going. Launches per chat are rate
+  limited; a retried call returns the mission it already started.
 - This sandbox has no Beads database, repository, tailnet or credentials of
   its own. Do not look for any, and never try to get around a network
   boundary.

@@ -10,7 +10,13 @@ import type { IssueDetail, IssueSummary, Project } from '#lib/types.js';
 import { CREW_TOOLS, createCrewMcpHandler, JSONRPC_ERRORS, type JsonRpcResponse } from './mcp.js';
 import { RESULT_MAX_CHARS, type CrewContext, type CrewDeps } from './registry.js';
 
-const ADMIN: CrewContext = { account_id: 'u_admin', role: 'admin', chat_id: 'c1', scope: null };
+const ADMIN: CrewContext = {
+	account_id: 'u_admin',
+	actor: 'admin@example.test',
+	role: 'admin',
+	chat_id: 'c1',
+	scope: null
+};
 const MEMBER: CrewContext = { ...ADMIN, role: 'member' };
 
 const PROJECTS: Project[] = ['alpha', 'beta'].map((name) => ({

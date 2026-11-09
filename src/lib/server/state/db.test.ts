@@ -83,14 +83,19 @@ describe('initStateSchema', () => {
 				'result_summary',
 				'duration_ms',
 				'git_pr_url',
-				'provider'
+				'provider',
+				'chat_id'
 			])
 		);
-		const row = await existing.execute('SELECT agent_id, agent_url, run_id FROM dispatch_requests');
+		const row = await existing.execute(
+			'SELECT agent_id, agent_url, run_id, chat_id FROM dispatch_requests'
+		);
 		expect(row.rows[0]).toMatchObject({
 			agent_id: 'bc-1',
 			agent_url: 'https://runner.example.com/agents/bc-1',
-			run_id: 'run-1'
+			run_id: 'run-1',
+			// Missions from before crew tools came from no chat.
+			chat_id: null
 		});
 	});
 });

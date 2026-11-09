@@ -16,6 +16,8 @@ export interface CreateDispatchInput {
 	operation: DispatchOperation;
 	actor: string;
 	payload: DispatchPayload;
+	/** First Mate chat launching it through a crew tool. */
+	chat_id?: string;
 	now?: () => Date;
 }
 
@@ -91,7 +93,7 @@ export interface DispatchStore {
 const DISPATCH_SELECT = `SELECT
 	id, idempotency_key, project_id, dolt_database, operation, actor, payload_json,
 	status, provider, agent_id, agent_url, run_id, error_message,
-	result_summary, duration_ms, git_pr_url,
+	result_summary, duration_ms, git_pr_url, chat_id,
 	created_at, updated_at
 FROM dispatch_requests`;
 
@@ -154,6 +156,7 @@ function rowToRecord(row: Record<string, unknown>): DispatchRecord {
 		result_summary: asText(row.result_summary),
 		duration_ms: asNonNegativeInteger(row.duration_ms),
 		git_pr_url: asText(row.git_pr_url),
+		chat_id: asText(row.chat_id),
 		created_at: String(row.created_at),
 		updated_at: String(row.updated_at)
 	};
@@ -172,8 +175,8 @@ export function createDispatchStore(client: Client): DispatchStore {
 				await client.execute({
 					sql: `INSERT INTO dispatch_requests (
 						id, idempotency_key, project_id, dolt_database, operation, actor, payload_json,
-						status, created_at, updated_at
-					) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
+						chat_id, status, created_at, updated_at
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
 					args: [
 						id,
 						input.idempotency_key,
@@ -182,6 +185,7 @@ export function createDispatchStore(client: Client): DispatchStore {
 						input.operation,
 						input.actor,
 						JSON.stringify(input.payload),
+						input.chat_id ?? null,
 						now,
 						now
 					]

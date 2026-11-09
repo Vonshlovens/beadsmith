@@ -79,7 +79,9 @@ const DISPATCH_COLUMN_MIGRATIONS = [
 	{ name: 'result_summary', sql: 'ALTER TABLE dispatch_requests ADD COLUMN result_summary TEXT' },
 	{ name: 'duration_ms', sql: 'ALTER TABLE dispatch_requests ADD COLUMN duration_ms INTEGER' },
 	{ name: 'git_pr_url', sql: 'ALTER TABLE dispatch_requests ADD COLUMN git_pr_url TEXT' },
-	{ name: 'provider', sql: 'ALTER TABLE dispatch_requests ADD COLUMN provider TEXT' }
+	{ name: 'provider', sql: 'ALTER TABLE dispatch_requests ADD COLUMN provider TEXT' },
+	// The First Mate chat whose crew tool launched the mission (ADR-0020 rule 5).
+	{ name: 'chat_id', sql: 'ALTER TABLE dispatch_requests ADD COLUMN chat_id TEXT' }
 ] as const;
 
 export interface StateStore {
@@ -113,6 +115,9 @@ export async function initStateSchema(client: Client): Promise<void> {
 			await client.execute(migration.sql);
 		}
 	}
+	await client.execute(
+		'CREATE INDEX IF NOT EXISTS dispatch_requests_chat ON dispatch_requests (chat_id, created_at) WHERE chat_id IS NOT NULL'
+	);
 	for (const statement of DISPATCH_TURNS_SCHEMA_SQL) {
 		await client.execute(statement);
 	}

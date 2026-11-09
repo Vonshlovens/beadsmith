@@ -104,6 +104,12 @@ export interface ServerEnv {
 	mate_labels: Record<MateRunnerId, string>;
 	/** E2B chat settings when `e2b` is a usable chat runner. */
 	mate_e2b?: E2bMateSettings;
+	/**
+	 * Most missions one First Mate chat may start through crew tools in a
+	 * sliding window (ADR-0020 rule 6): `BDX_CREW_LAUNCH_LIMIT` (default 10)
+	 * per `BDX_CREW_LAUNCH_WINDOW_MINUTES` (default 10).
+	 */
+	crew_launch_limit: { count: number; window_minutes: number };
 }
 
 /** First Mate chats in E2B sandboxes: one sandbox per chat (docs/sand-e2b.md). */
@@ -578,7 +584,11 @@ export function readEnv(source: NodeJS.ProcessEnv = process.env): ServerEnv {
 		mate_runner_error: mate_runner.error,
 		mate_runners: mate_runner.runners,
 		mate_labels: mate_runner.labels,
-		mate_e2b: mate_runner.e2b
+		mate_e2b: mate_runner.e2b,
+		crew_launch_limit: {
+			count: parsePositiveInt(source.BDX_CREW_LAUNCH_LIMIT, 10),
+			window_minutes: parsePositiveInt(source.BDX_CREW_LAUNCH_WINDOW_MINUTES, 10)
+		}
 	};
 }
 

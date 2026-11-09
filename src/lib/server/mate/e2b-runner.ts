@@ -83,6 +83,7 @@ export function defaultCrewBridgeDeps(): CrewBridgeDeps {
 			if (caller === undefined) return undefined;
 			return {
 				account_id: caller.owner_id,
+				actor: caller.owner_email,
 				role: caller.role,
 				chat_id: caller.chat_id,
 				scope: caller.scope
