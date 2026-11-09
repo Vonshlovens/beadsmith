@@ -85,6 +85,8 @@ class MateChats {
 	cancel_errors = $state<Record<string, string>>({});
 
 	#generation = 0;
+	/** Bumped per missions read; a reply from an older read is dropped. */
+	#missions_seq = 0;
 	#mission_poll: ReturnType<typeof setInterval> | null = null;
 	#source: EventSource | null = null;
 	#loading: Promise<void> | null = null;
@@ -200,13 +202,16 @@ class MateChats {
 	 */
 	async loadMissions(id: string) {
 		const generation = this.#generation;
+		// Opening, polling and crew events can overlap; only the newest read
+		// may land, or an older answer could hide a card that just appeared.
+		const seq = ++this.#missions_seq;
 		try {
 			const { missions } = await api.mateChatMissions(id);
-			if (this.#generation !== generation) return;
+			if (this.#generation !== generation || seq !== this.#missions_seq) return;
 			this.missions = missions;
 			this.missions_error = null;
 		} catch (error) {
-			if (this.#generation !== generation) return;
+			if (this.#generation !== generation || seq !== this.#missions_seq) return;
 			this.missions_error = errorMessage(error);
 		}
 		this.#syncMissionPoll();
