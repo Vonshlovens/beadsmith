@@ -154,7 +154,7 @@ P0–P4.
 | `[` / `]`                                   | Toggle the filter sidebar / the detail pane (raw line, comments)                       |
 | `D`, `L`                                    | Cycle density (compact, comfortable, cozy) / toggle line numbers                       |
 | `:`, `Ctrl-P`                               | Command palette: type to filter, `↑↓` choose, `Enter` run                              |
-| `r`                                         | Route the todo to a project (the routing dialog; unrouted open todos only)             |
+| `r`                                         | Route the todo to a project (unrouted, or again after a failed route)                  |
 | `Esc`                                       | Cancel a chord, leave visual or filter mode, then clear search and filters             |
 | `?`                                         | This overlay                                                                           |
 

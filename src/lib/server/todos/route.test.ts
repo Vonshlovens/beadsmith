@@ -216,6 +216,31 @@ describe('routeTodo', () => {
 		expect(second.kind === 'routed' && second.request?.status).toBe('launched');
 	});
 
+	it('does not route again once a bead is filed, even if the mission reads as failed', async () => {
+		const todo = await makeTodo();
+		const failing = provider({
+			launch: vi.fn(async () => {
+				throw new DispatchError('unavailable', 'runner down');
+			})
+		});
+		const first = await routeTodo(
+			todos,
+			{ todo_id: todo.id, project: PROJECT, actor: 'u1' },
+			deps(failing)
+		);
+		expect(first.kind === 'routed' && first.request?.status).toBe('failed');
+		await todos.update(todo.id, { routed_issue_id: 'beads-web-7' });
+
+		const again = provider();
+		const second = await routeTodo(
+			todos,
+			{ todo_id: todo.id, project: PROJECT, actor: 'u1' },
+			deps(again)
+		);
+		expect(again.launch).not.toHaveBeenCalled();
+		expect(second.kind === 'routed' && second.created).toBe(false);
+	});
+
 	it('links the bead once the runner reports its issue id', async () => {
 		const todo = await makeTodo();
 		const p = provider({
