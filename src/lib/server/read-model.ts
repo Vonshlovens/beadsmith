@@ -31,6 +31,7 @@ export interface IssueFilters {
 	priority?: string;
 	q?: string;
 	label?: string;
+	assignee?: string;
 }
 
 /**
@@ -129,6 +130,31 @@ export async function getProjectEvents(
 	try {
 		const dolt = deps.dolt ?? getDoltClient();
 		const events = await dolt.recentEvents(project.dolt_database, limit);
+		return events.map((event) => {
+			return { ...event, project_id: project.id, project_name: project.name };
+		});
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * Recent Beads events for one issue, newest first. Like project activity, a
+ * failed read contributes nothing rather than hiding the issue itself.
+ */
+export async function getIssueEvents(
+	project: Project,
+	issue_id: string,
+	limit: number,
+	deps: ReadDeps = {}
+): Promise<ActivityEvent[]> {
+	const configured = deps.dolt_configured ?? getEnv().dolt_configured;
+	if (!canUseSql(project, configured)) {
+		return [];
+	}
+	try {
+		const dolt = deps.dolt ?? getDoltClient();
+		const events = await dolt.issueEvents(project.dolt_database, issue_id, limit);
 		return events.map((event) => {
 			return { ...event, project_id: project.id, project_name: project.name };
 		});

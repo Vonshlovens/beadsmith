@@ -225,6 +225,8 @@ export interface BrowseFilters {
 	priority?: string;
 	q?: string;
 	label?: string;
+	/** Exact `assignee`; crew tools filter by it, the browse UI does not yet. */
+	assignee?: string;
 }
 
 export interface SqlWhere {
@@ -315,6 +317,10 @@ export function buildIssueWhere(filters: BrowseFilters, alias = 'i', database?: 
 				`WHERE exact_label.issue_id = ${alias}.id AND exact_label.label = ?)`
 		);
 		params.push(filters.label);
+	}
+	if (filters.assignee !== undefined && filters.assignee.length > 0) {
+		clauses.push(`${alias}.assignee = ?`);
+		params.push(filters.assignee);
 	}
 
 	return {

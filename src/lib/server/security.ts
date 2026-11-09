@@ -332,12 +332,44 @@ export function jsonResponse(payload: unknown, status = 200): Response {
 	});
 }
 
+/** A thrown error reduced to what may leave the server. */
+export interface SafeError {
+	code: ApiErrorCode;
+	message: string;
+	failure_kind?: DoltFailureKind;
+}
+
 /**
- * Map a thrown error onto the contract error shape.
+ * Reduce a thrown error to a code and a message safe to show a browser or an
+ * agent (crew tools use it too).
  *
  * Only known safe adapter errors retain their fixed message. Unknown errors
  * are deliberately collapsed so driver, filesystem, and connection detail
- * cannot reach a browser response.
+ * cannot leave the server.
+ * @param error Caught value.
+ * @param fallback Code used for unrecognised errors.
+ */
+export function safeError(error: unknown, fallback: ApiErrorCode = 'unavailable'): SafeError {
+	if (isDoltConnectionError(error)) {
+		return { code: 'unavailable', message: error.message, failure_kind: error.kind };
+	}
+	if (error instanceof ProjectDiscoveryError) {
+		return { code: 'unavailable', message: error.message, failure_kind: error.failure_kind };
+	}
+	if (error instanceof DispatchError) {
+		return { code: error.code, message: error.message };
+	}
+	if (error instanceof UnsupportedSchemaError) {
+		return { code: 'unavailable', message: error.message };
+	}
+	if (error instanceof DoltError) {
+		return { code: 'dolt_error', message: 'Remote Dolt query failed.' };
+	}
+	return { code: fallback, message: 'The requested service is currently unavailable.' };
+}
+
+/**
+ * Map a thrown error onto the contract error shape (see `safeError`).
  * @param error Caught value.
  * @param fallback Code used for unrecognised errors.
  */
@@ -345,22 +377,8 @@ export function errorFromException(
 	error: unknown,
 	fallback: ApiErrorCode = 'unavailable'
 ): Response {
-	if (isDoltConnectionError(error)) {
-		return errorResponse('unavailable', error.message, error.kind);
-	}
-	if (error instanceof ProjectDiscoveryError) {
-		return errorResponse('unavailable', error.message, error.failure_kind);
-	}
-	if (error instanceof DispatchError) {
-		return errorResponse(error.code, error.message);
-	}
-	if (error instanceof UnsupportedSchemaError) {
-		return errorResponse('unavailable', error.message);
-	}
-	if (error instanceof DoltError) {
-		return errorResponse('dolt_error', 'Remote Dolt query failed.');
-	}
-	return errorResponse(fallback, 'The requested service is currently unavailable.');
+	const safe = safeError(error, fallback);
+	return errorResponse(safe.code, safe.message, safe.failure_kind);
 }
 
 let rate_limiter: RateLimiter | undefined;
