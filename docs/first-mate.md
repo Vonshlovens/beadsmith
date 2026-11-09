@@ -58,6 +58,16 @@ place to run, the start screen's **Runs on** picker chooses where new chats
 The `e2b` runner is the mate runner's own core running inside Beadsmith, so
 it follows the contract below exactly; it needs no URL or secret.
 
+The start screen says where a new chat will run and what it can do there:
+crew tools on Sand, its own Beads sandbox elsewhere. When a runner is
+configured it also offers next actions from live data, such as "4 ready
+issues in api", and on Sand "2 todos not routed" and "1 mission needs you"
+(an issue whose latest mission failed). Each one fills the composer with a
+question and never sends. Nothing is offered that the chat could not do:
+todo and mission suggestions need crew tools, and without dispatch the todo
+prompt asks for a plan instead of routing
+([`mate-start.ts`](../src/lib/client/mate-start.ts)).
+
 ## Crew tools
 
 On the `e2b` runner, First Mate can do more than talk. Beadsmith gives the
