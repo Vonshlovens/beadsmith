@@ -12,6 +12,7 @@ import type { ReadDeps } from '../read-model.js';
 import type { DispatchDeps } from '../dispatch/service.js';
 import type { TodoStore } from '../todos/store.js';
 import type { Project } from '#lib/types.js';
+import type { LaunchLimiter } from './launch-limit.js';
 
 /**
  * Who is calling. Tools act as the chat's owner (rule 3), so authority comes
@@ -21,6 +22,11 @@ import type { Project } from '#lib/types.js';
 export interface CrewContext {
 	/** The account that owns the chat. */
 	account_id: string;
+	/**
+	 * The owner's email, recorded as the actor on missions a tool launches,
+	 * as the browser records the signed-in user's email.
+	 */
+	actor: string;
 	role: AccountRole;
 	chat_id: string;
 	/**
@@ -38,6 +44,18 @@ export interface CrewDeps {
 	read?: ReadDeps;
 	dispatch?: DispatchDeps;
 	todos?: () => Promise<TodoStore>;
+	/** Per-chat cap on mission launches; defaults to the env-configured one. */
+	launch_limiter?: LaunchLimiter;
+}
+
+/**
+ * One `tools/call`. `id` names the call across retries: Claude Code's tool
+ * use id (`_meta["claudecode/toolUseId"]`) when the client sends one, else a
+ * hash of the tool name and validated arguments, so a client that retries a
+ * call without an id still replays it.
+ */
+export interface CrewCall {
+	id: string;
 }
 
 export interface CrewTool<Input = unknown> {
@@ -48,7 +66,7 @@ export interface CrewTool<Input = unknown> {
 	/** Permission the owner's role needs, as the matching HTTP route requires. */
 	permission?: Permission;
 	/** Returns a JSON value; `mcp.ts` bounds and serialises it. */
-	handler(ctx: CrewContext, input: Input, deps: CrewDeps): Promise<unknown>;
+	handler(ctx: CrewContext, input: Input, deps: CrewDeps, call: CrewCall): Promise<unknown>;
 }
 
 /**

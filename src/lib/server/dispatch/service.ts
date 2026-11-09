@@ -54,6 +54,8 @@ export interface EnqueueDispatchInput {
 	issue?: IssueDetail;
 	/** Launch on this configured provider; omitted means the default one. */
 	provider?: DispatchProviderId;
+	/** First Mate chat launching it through a crew tool (ADR-0020 rule 5). */
+	chat_id?: string;
 }
 
 export interface DispatchDeps {
@@ -450,7 +452,8 @@ export async function enqueueDispatch(
 		dolt_database: input.project.dolt_database,
 		operation: input.payload.operation,
 		actor: input.actor,
-		payload: enrichPayload(input.payload, input.issue)
+		payload: enrichPayload(input.payload, input.issue),
+		...(input.chat_id === undefined ? {} : { chat_id: input.chat_id })
 	});
 
 	if (!created) {

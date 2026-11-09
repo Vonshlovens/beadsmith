@@ -97,6 +97,8 @@ export interface MateStore {
 export interface CrewCaller {
 	chat_id: string;
 	owner_id: string;
+	/** The owner's email: the actor recorded on missions a crew tool launches. */
+	owner_email: string;
 	role: AccountRole;
 	scope: string | null;
 }
@@ -312,7 +314,7 @@ export function createMateStore(client: Client, now: () => Date = () => new Date
 			// Role and ban are read on every call, not cached with the sandbox: a
 			// demotion or ban takes effect on the chat's next tool call.
 			const result = await client.execute({
-				sql: `SELECT c.id, c.owner_id, c.scope, u.role, u.banned, u.ban_expires
+				sql: `SELECT c.id, c.owner_id, c.scope, u.email, u.role, u.banned, u.ban_expires
 					FROM mate_chats c JOIN auth_user u ON u.id = c.owner_id
 					WHERE c.session_id = ?`,
 				args: [session_id]
@@ -326,6 +328,7 @@ export function createMateStore(client: Client, now: () => Date = () => new Date
 			return {
 				chat_id: String(r.id),
 				owner_id: String(r.owner_id),
+				owner_email: String(r.email),
 				role: accountRole(optText(r.role)),
 				scope: optText(r.scope) ?? null
 			};

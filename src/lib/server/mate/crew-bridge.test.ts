@@ -25,7 +25,13 @@ import {
 } from './crew-bridge.js';
 
 const SESSION = '0e7c1a52-3f0b-4b7e-9a51-2a3c4d5e6f70';
-const CTX: CrewContext = { account_id: 'u_owner', role: 'admin', chat_id: 'mc_one', scope: null };
+const CTX: CrewContext = {
+	account_id: 'u_owner',
+	actor: 'owner@example.test',
+	role: 'admin',
+	chat_id: 'mc_one',
+	scope: null
+};
 
 const whoami = defineTool({
 	name: 'whoami',

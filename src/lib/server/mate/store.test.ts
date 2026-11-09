@@ -162,6 +162,7 @@ describe('crewCaller', () => {
 		expect(await store.crewCaller(session)).toEqual({
 			chat_id: chat.id,
 			owner_id: 'u1',
+			owner_email: 'u1@example.test',
 			role: 'admin',
 			scope: 'd_web'
 		});

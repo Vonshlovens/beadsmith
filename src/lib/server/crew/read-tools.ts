@@ -54,7 +54,7 @@ function allProjects(deps: CrewDeps, force = false): Promise<Project[]> {
  * Resolve the project a call names, or the chat's project when it names none.
  * Unknown names refresh discovery once, as `resolveProject` does for the UI.
  */
-async function resolveCrewProject(
+export async function resolveCrewProject(
 	ctx: CrewContext,
 	deps: CrewDeps,
 	ref: string | undefined
@@ -86,7 +86,9 @@ function compactIssue(issue: IssueSummary) {
 }
 
 /** `Mission` from lists; a project's dispatch (no name or title) from show_mission. */
-function compactMission(mission: DispatchRequest & { project_name?: string; title?: string }) {
+export function compactMission(
+	mission: DispatchRequest & { project_name?: string; title?: string }
+) {
 	return {
 		id: mission.id,
 		project_id: mission.project_id,
@@ -104,7 +106,7 @@ function compactMission(mission: DispatchRequest & { project_name?: string; titl
 	};
 }
 
-function compactTodo(todo: Todo) {
+export function compactTodo(todo: Todo) {
 	return {
 		id: todo.id,
 		title: todo.title,

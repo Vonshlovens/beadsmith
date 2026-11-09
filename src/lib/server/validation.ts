@@ -325,7 +325,7 @@ export const todo_tag_schema = z
 	.string()
 	.trim()
 	.regex(/^[+@]?[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$/, 'invalid tag');
-const todo_due_schema = z
+export const todo_due_schema = z
 	.string()
 	.refine(
 		(value) =>
@@ -333,8 +333,8 @@ const todo_due_schema = z
 			!Number.isNaN(Date.parse(value)),
 		'due_at must be an ISO date or datetime'
 	);
-const todo_priority_schema = z.number().int().min(0).max(4);
-const todo_tags_schema = z.array(todo_tag_schema).max(16);
+export const todo_priority_schema = z.number().int().min(0).max(4);
+export const todo_tags_schema = z.array(todo_tag_schema).max(16);
 
 export const todo_id_schema = z.string().regex(/^td_[a-f0-9]{24}$/, 'invalid todo id');
 

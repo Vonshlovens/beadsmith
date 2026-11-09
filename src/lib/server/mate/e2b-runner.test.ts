@@ -146,7 +146,13 @@ const whoami = defineTool({
 	}
 });
 
-const OWNER: CrewContext = { account_id: 'u_owner', role: 'admin', chat_id: 'mc_one', scope: null };
+const OWNER: CrewContext = {
+	account_id: 'u_owner',
+	actor: 'owner@example.test',
+	role: 'admin',
+	chat_id: 'mc_one',
+	scope: null
+};
 
 function setup(options: { create_error?: Error; sandboxes?: Map<string, FakeChatSandbox> } = {}) {
 	const sandboxes = options.sandboxes ?? new Map<string, FakeChatSandbox>();

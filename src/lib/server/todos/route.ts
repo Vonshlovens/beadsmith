@@ -91,7 +91,14 @@ export type RouteTodoResult =
 /** Route (or replay the routing of) one todo. Throws `DispatchError` on policy refusal. */
 export async function routeTodo(
 	store: TodoStore,
-	input: { todo_id: string; project: Project; actor: string; note?: string },
+	input: {
+		todo_id: string;
+		project: Project;
+		actor: string;
+		note?: string;
+		/** First Mate chat routing it through a crew tool. */
+		chat_id?: string;
+	},
 	deps: DispatchDeps = {}
 ): Promise<RouteTodoResult> {
 	const todo = await store.get(input.todo_id);
@@ -117,7 +124,8 @@ export async function routeTodo(
 			idempotency_key: routeIdempotencyKey(todo.id, previous),
 			project: input.project,
 			actor: input.actor,
-			payload: buildTodoFilePayload(todo, comments, input.note)
+			payload: buildTodoFilePayload(todo, comments, input.note),
+			...(input.chat_id === undefined ? {} : { chat_id: input.chat_id })
 		},
 		deps
 	);

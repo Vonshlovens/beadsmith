@@ -160,3 +160,26 @@ with it. `AgentLaunch.mcp_config` adds `--mcp-config` to the shared
 tail on a bad exit go to the server log only, stripped of credential shapes;
 the dispatch provider logs a failed run's `stderr.log` and `setup.log` tails
 the same way.
+
+**Write tools.** `src/lib/server/crew/write-tools.ts`. `create_todo`,
+`update_todo` and `complete_todo` change the todo store directly
+(admin-only, as `/api/todos`; archiving is the nearest thing to a delete).
+`route_todo` reuses `routeTodo`, so its File mission keys on the todo as the
+todos page's does. `file_issue`, `comment_issue`, `tackle_issue`,
+`discuss_issue`, `follow_up_mission` and `cancel_mission` call
+`enqueueDispatch`, `followUpDispatch` and `cancelDispatch` with the owner's
+email as the actor and no provider, so the configured default runs them;
+they need `dispatch:launch` like `/api/projects/:id/dispatch`, and arm,
+allow-list and repository-mapping refusals come back as tool errors with the
+HTTP API's message. The chat is stored on the mission as a nullable
+`dispatch_requests.chat_id` column (added in place to existing databases).
+A mission's idempotency key is `crew:` and a hash of the chat id, the tool
+name and the call id: Claude Code's tool use id
+(`_meta["claudecode/toolUseId"]`) when it sends one, otherwise a hash of the
+validated arguments, so a retried call replays the first mission either way.
+A retried follow-up is refused because the first one left the agent busy.
+The launch limit (`launch-limit.ts`, `BDX_CREW_LAUNCH_LIMIT` per
+`BDX_CREW_LAUNCH_WINDOW_MINUTES`, default 10 per 10) is an in-memory
+sliding window per chat; a replay or a refused launch gives its slot back.
+Results carry `launched`, `operation`, `project`, `issue_id` and
+`mission_id`.
