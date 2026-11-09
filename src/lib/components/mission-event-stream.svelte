@@ -32,7 +32,7 @@
 				<div class="lbl">Tool</div>
 				<p>
 					<code>{event.name}</code>
-					<span class="status">{event.status}</span>
+					<span class="status" class:is-failed={event.status === 'failed'}>{event.status}</span>
 					{#if event.truncated}<span class="dim">truncated</span>{/if}
 				</p>
 			{:else if event.type === 'result'}
@@ -102,6 +102,9 @@
 	.status {
 		font-size: var(--t-xs);
 		color: var(--tx-mid);
+	}
+	.status.is-failed {
+		color: var(--danger-tx);
 	}
 	.err {
 		font-size: var(--t-xs);

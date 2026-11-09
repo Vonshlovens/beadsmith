@@ -109,7 +109,7 @@ describe('groupMateEvents', () => {
 	});
 
 	it('shows a tool still running when its turn ends as stopped', () => {
-		const tool = (id: string, call_id: string, status: 'running' | 'completed') =>
+		const tool = (id: string, call_id: string, status: 'running' | 'completed' | 'failed') =>
 			ev({ type: 'tool_call', id, call_id, name: 'Bash', status });
 		const statuses = (events: MateEvent[]) =>
 			groupMateEvents(events)
@@ -125,6 +125,14 @@ describe('groupMateEvents', () => {
 				ev({ type: 'result', id: 'e4', status: 'cancelled' })
 			])
 		).toEqual(['a:completed', 'b:stopped']);
+		// A failed call stays failed when the turn ends: it did finish.
+		expect(
+			statuses([
+				tool('e1', 'a', 'running'),
+				tool('e2', 'a', 'failed'),
+				ev({ type: 'result', id: 'e3', status: 'succeeded' })
+			])
+		).toEqual(['a:failed']);
 		// Lost agent: the error ends the turn too.
 		expect(
 			statuses([tool('e1', 'a', 'running'), ev({ type: 'error', id: 'e2', message: 'gone' })])
@@ -273,6 +281,10 @@ describe('toolActivity', () => {
 		expect(toolActivity('mcp__crew__ready_work', 'completed').label).toBe('Checked ready work');
 		// A stopped call never finished, so it keeps the running phrase.
 		expect(toolActivity('mcp__crew__show_issue', 'stopped').label).toBe('Reading an issue');
+		// Nor did a failed one; the view marks it failed beside the phrase.
+		expect(toolActivity('mcp__crew__tackle_issue', 'failed').label).toBe(
+			'Requesting a Tackle mission'
+		);
 	});
 
 	it('says a launch was requested, not that it ran', () => {
@@ -313,7 +325,7 @@ describe('touchesMissions', () => {
 		).toBe(true);
 	});
 
-	it('ignores reads, running launches and your own messages', () => {
+	it('ignores reads, running or failed launches and your own messages', () => {
 		expect(
 			touchesMissions([
 				ev({
@@ -330,7 +342,15 @@ describe('touchesMissions', () => {
 					name: 'mcp__crew__ready_work',
 					status: 'completed'
 				}),
-				ev({ type: 'user', id: 'm', text: 'hi', message_id: 'm1' })
+				ev({ type: 'user', id: 'm', text: 'hi', message_id: 'm1' }),
+				// A launch tool that failed started nothing.
+				ev({
+					type: 'tool_call',
+					id: 'v',
+					call_id: 'e',
+					name: 'mcp__crew__tackle_issue',
+					status: 'failed'
+				})
 			])
 		).toBe(false);
 	});

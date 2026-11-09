@@ -83,6 +83,7 @@ describe('events', () => {
 				{ type: 'thinking', id: 'e2', text: 'x'.repeat(THINKING_TEXT_MAX + 50) },
 				{ type: 'tool_call', id: 'e3', call_id: 'c1', name: 'Bash', status: 'running' },
 				{ type: 'tool_call', id: 'e4', call_id: 'c1', name: 'Bash', status: 'completed' },
+				{ type: 'tool_call', id: 'e4b', call_id: 'c2', name: 'Read', status: 'failed' },
 				{ type: 'assistant', id: 'e5', text: 'PR ready, captain.' },
 				{
 					type: 'result',
@@ -95,7 +96,7 @@ describe('events', () => {
 			],
 			'runner'
 		);
-		expect(first).toHaveLength(7);
+		expect(first).toHaveLength(8);
 		const again = await store.appendEvents(
 			chat.id,
 			[{ type: 'user', id: 'e1', text: 'go' }],
@@ -104,17 +105,27 @@ describe('events', () => {
 		expect(again).toEqual([]);
 
 		const events = await store.listEvents(chat.id, { limit: 100 });
-		expect(events.map((event) => event.id)).toEqual(['e1', 'e2', 'e3', 'e4', 'e5', 'e6', 'e7']);
+		expect(events.map((event) => event.id)).toEqual([
+			'e1',
+			'e2',
+			'e3',
+			'e4',
+			'e4b',
+			'e5',
+			'e6',
+			'e7'
+		]);
 		expect(events[1]).toMatchObject({ type: 'thinking' });
 		expect((events[1] as { text: string }).text).toHaveLength(THINKING_TEXT_MAX);
 		expect(events[3]).toMatchObject({ type: 'tool_call', name: 'Bash', status: 'completed' });
-		expect(events[5]).toMatchObject({
+		expect(events[4]).toMatchObject({ type: 'tool_call', name: 'Read', status: 'failed' });
+		expect(events[6]).toMatchObject({
 			type: 'result',
 			status: 'succeeded',
 			duration_ms: 1500,
 			git_pr_url: 'https://github.com/o/r/pull/1'
 		});
-		expect(events[6]).toMatchObject({ type: 'error', message: 'worker crashed' });
+		expect(events[7]).toMatchObject({ type: 'error', message: 'worker crashed' });
 		expect(events.every((event) => typeof event.at === 'string')).toBe(true);
 	});
 

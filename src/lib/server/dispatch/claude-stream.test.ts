@@ -42,6 +42,32 @@ describe('ClaudeStreamMapper', () => {
 		expect(JSON.stringify(closed)).not.toContain('hunter2');
 	});
 
+	it('marks a tool result with is_error as a failed call, without its output', () => {
+		const mapper = new ClaudeStreamMapper();
+		mapper.map(
+			line({
+				type: 'assistant',
+				message: { content: [{ type: 'tool_use', id: 'toolu_02', name: 'Bash' }] }
+			}),
+			1
+		);
+		const failed = mapper.map(
+			line({
+				type: 'user',
+				message: {
+					content: [
+						{ type: 'tool_result', tool_use_id: 'toolu_02', is_error: true, content: 'exit 1' }
+					]
+				}
+			}),
+			2
+		);
+		expect(failed).toEqual([
+			{ type: 'tool_call', id: '2.0', call_id: 'toolu_02', name: 'Bash', status: 'failed' }
+		]);
+		expect(JSON.stringify(failed)).not.toContain('exit 1');
+	});
+
 	it('turns MCP tool names into renderable ones and ignores the prompt echo', () => {
 		const mapper = new ClaudeStreamMapper();
 		expect(

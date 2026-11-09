@@ -177,7 +177,7 @@ function toEvent(value: unknown): MateEvent | undefined {
 				id,
 				call_id,
 				name,
-				status: r.status === 'completed' ? 'completed' : 'running',
+				status: r.status === 'completed' || r.status === 'failed' ? r.status : 'running',
 				at
 			};
 		}

@@ -41,6 +41,18 @@ describe('mission event union', () => {
 				args: { path: 'SECRET' }
 			})
 		).toBe(true);
+		expect(
+			isMissionEvent({ type: 'tool_call', id: '1-2', call_id: 'c', name: 'Bash', status: 'failed' })
+		).toBe(true);
+		expect(
+			isMissionEvent({
+				type: 'tool_call',
+				id: '1-3',
+				call_id: 'c',
+				name: 'Bash',
+				status: 'errored'
+			})
+		).toBe(false);
 		expect(parseMissionEventJson('{"type":"heartbeat","id":"1"}')).toBeUndefined();
 		expect(parseMissionEventJson('not-json')).toBeUndefined();
 	});

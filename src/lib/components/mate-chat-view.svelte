@@ -23,6 +23,7 @@
 	import BroadcastIcon from 'phosphor-svelte/lib/BroadcastIcon';
 	import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
 	import MinusCircleIcon from 'phosphor-svelte/lib/MinusCircleIcon';
+	import WarningCircleIcon from 'phosphor-svelte/lib/WarningCircleIcon';
 	import CommandIcon from 'phosphor-svelte/lib/CommandIcon';
 	import CopyIcon from 'phosphor-svelte/lib/CopyIcon';
 	import SquareIcon from 'phosphor-svelte/lib/SquareIcon';
@@ -147,6 +148,7 @@
 	const TOOL_STATE: Record<ToolPart['status'], string> = {
 		running: 'in progress',
 		completed: 'done',
+		failed: 'failed',
 		stopped: 'stopped before it finished'
 	};
 
@@ -431,14 +433,18 @@
 													class="act"
 													class:is-running={tool.status === 'running'}
 													class:is-stopped={tool.status === 'stopped'}
+													class:is-failed={tool.status === 'failed'}
 												>
 													<span class="act-ic" aria-hidden="true">
 														{#if tool.status === 'running'}<i class="act-dot"></i>
 														{:else if tool.status === 'stopped'}<MinusCircleIcon size={13} />
+														{:else if tool.status === 'failed'}<WarningCircleIcon size={13} />
 														{:else}<CheckIcon size={13} />{/if}
 													</span>
 													<span class="act-lbl">{act.label}</span>
-													{#if tool.status === 'stopped'}<span class="act-note">stopped</span>{/if}
+													{#if tool.status === 'stopped' || tool.status === 'failed'}<span
+															class="act-note">{tool.status}</span
+														>{/if}
 													<span class="sr-only">, {TOOL_STATE[tool.status]}</span>
 												</li>
 											{/each}
@@ -447,7 +453,11 @@
 										<ul class="tools" aria-label="Tool calls">
 											{#each part.items as tool (tool.id)}
 												{#if tool.kind === 'tool'}
-													<li class="tool" class:is-running={tool.status === 'running'}>
+													<li
+														class="tool"
+														class:is-running={tool.status === 'running'}
+														class:is-failed={tool.status === 'failed'}
+													>
 														<code>{tool.name}</code>
 														<span class="tool-status">{tool.status}</span>
 													</li>
@@ -923,6 +933,12 @@
 		border-color: var(--line-3);
 		color: var(--tx-hi);
 	}
+	.tool.is-failed {
+		border-color: var(--danger-line);
+	}
+	.tool.is-failed .tool-status {
+		color: var(--danger-tx);
+	}
 	.tool code {
 		font-family: var(--font-mono);
 		font-size: var(--t-xs);
@@ -953,6 +969,10 @@
 	}
 	.act.is-stopped .act-lbl {
 		color: var(--tx-dim);
+	}
+	.act.is-failed .act-ic,
+	.act.is-failed .act-note {
+		color: var(--danger-tx);
 	}
 	.act-ic {
 		display: grid;

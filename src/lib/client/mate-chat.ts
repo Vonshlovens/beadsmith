@@ -362,7 +362,8 @@ export interface ToolActivity {
 /**
  * How a tool call reads in the chat. Crew tools get a phrase in the tense of
  * their status ("Checking ready work", then "Checked ready work"); a stopped
- * call keeps the running phrase, since it never finished. A crew tool this
+ * or failed call keeps the running phrase, since it never finished, and the
+ * view marks which of the two it was. A crew tool this
  * build does not know reads as its name in words. Other tools keep their
  * name: they are the agent's own working steps, shown as chips.
  *
