@@ -1,6 +1,7 @@
 import { createClient, type Client } from '@libsql/client';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { initStateSchema } from '../state/db.js';
+import { CREW_CALL_ARGUMENTS_MAX, CREW_CALL_REASON_MAX, CREW_CALLS_PER_CHAT } from '#lib/mate.js';
 import { createMateStore, THINKING_TEXT_MAX, type MateStore } from './store.js';
 
 let client: Client;
@@ -197,5 +198,76 @@ describe('crewCaller', () => {
 		expect(await store.crewCaller((await own('u2')).session)).toBeUndefined();
 		// A ban that has expired no longer refuses.
 		expect((await store.crewCaller((await own('u3')).session))?.owner_id).toBe('u3');
+	});
+});
+
+describe('crew calls', () => {
+	const base = { tool: 'tackle_issue', arguments: '{"issue_id":"web-1"}', result: '{}' };
+
+	it('lists summaries with a refusal reason and reads bodies on demand', async () => {
+		const chat = await store.createChat('u1', { title: 't', scope: null });
+		await store.recordCrewCall(chat.id, {
+			...base,
+			call_id: 'toolu_a',
+			result: '{"mission_id":"m1"}',
+			is_error: false,
+			mission_id: 'm1'
+		});
+		const reason = 'Launch limit reached: '.padEnd(CREW_CALL_REASON_MAX + 50, 'x');
+		await store.recordCrewCall(chat.id, {
+			...base,
+			call_id: 'toolu_b',
+			result: reason,
+			is_error: true
+		});
+		const calls = await store.listCrewCalls(chat.id);
+		expect(calls).toEqual([
+			{
+				call_id: 'toolu_a',
+				tool: 'tackle_issue',
+				is_error: false,
+				mission_id: 'm1',
+				at: expect.any(String)
+			},
+			{
+				call_id: 'toolu_b',
+				tool: 'tackle_issue',
+				is_error: true,
+				reason: reason.slice(0, CREW_CALL_REASON_MAX),
+				at: expect.any(String)
+			}
+		]);
+		expect(JSON.stringify(calls)).not.toContain('web-1');
+		expect(await store.getCrewCall(chat.id, 'toolu_b')).toMatchObject({
+			arguments: base.arguments,
+			result: reason
+		});
+		expect(await store.getCrewCall('mc_other', 'toolu_b')).toBeUndefined();
+	});
+
+	it('replaces a retried call, bounds bodies, prunes old calls and goes with the chat', async () => {
+		const chat = await store.createChat('u1', { title: 't', scope: null });
+		await store.recordCrewCall(chat.id, { ...base, call_id: 'toolu_r', is_error: true });
+		await store.recordCrewCall(chat.id, {
+			...base,
+			call_id: 'toolu_r',
+			arguments: 'y'.repeat(CREW_CALL_ARGUMENTS_MAX + 10),
+			is_error: false
+		});
+		const retried = await store.getCrewCall(chat.id, 'toolu_r');
+		expect(retried?.is_error).toBe(false);
+		expect(retried?.arguments).toMatch(/… \[cut 10 chars\]$/);
+
+		for (let i = 0; i < CREW_CALLS_PER_CHAT + 5; i++) {
+			await store.recordCrewCall(chat.id, { ...base, call_id: `toolu_${i}`, is_error: false });
+		}
+		const calls = await store.listCrewCalls(chat.id);
+		expect(calls).toHaveLength(CREW_CALLS_PER_CHAT);
+		expect(calls.at(-1)?.call_id).toBe(`toolu_${CREW_CALLS_PER_CHAT + 4}`);
+		expect(calls.some((call) => call.call_id === 'toolu_r')).toBe(false);
+
+		await store.deleteChat('u1', chat.id);
+		const left = await client.execute('SELECT COUNT(*) AS n FROM mate_crew_calls');
+		expect(Number((left.rows[0] as Record<string, unknown>).n)).toBe(0);
 	});
 });

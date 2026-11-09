@@ -208,6 +208,27 @@ missions as cards (`mate-mission-card.svelte`) under the agent message each
 was started from (`placeChatMissions`), read from the owner-only
 `GET /api/mate/chats/:id/missions` (`ListDispatchFilter.chat_id`). Busy
 cards poll each mission's own status route, which records a finished run,
-not the missions list. Tool arguments and results stay out of the chat, as
-the contract requires, so a refused launch shows no card and only the
-agent's reply says why.
+not the missions list.
+
+**Crew call records.** At first the chat kept no tool arguments or results,
+so a refused launch showed no card and only the agent's reply said why. The
+owner then chose a bounded record of crew calls only: crew tools run inside
+Beadsmith, so their arguments and answers are Beadsmith's own action log for
+the chat's owner, not the agent's tool output (which is still never stored).
+`createCrewMcpHandler({ record })` reports each answered `tools/call` that
+Claude Code named with a tool use id (the id is what ties it to the chat's
+`tool_call` event; a call without one is answered but not kept), and
+`defaultCrewBridgeDeps` writes it with `MateStore.recordCrewCall` before the
+answer goes back, so the record exists by the time the activity line
+finishes. A failed write is logged and never changes the answer.
+`mate_crew_calls` keys rows on chat and tool use id (a retry replaces its
+row), keeps the arguments as JSON cut at 4,000 characters and the exact text
+the agent was given cut at 8,000, whether it was an error, and the mission a
+launch named; each chat keeps its newest 200 and rows go with the chat.
+`GET /api/mate/chats/:id/crew-calls` lists them without bodies, a refusal
+carrying its first 300 characters as `reason`;
+`GET /api/mate/chats/:id/crew-calls/:call_id` returns one with its bodies.
+Both are owner-only like the chat. In the chat, a crew line with a record is
+a native disclosure (keyboard and touch by default) that reads the bodies
+when first opened, and a refused call shows its reason under the line
+without opening anything.

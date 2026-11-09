@@ -20,6 +20,8 @@ import { GET as EVENTS } from './chats/[id]/events/+server.js';
 import { POST as INTERRUPT } from './chats/[id]/interrupt/+server.js';
 import { POST as SEND } from './chats/[id]/messages/+server.js';
 import { GET as MISSIONS } from './chats/[id]/missions/+server.js';
+import { GET as CREW_CALLS } from './chats/[id]/crew-calls/+server.js';
+import { GET as CREW_CALL } from './chats/[id]/crew-calls/[call_id]/+server.js';
 
 vi.mock('#lib/server/discovery.js', () => ({
 	discoverProjects: vi.fn(async () => [{ id: 'd_web', name: 'Web' }])
@@ -76,12 +78,13 @@ function call(
 		headers?: Record<string, string>;
 		url?: string;
 		signal?: AbortSignal;
+		params?: Record<string, string>;
 	} = {}
 ): Promise<Response> {
 	const user = 'user' in options ? options.user : ADMIN;
 	const url = options.url ?? 'http://localhost/api/mate/chats';
 	return handler({
-		params: { id: options.id ?? '' },
+		params: { id: options.id ?? '', ...options.params },
 		url: new URL(url),
 		request: new Request(url, {
 			method: options.body === undefined ? 'GET' : 'POST',
@@ -501,5 +504,53 @@ describe('GET /api/mate/chats/:id/missions', () => {
 		await launch(chat.id, 'crew:mine-2', 'web-1');
 		expect((await call(MISSIONS, { id: chat.id, user: OTHER })).status).toBe(404);
 		expect((await call(MISSIONS, { id: chat.id, user: undefined })).status).toBe(401);
+	});
+});
+
+describe('GET /api/mate/chats/:id/crew-calls', () => {
+	async function record(chat_id: string) {
+		await store.recordCrewCall(chat_id, {
+			call_id: 'toolu_1',
+			tool: 'tackle_issue',
+			arguments: '{"issue_id":"web-1"}',
+			result: 'Tackle is not allowed for Web.',
+			is_error: true
+		});
+	}
+
+	it('lists summaries and reads one call with its bodies', async () => {
+		const chat = await createChat();
+		await record(chat.id);
+		const list = await call(CREW_CALLS, { id: chat.id });
+		expect(list.status).toBe(200);
+		expect(await list.json()).toEqual({
+			calls: [
+				{
+					call_id: 'toolu_1',
+					tool: 'tackle_issue',
+					is_error: true,
+					reason: 'Tackle is not allowed for Web.',
+					at: expect.any(String)
+				}
+			]
+		});
+		const one = await call(CREW_CALL, { id: chat.id, params: { call_id: 'toolu_1' } });
+		expect(one.status).toBe(200);
+		expect(await one.json()).toMatchObject({
+			call: { call_id: 'toolu_1', arguments: '{"issue_id":"web-1"}' }
+		});
+		for (const call_id of ['toolu_missing', '../etc']) {
+			expect((await call(CREW_CALL, { id: chat.id, params: { call_id } })).status).toBe(404);
+		}
+	});
+
+	it('is private to the chat owner', async () => {
+		const chat = await createChat();
+		await record(chat.id);
+		expect((await call(CREW_CALLS, { id: chat.id, user: OTHER })).status).toBe(404);
+		expect(
+			(await call(CREW_CALL, { id: chat.id, user: OTHER, params: { call_id: 'toolu_1' } })).status
+		).toBe(404);
+		expect((await call(CREW_CALLS, { id: chat.id, user: undefined })).status).toBe(401);
 	});
 });

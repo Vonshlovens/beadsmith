@@ -1,4 +1,12 @@
-import { index, integer, real, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core';
+import {
+	index,
+	integer,
+	primaryKey,
+	real,
+	sqliteTable,
+	text,
+	unique
+} from 'drizzle-orm/sqlite-core';
 
 /**
  * Service-local schema. Beads projects, workspace paths, and Dolt or agent
@@ -192,6 +200,32 @@ export const mateEvents = sqliteTable(
 		at: text('at').notNull()
 	},
 	(table) => [unique('mate_events_chat_event').on(table.chatId, table.eventId)]
+);
+
+/**
+ * Crew tool calls Beadsmith answered for a chat (ADR-0020): arguments and
+ * result text, each bounded, keyed by Claude Code's tool use id, pruned per
+ * chat. Beadsmith's own action log for the owner; never the agent's other
+ * tools' arguments or output. Keep in step with `MATE_SCHEMA_SQL`.
+ */
+export const mateCrewCalls = sqliteTable(
+	'mate_crew_calls',
+	{
+		chatId: text('chat_id')
+			.notNull()
+			.references(() => mateChats.id, { onDelete: 'cascade' }),
+		callId: text('call_id').notNull(),
+		tool: text('tool').notNull(),
+		arguments: text('arguments').notNull(),
+		result: text('result').notNull(),
+		isError: integer('is_error', { mode: 'boolean' }).notNull(),
+		missionId: text('mission_id'),
+		at: text('at').notNull()
+	},
+	(table) => [
+		primaryKey({ columns: [table.chatId, table.callId] }),
+		index('mate_crew_calls_at').on(table.chatId, table.at)
+	]
 );
 
 // --- Accounts (Better Auth, ADR-0011) ----------------------------------------

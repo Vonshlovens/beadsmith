@@ -91,6 +91,45 @@ export function isCrewNotice(event: MissionEvent): boolean {
 	return event.type === 'user' && event.message_id?.startsWith(CREW_NOTICE_PREFIX) === true;
 }
 
+/**
+ * One crew tool call Beadsmith answered for a chat (ADR-0020), as the chat
+ * lists them: enough to word a refusal next to its activity line. Crew tools
+ * run inside Beadsmith, so this is Beadsmith's own record of what it did for
+ * the chat's owner, not the agent's tool output (which is never stored).
+ */
+export interface MateCrewCall {
+	/** Claude Code's tool use id: the `call_id` of the chat's `tool_call` event. */
+	call_id: string;
+	/** Crew tool name without the MCP prefix, for example `tackle_issue`. */
+	tool: string;
+	/** The tool refused or failed; `reason` says why. */
+	is_error: boolean;
+	/** The start of the error the agent was given, when `is_error`. */
+	reason?: string;
+	/** The mission the call started or replayed, when it was a launch. */
+	mission_id?: string;
+	/** ISO time Beadsmith answered the call. */
+	at: string;
+}
+
+/** A crew call with what went in and what came out, read on demand. */
+export interface MateCrewCallDetail extends MateCrewCall {
+	/** The arguments as the agent sent them, JSON, cut at `CREW_CALL_ARGUMENTS_MAX`. */
+	arguments: string;
+	/** The result or error text the agent was given, cut at `CREW_CALL_RESULT_MAX`. */
+	result: string;
+}
+
+/** Bounds on what a crew call record keeps (the agent may have been sent more). */
+export const CREW_CALL_ARGUMENTS_MAX = 4_000;
+export const CREW_CALL_RESULT_MAX = 8_000;
+export const CREW_CALL_REASON_MAX = 300;
+/** Crew call records one chat keeps; older ones are pruned as new ones land. */
+export const CREW_CALLS_PER_CHAT = 200;
+
+/** Claude Code tool use ids: what a crew call record is keyed and looked up by. */
+export const CREW_CALL_ID_PATTERN = /^[A-Za-z0-9_-]{1,200}$/;
+
 /** Server-generated chat ids. */
 export const CHAT_ID_PATTERN = /^mc_[a-f0-9]{24}$/;
 

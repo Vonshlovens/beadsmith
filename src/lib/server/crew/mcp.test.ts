@@ -8,7 +8,9 @@ import { createTodoStore, type TodoStore } from '../todos/store.js';
 import type { DoltClient } from '../dolt/client.js';
 import type { IssueDetail, IssueSummary, Project } from '#lib/types.js';
 import { CREW_TOOLS, createCrewMcpHandler, JSONRPC_ERRORS, type JsonRpcResponse } from './mcp.js';
-import { RESULT_MAX_CHARS, type CrewContext, type CrewDeps } from './registry.js';
+import { z } from 'zod';
+import { defineTool, RESULT_MAX_CHARS, type CrewContext, type CrewDeps } from './registry.js';
+import type { CrewCallReport } from './mcp.js';
 
 const ADMIN: CrewContext = {
 	account_id: 'u_admin',
@@ -210,6 +212,94 @@ describe('crew MCP handler', () => {
 		});
 		expect(response).toMatchObject({ result: { isError: true } });
 		expect(JSON.stringify(response)).not.toContain('hunter2');
+	});
+});
+
+describe('crew call records', () => {
+	const launcher = defineTool({
+		name: 'fake_launch',
+		description: 'test',
+		input: z.strictObject({ issue_id: z.string() }),
+		handler: async (_ctx, input) => ({ launched: true, issue_id: input.issue_id, mission_id: 'm1' })
+	});
+
+	function recorder() {
+		const calls: CrewCallReport[] = [];
+		const handler = createCrewMcpHandler({
+			deps,
+			tools: [...CREW_TOOLS, launcher],
+			log: () => {},
+			record: async (ctx, call) => {
+				expect(ctx).toBe(ADMIN);
+				calls.push(call);
+			}
+		});
+		const send = (params: Record<string, unknown>) =>
+			handler.handle(ADMIN, { jsonrpc: '2.0', id: next_id++, method: 'tools/call', params });
+		return { calls, send };
+	}
+
+	const meta = (id: string) => ({ _meta: { 'claudecode/toolUseId': id } });
+
+	it('keeps what was sent and exactly what the agent was told, with a launched mission', async () => {
+		const { calls, send } = recorder();
+		const response = await send({
+			name: 'fake_launch',
+			arguments: { issue_id: 'alpha-1' },
+			...meta('toolu_1')
+		});
+		const text = (response as { result: { content: { text: string }[] } }).result.content[0].text;
+		expect(calls).toEqual([
+			{
+				call_id: 'toolu_1',
+				tool: 'fake_launch',
+				arguments: '{"issue_id":"alpha-1"}',
+				result: text,
+				is_error: false,
+				mission_id: 'm1'
+			}
+		]);
+	});
+
+	it('keeps refusals and bad arguments as errors, with the safe text only', async () => {
+		const { calls, send } = recorder();
+		browseIssues.mockRejectedValue(new Error('connect ECONNREFUSED password=hunter2'));
+		await send({ name: 'list_issues', arguments: { project: 'alpha' }, ...meta('toolu_2') });
+		await send({ name: 'list_issues', arguments: { limit: 'lots' }, ...meta('toolu_3') });
+		expect(calls).toMatchObject([
+			{ call_id: 'toolu_2', is_error: true },
+			{ call_id: 'toolu_3', is_error: true, result: expect.stringMatching(/limit/) }
+		]);
+		expect(JSON.stringify(calls)).not.toContain('hunter2');
+		expect(calls[0]).not.toHaveProperty('mission_id');
+	});
+
+	it('skips calls it cannot tie to an activity line: no tool use id, or no such tool', async () => {
+		const { calls, send } = recorder();
+		await send({ name: 'list_projects', arguments: {} });
+		await send({ name: 'list_projects', arguments: {}, ...meta('bad id with spaces') });
+		await send({ name: 'drop_tables', ...meta('toolu_4') });
+		expect(calls).toEqual([]);
+	});
+
+	it('never lets a failed record change the answer', async () => {
+		const log = vi.fn();
+		const handler = createCrewMcpHandler({
+			deps,
+			log,
+			record: async () => {
+				throw new Error('disk full');
+			}
+		});
+		const response = await handler.handle(ADMIN, {
+			jsonrpc: '2.0',
+			id: 1,
+			method: 'tools/call',
+			params: { name: 'list_projects', arguments: {}, ...meta('toolu_5') }
+		});
+		expect(response).toMatchObject({ result: { content: [{ type: 'text' }] } });
+		expect(response).not.toMatchObject({ result: { isError: true } });
+		expect(log).toHaveBeenCalledWith(expect.stringContaining('disk full'));
 	});
 });
 

@@ -112,7 +112,11 @@ each chat and the sanitized MissionEvents it relayed in service-local SQLite,
 forwards an admin's message (text, the chat's session id, a message id and
 an optional project scope) to the runner with a signed request, and follows
 the runner's event stream. It never sends the runner a credential and never
-stores tool arguments or output. Without a runner, chats are stored and get
+stores the agent's tool arguments or output, with one exception: crew tools
+([ADR-0020](../specs/decisions/0020-first-mate-crew-tools.md)) run inside
+Beadsmith, so for each crew call Claude Code names Beadsmith keeps the
+arguments it received and the text it answered (each bounded, the newest 200
+per chat) for the chat's owner alone. Without a runner, chats are stored and get
 a placeholder reply. The orchestrator asks for repository work through
 dispatch like any other caller.
 

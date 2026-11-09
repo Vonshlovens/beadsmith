@@ -10,7 +10,9 @@ import {
 	mergeEvents,
 	placeChatMissions,
 	placeMateRows,
+	prettyJson,
 	toolActivity,
+	touchesCrewCalls,
 	touchesMissions
 } from './mate-chat';
 
@@ -386,5 +388,25 @@ describe('placeChatMissions', () => {
 		const { by_bubble, unplaced } = placeChatMissions([bubbles[0]!], [lone]);
 		expect(by_bubble.size).toBe(0);
 		expect(unplaced).toEqual([lone]);
+	});
+});
+
+describe('touchesCrewCalls', () => {
+	const done = (call_id: string, name = 'mcp__crew__tackle_issue', status = 'failed') =>
+		ev({ type: 'tool_call', id: `e_${call_id}`, call_id, name, status });
+
+	it('reads records again only for finished crew calls the chat lacks', () => {
+		expect(touchesCrewCalls([done('a')], {})).toBe(true);
+		expect(touchesCrewCalls([done('a', 'mcp__crew__list_projects', 'completed')], {})).toBe(true);
+		expect(touchesCrewCalls([done('a')], { a: {} })).toBe(false);
+		expect(touchesCrewCalls([done('a', 'mcp__crew__tackle_issue', 'running')], {})).toBe(false);
+		expect(touchesCrewCalls([done('a', 'Bash')], {})).toBe(false);
+	});
+});
+
+describe('prettyJson', () => {
+	it('indents JSON and leaves other text alone', () => {
+		expect(prettyJson('{"a":1}')).toBe('{\n  "a": 1\n}');
+		expect(prettyJson('Launch limit reached.')).toBe('Launch limit reached.');
 	});
 });
