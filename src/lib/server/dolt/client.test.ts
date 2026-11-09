@@ -227,6 +227,13 @@ describe('buildIssueWhere', () => {
 		expect(where.clause).toBe('');
 	});
 
+	it('binds an exact assignee', () => {
+		const where = buildIssueWhere({ assignee: 'eve' });
+
+		expect(where.clause).toBe('WHERE i.status <> ? AND i.assignee = ?');
+		expect(where.params).toEqual(['closed', 'eve']);
+	});
+
 	it('expands a comma status list into bound placeholders', () => {
 		const where = buildIssueWhere({ status: 'open,in_progress' });
 

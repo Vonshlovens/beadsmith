@@ -117,5 +117,26 @@ bypass and OAuth work First Mate does not.
 
 ## Implementation notes
 
-To be filled in as the work lands: the tool list, the bridge frame format,
-where the chat-to-mission link is stored, and the notification wording.
+To be filled in as the work lands: the bridge frame format, where the
+chat-to-mission link is stored, and the notification wording.
+
+**Tool module.** `src/lib/server/crew/registry.ts` holds the tool type (a
+zod input schema, published to clients as JSON Schema, so validation and the
+advertised schema cannot drift), the caller context (owner account and role,
+chat id, chat scope) and the result bounds. `mcp.ts` is the JSON-RPC 2.0
+handler and the tool list, `CREW_TOOLS`. Unknown tools and bad arguments are
+JSON-RPC `-32602` errors; a tool that fails returns an `isError` result with
+the same safe message the HTTP API would give (`safeError` in
+`security.ts`), so driver detail never reaches the agent.
+
+**Read tools.** `list_projects`, `ready_work` (one project or all),
+`list_issues` (status, assignee, label, text), `show_issue` (dependencies,
+dependents, the last 10 comments and events), `list_missions`,
+`show_mission` (status, PR, outcome and the last conversation turns) and
+`list_todos`. A tool carries the permission its HTTP route needs:
+`list_todos` is admin-only like `/api/todos`, and is neither listed nor run
+for a member. Projects and missions are readable by every role, as in the
+browser. A chat's scope is only the default project for tools that need one;
+it does not narrow what the owner can read, because the browser does not.
+Results are compact JSON, string fields cut at 2,000 characters with a note
+saying how much was dropped, and the whole result kept under 24,000.

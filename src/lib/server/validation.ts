@@ -321,7 +321,7 @@ export function parseQuery<T>(params: URLSearchParams, schema: z.ZodType<T>): Pa
 // --- Admin todos ---------------------------------------------
 
 /** `+project` / `@context` style tag, or a bare word. */
-const todo_tag_schema = z
+export const todo_tag_schema = z
 	.string()
 	.trim()
 	.regex(/^[+@]?[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$/, 'invalid tag');
