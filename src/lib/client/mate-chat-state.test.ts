@@ -336,6 +336,20 @@ it('loads the chat’s missions once on open, and again when a crew notice arriv
 	await vi.waitFor(() => expect(api.mateChatMissions).toHaveBeenCalledTimes(2));
 });
 
+it('drops an older missions read that answers after a newer one', async () => {
+	await chats.open(chat.id);
+	await vi.waitFor(() => expect(api.mateChatMissions).toHaveBeenCalledTimes(1));
+	let answerOld!: (value: { missions: (typeof MISSION)[] }) => void;
+	vi.mocked(api.mateChatMissions)
+		.mockImplementationOnce(() => new Promise((resolve) => (answerOld = resolve)))
+		.mockResolvedValueOnce({ missions: [MISSION] });
+	const older = chats.loadMissions(chat.id);
+	await chats.loadMissions(chat.id);
+	answerOld({ missions: [] });
+	await older;
+	expect(chats.missions).toEqual([MISSION]);
+});
+
 it('keeps shown missions when a reload fails, and says so only when there are none', async () => {
 	vi.mocked(api.mateChatMissions).mockRejectedValueOnce(new Error('offline'));
 	await chats.open(chat.id);
