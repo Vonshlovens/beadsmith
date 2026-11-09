@@ -103,7 +103,9 @@
 		if (is_open || !can_chat || !mate_chats.connected) return;
 		const ac = new AbortController();
 		const settle = <T,>(load: Promise<T>, take: (value: T) => void) => {
-			live_pending += 1;
+			// Untracked: `+=` reads the counter, and a tracked read would make
+			// this effect re-run (aborting both loads) every time it changes.
+			untrack(() => (live_pending += 1));
 			void load
 				.then((value) => {
 					if (!ac.signal.aborted) take(value);
