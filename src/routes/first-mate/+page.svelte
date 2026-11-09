@@ -8,6 +8,9 @@
 	 * mate runner (docs/first-mate.md); without a runner they get a
 	 * placeholder, and members are told First Mate is for admins for now.
 	 * Agent threads are real: `?thread=&project=` opens a mission as before.
+	 * The question screen offers next actions from live data (ready work, and
+	 * on Sand unrouted todos and failed missions) and says where a new chat
+	 * runs and what it can do there; see #lib/client/mate-start.ts.
 	 * The command palette stays on ⌘K, reachable from every composer.
 	 */
 	import { tip } from '#lib/client/tooltip.js';
@@ -37,11 +40,13 @@
 	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
 	import { stepFocus } from '#lib/client/list-focus.js';
 	import { STARTERS, chatHref } from '#lib/client/mate-chat.js';
+	import { runsOnNote, startSuggestions } from '#lib/client/mate-start.js';
 	import { mate_chats } from '#lib/client/mate-chat.svelte.js';
 	import { currentProject, statusSnapshot } from '#lib/client/projects.svelte.js';
 	import { app_state } from '#lib/client/stores.svelte.js';
 	import { PRODUCT_NAME } from '#lib/product.js';
-	import type { DispatchRequest, Mission } from '#lib/types.js';
+	import type { DispatchRequest, Mission, ReadyIssue } from '#lib/types.js';
+	import type { Todo } from '#lib/server/todos/store.js';
 
 	/** How often the thread list re-reads missions while one is working. */
 	const LIST_POLL_MS = 8000;
@@ -79,6 +84,57 @@
 	const mounted = $derived(mate_chats.loaded);
 	const can_chat = $derived(mate_chats.can_chat);
 	const mate_reason = $derived(mate_chats.status?.reason);
+
+	/** Where a new chat runs: the viewer's pick, else the server default. */
+	const new_chat_runner = $derived(
+		mate_chats.connected
+			? (run_place.chatRunner() ?? mate_chats.status?.runners?.[0]?.id ?? 'remote')
+			: null
+	);
+	const runs_on = $derived(runsOnNote(new_chat_runner, mate_chats.status?.runners ?? []));
+
+	// Live data for the start screen's next actions. A source that fails to
+	// load stays null and its suggestion is left out: the screen still works.
+	let ready = $state<ReadyIssue[] | null>(null);
+	let todos = $state<Todo[] | null>(null);
+	let live_pending = $state(0);
+
+	$effect(() => {
+		if (is_open || !can_chat || !mate_chats.connected) return;
+		const ac = new AbortController();
+		const settle = <T,>(load: Promise<T>, take: (value: T) => void) => {
+			// Untracked: `+=` reads the counter, and a tracked read would make
+			// this effect re-run (aborting both loads) every time it changes.
+			untrack(() => (live_pending += 1));
+			void load
+				.then((value) => {
+					if (!ac.signal.aborted) take(value);
+				})
+				.catch(() => {})
+				.finally(() => {
+					live_pending -= 1;
+				});
+		};
+		settle(api.ready(100, { signal: ac.signal }), (response) => (ready = response.issues));
+		settle(
+			api.todos({ status: 'open', limit: 200 }, { signal: ac.signal }),
+			(response) => (todos = response.todos)
+		);
+		return () => ac.abort();
+	});
+
+	const suggestions = $derived(
+		startSuggestions({
+			admin: can_chat,
+			runner: new_chat_runner,
+			can_launch: agent.enabled,
+			scope,
+			ready,
+			todos,
+			missions: agent.visible && !loading && missions_error === null ? missions : null
+		})
+	);
+	const checking = $derived(live_pending > 0 && suggestions.length === 0);
 
 	$effect(() => {
 		void mate_chats.load();
@@ -413,6 +469,25 @@
 					{/snippet}
 				</ChatComposer>
 
+				{#if checking}
+					<p class="next-status" role="status">Checking your projects…</p>
+				{:else if suggestions.length > 0}
+					<ul class="next" aria-label="Next up">
+						{#each suggestions as suggestion (suggestion.id)}
+							<li>
+								<button
+									type="button"
+									disabled={starting}
+									onclick={() => useStarter(suggestion.prompt)}
+								>
+									<span class="next-lbl">{suggestion.label}</span>
+									<span class="next-q">{suggestion.prompt}</span>
+								</button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+
 				<ul class="starters" aria-label="Starting points">
 					{#each STARTERS as starter (starter)}
 						<li>
@@ -434,11 +509,19 @@
 							First Mate runs an agent that can change Beads in every project, so only admins talk to
 							it.
 						</p>
-					{:else if mate_chats.connected}
+					{:else if runs_on?.crew}
 						<p>
-							<strong>Runner configured.</strong>
-							Messages go to the configured runner. Available actions depend on its setup{#if mate_chats.status?.reachable === false};
-								the runner is not answering right now{/if}.
+							<strong>Runs on {runs_on.label}, with crew tools.</strong>
+							It reads every project, your todos and missions, routes todos and starts repo workers, acting
+							as you{#if mate_chats.status?.reachable === false}. The runner is not answering right
+								now{/if}.
+						</p>
+					{:else if runs_on}
+						<p>
+							<strong>Runs on {runs_on.label}.</strong>
+							It works in its own Beads sandbox. Crew tools (your todos, missions, repo workers) are on
+							Sand only{#if runs_on.sand_offered}: pick Sand under Runs on to use them{/if}{#if mate_chats.status?.reachable === false}.
+								The runner is not answering right now{/if}.
 						</p>
 					{:else}
 						<p>
@@ -446,11 +529,20 @@
 							No model answers yet: replies are placeholders. Your chats are kept for when one is.
 						</p>
 					{/if}
-					<p>
-						<strong>Changes go through bd.</strong>
-						First Mate and its crew change Beads with bd, never behind its back.
-						<span class="kbd">⌘K</span> runs a command without a chat.
-					</p>
+					{#if runs_on?.crew}
+						<p>
+							<strong>Beads changes go through missions.</strong>
+							To file, comment or tackle, it starts a mission whose agent runs bd, and asks before starting
+							more than one. It cannot delete anything.
+							<span class="kbd">⌘K</span> runs a command without a chat.
+						</p>
+					{:else}
+						<p>
+							<strong>Changes go through bd.</strong>
+							First Mate and its crew change Beads with bd, never behind its back.
+							<span class="kbd">⌘K</span> runs a command without a chat.
+						</p>
+					{/if}
 				</div>
 			</div>
 		{/if}
@@ -594,6 +686,55 @@
 		color: var(--tx-mid);
 	}
 	/* Suggestions, like a chat app's prompt chips: they fill the box, never send. */
+	/* Next actions from live data: what it says, then what it will ask. */
+	.next-status {
+		margin: var(--s-4) 0 0;
+		font-size: var(--t-sm);
+		color: var(--tx-dim);
+	}
+	.next {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 30ch), 1fr));
+		gap: var(--s-2);
+		margin: var(--s-4) 0 0;
+		padding: 0;
+		list-style: none;
+	}
+	.next button {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		width: 100%;
+		height: 100%;
+		padding: 8px 12px;
+		background: var(--s2);
+		border: 1px solid var(--line-2);
+		border-radius: var(--r-2);
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+		transition:
+			background-color 0.12s ease-out,
+			border-color 0.12s ease-out;
+	}
+	.next button:hover:not(:disabled),
+	.next button:focus-visible {
+		background: var(--s3);
+		border-color: var(--line-3);
+	}
+	.next button:disabled {
+		cursor: not-allowed;
+		opacity: 0.6;
+	}
+	.next-lbl {
+		font-size: var(--t-sm);
+		font-weight: 600;
+		color: var(--tx-hi);
+	}
+	.next-q {
+		font-size: var(--t-xs);
+		color: var(--tx-mid);
+	}
 	.starters {
 		display: flex;
 		flex-wrap: wrap;
@@ -627,7 +768,8 @@
 		opacity: 0.6;
 	}
 	@media (pointer: coarse) {
-		.starters button {
+		.starters button,
+		.next button {
 			min-height: 44px;
 		}
 	}

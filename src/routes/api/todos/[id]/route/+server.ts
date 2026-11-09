@@ -1,8 +1,7 @@
 import type { RequestHandler } from './$types';
 import { resolveProject } from '#lib/server/discovery.js';
-import { getDispatch } from '#lib/server/dispatch/service.js';
 import { getTodoStore } from '#lib/server/state/db.js';
-import { routeTodo } from '#lib/server/todos/route.js';
+import { readTodoRoute, routeTodo } from '#lib/server/todos/route.js';
 import { errorFromException, errorResponse, jsonResponse } from '#lib/server/security.js';
 import {
 	parseJsonBody,
@@ -52,9 +51,11 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 };
 
 /**
- * `GET /api/todos/:id/route` → `{ todo, request }`: the routed todo with its
- * dispatch refreshed, so the card shows mission status and, once the runner
- * has reported the bead, its id. `request` is null for an unrouted todo.
+ * `GET /api/todos/:id/route` → `{ todo, request, issue }`: the routed todo with
+ * its dispatch refreshed and, once the runner has reported the bead, the bead's
+ * status and title, so the card shows mission progress and can offer to
+ * complete the todo when the bead closes. `request` and `issue` are null for
+ * an unrouted todo; `issue` is also null when Beads cannot be read.
  */
 export const GET: RequestHandler = async ({ params }) => {
 	const id = parseValue(todo_id_schema, params.id);
@@ -63,17 +64,11 @@ export const GET: RequestHandler = async ({ params }) => {
 	}
 	try {
 		const store = await getTodoStore();
-		const first = await store.get(id.data);
-		if (first === undefined) {
+		const todo = await store.get(id.data);
+		if (todo === undefined) {
 			return errorResponse('not_found', 'todo not found');
 		}
-		if (first.routed_project_id === null || first.routed_dispatch_id === null) {
-			return jsonResponse({ todo: first, request: null });
-		}
-		const request = (await getDispatch(first.routed_project_id, first.routed_dispatch_id)) ?? null;
-		// getDispatch persists a newly reported issue id; read the todo again to pick it up.
-		const todo = (await store.get(id.data)) ?? first;
-		return jsonResponse({ todo, request });
+		return jsonResponse(await readTodoRoute(store, todo));
 	} catch (error) {
 		return errorFromException(error, 'unavailable');
 	}

@@ -326,6 +326,54 @@ describe('crew read tools', () => {
 		const all = await call('list_todos', { status: 'all' });
 		expect(all.todos).toHaveLength(2);
 	});
+
+	it('list_todos describes routing: filed with the next step, and failed with a retry', async () => {
+		const mission = async (key: string, status: 'succeeded' | 'failed') => {
+			const { record } = await dispatch_store.create({
+				idempotency_key: key,
+				project_id: 'd_alpha',
+				dolt_database: 'alpha',
+				operation: 'file',
+				actor: 'u_admin',
+				payload: { operation: 'file', title: key }
+			} as Parameters<DispatchStore['create']>[0]);
+			await dispatch_store.updateStatus(record.id, {
+				status,
+				...(status === 'failed' ? { error_message: 'no checkout' } : {})
+			});
+			return record.id;
+		};
+		const filed = await todo_store.create({ title: 'Filed', created_by: 'u_admin' });
+		await todo_store.update(filed.id, {
+			routed_project_id: 'd_alpha',
+			routed_dispatch_id: await mission('crew-route-filed', 'succeeded'),
+			routed_issue_id: 'alpha-1'
+		});
+		const failed = await todo_store.create({ title: 'Failed', created_by: 'u_admin' });
+		await todo_store.update(failed.id, {
+			routed_project_id: 'd_alpha',
+			routed_dispatch_id: await mission('crew-route-failed', 'failed')
+		});
+		await todo_store.create({ title: 'Plain', created_by: 'u_admin' });
+
+		const { todos } = await call('list_todos');
+		const by_title = Object.fromEntries(
+			(todos as { title: string; routing?: unknown }[]).map((todo) => [todo.title, todo.routing])
+		);
+		expect(by_title.Filed).toEqual({
+			state: 'filed',
+			issue_status: 'open',
+			issue_title: 'Issue alpha-1',
+			next: 'tackle_issue to work the bead'
+		});
+		expect(by_title.Failed).toEqual({
+			state: 'failed',
+			mission_status: 'failed',
+			error: 'no checkout',
+			next: 'route_todo again to retry'
+		});
+		expect(by_title.Plain).toBeUndefined();
+	});
 });
 
 describe('crew module boundaries', () => {

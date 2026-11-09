@@ -10,12 +10,16 @@ import { GET, POST } from './+server.js';
 const mocks = vi.hoisted(() => ({
 	resolveProject: vi.fn<(id: string) => Promise<Project | undefined>>(),
 	enqueueDispatch: vi.fn(),
-	getDispatch: vi.fn()
+	getDispatch: vi.fn(),
+	getProjectIssue: vi.fn()
 }));
 
 vi.mock('#lib/server/discovery.js', async (importOriginal) => ({
 	...(await importOriginal<typeof import('#lib/server/discovery.js')>()),
 	resolveProject: mocks.resolveProject
+}));
+vi.mock('#lib/server/read-model.js', () => ({
+	getProjectIssue: mocks.getProjectIssue
 }));
 vi.mock('#lib/server/dispatch/service.js', () => ({
 	enqueueDispatch: mocks.enqueueDispatch,
@@ -50,6 +54,7 @@ beforeEach(async () => {
 	mocks.resolveProject.mockReset().mockResolvedValue(PROJECT);
 	mocks.enqueueDispatch.mockReset();
 	mocks.getDispatch.mockReset();
+	mocks.getProjectIssue.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => setTodoStore(undefined));
@@ -157,5 +162,29 @@ describe('GET /api/todos/:id/route', () => {
 		};
 		expect(body.request.status).toBe('succeeded');
 		expect(body.todo.routed_issue_id).toBe('beads-web-9');
+	});
+
+	it('adds the filed bead, and leaves it null when Beads cannot be read', async () => {
+		const todo = await store.create({ title: 'Ship it', created_by: 'u1' });
+		await store.update(todo.id, {
+			routed_project_id: PROJECT.id,
+			routed_dispatch_id: REQUEST.id,
+			routed_issue_id: 'beads-web-9'
+		});
+		mocks.getDispatch.mockResolvedValue({ ...REQUEST, status: 'succeeded' });
+		mocks.getProjectIssue.mockResolvedValue({
+			issue: { id: 'beads-web-9', status: 'closed', title: 'Ship it' },
+			readonly: true
+		});
+		const read = async () =>
+			(await (
+				(await GET({ params: { id: todo.id }, locals: { user: USER } } as never)) as Response
+			).json()) as { issue: unknown };
+
+		expect((await read()).issue).toEqual({ status: 'closed', title: 'Ship it' });
+		expect(mocks.getProjectIssue).toHaveBeenCalledWith(PROJECT, 'beads-web-9', undefined);
+
+		mocks.getProjectIssue.mockRejectedValue(new Error('dolt down'));
+		expect((await read()).issue).toBeNull();
 	});
 });

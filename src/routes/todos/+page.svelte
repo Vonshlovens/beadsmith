@@ -17,6 +17,7 @@
 	import TodoListView from '#lib/components/todo-list-view.svelte';
 	import TodoRouteHotkey from '#lib/components/todo-route-hotkey.svelte';
 	import TodoRouteDialog from '#lib/components/todo-route-dialog.svelte';
+	import { canRouteTodo, todoRouteState } from '#lib/todos/route-state.js';
 	import { api, errorMessage } from '#lib/client/api.js';
 	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
 	import { dur, expand, receive, send, springOut } from '#lib/client/motion.js';
@@ -168,8 +169,9 @@
 	}
 
 	/**
-	 * The `r` key: route an unrouted todo, or route again after a failed or
-	 * cancelled launch (as the server allows). A live route is left alone.
+	 * The `r` key: route an unrouted todo, or route again after a failed,
+	 * cancelled or vanished launch (`canRouteTodo`, the rule the server applies).
+	 * A live or filed route is left alone.
 	 */
 	async function routeByKey(todo: Todo) {
 		if (todo.routed_dispatch_id === null) {
@@ -177,11 +179,19 @@
 			return;
 		}
 		try {
-			const { request } = await api.todoRoute(todo.id);
-			if (request === null || request.status === 'failed' || request.status === 'cancelled') {
-				openRoute(todo);
+			const read = await api.todoRoute(todo.id);
+			const state = todoRouteState(read.todo, read.request, read.issue);
+			if (canRouteTodo(state)) {
+				openRoute(read.todo);
 			} else {
-				toast('Already routed', { description: `Dispatch is ${request.status}.` });
+				toast('Already routed', {
+					description:
+						state.kind === 'filed'
+							? `Filed as ${state.issue_id}.`
+							: state.kind === 'unreported'
+								? 'The mission finished without reporting a bead.'
+								: `The mission is ${read.request?.status ?? 'starting'}.`
+				});
 			}
 		} catch (error) {
 			toast.error('Could not check the route', { description: errorMessage(error) });

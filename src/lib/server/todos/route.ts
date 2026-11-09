@@ -6,8 +6,11 @@
  * same durable queue as `POST /api/projects/:id/dispatch`.
  */
 import type { Project } from '#lib/types.js';
+import { canRouteTodo, todoRouteState, type RouteIssue } from '#lib/todos/route-state.js';
+import { resolveProject } from '../discovery.js';
 import { enqueueDispatch, getDispatch, type DispatchDeps } from '../dispatch/service.js';
 import type { FilePayload } from '../dispatch/types.js';
+import { getProjectIssue, type ReadDeps } from '../read-model.js';
 import { LABEL_PATTERN } from '../validation.js';
 import type { Todo, TodoComment, TodoStore } from './store.js';
 
@@ -109,10 +112,8 @@ export async function routeTodo(
 	let previous: string | null = null;
 	if (todo.routed_dispatch_id !== null && todo.routed_project_id !== null) {
 		const existing = await getDispatch(todo.routed_project_id, todo.routed_dispatch_id, deps);
-		const retryable =
-			existing === undefined || existing.status === 'failed' || existing.status === 'cancelled';
-		if (!retryable) {
-			// Already routed and still alive (or finished): a retry routes nothing new.
+		if (!canRouteTodo(todoRouteState(todo, existing ?? null))) {
+			// Still alive, finished or already filed: a retry routes nothing new.
 			return { kind: 'routed', todo, request: existing, created: false };
 		}
 		previous = todo.routed_dispatch_id;
@@ -133,4 +134,56 @@ export async function routeTodo(
 	// replay stamps the same dispatch: the stamp carries over any reported id.
 	const saved = await store.stampRoute(todo.id, input.project.id, result.request.id);
 	return { kind: 'routed', todo: saved ?? todo, request: result.request, created: result.created };
+}
+
+export interface TodoRouteReadDeps {
+	dispatch?: DispatchDeps;
+	read?: ReadDeps;
+	/** Project lookup by id; defaults to discovery. */
+	project?: (id: string) => Promise<Project | undefined>;
+}
+
+export interface TodoRouteRead {
+	todo: Todo;
+	/** The routing mission, refreshed; null when unrouted or the mission is gone. */
+	request: Awaited<ReturnType<typeof getDispatch>> | null;
+	/** The filed bead; null before one is reported or when Beads cannot be read. */
+	issue: RouteIssue | null;
+}
+
+/**
+ * A todo with its routing read live: the mission (refreshed, which also
+ * records a bead id the runner reported) and, once filed, the bead's status,
+ * so a closed bead can offer to complete the todo. Shared by
+ * `GET /api/todos/:id/route` and the crew `list_todos` tool.
+ */
+export async function readTodoRoute(
+	store: TodoStore,
+	todo: Todo,
+	deps: TodoRouteReadDeps = {}
+): Promise<TodoRouteRead> {
+	if (todo.routed_project_id === null || todo.routed_dispatch_id === null) {
+		return { todo, request: null, issue: null };
+	}
+	const project_id = todo.routed_project_id;
+	const request = (await getDispatch(project_id, todo.routed_dispatch_id, deps.dispatch)) ?? null;
+	// getDispatch persists a newly reported issue id; read the todo again to pick it up.
+	const current = (await store.get(todo.id)) ?? todo;
+	if (current.routed_issue_id === null) {
+		return { todo: current, request, issue: null };
+	}
+	let issue: RouteIssue | null = null;
+	try {
+		const project = await (deps.project ?? resolveProject)(project_id);
+		const detail =
+			project === undefined
+				? undefined
+				: await getProjectIssue(project, current.routed_issue_id, deps.read);
+		if (detail !== undefined) {
+			issue = { status: detail.issue.status, title: detail.issue.title };
+		}
+	} catch {
+		// The bead is supplementary: an unreadable Beads leaves its status unknown.
+	}
+	return { todo: current, request, issue };
 }

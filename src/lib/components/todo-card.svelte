@@ -17,6 +17,8 @@
 	import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
 	import MissionStatus from '#lib/components/mission-status.svelte';
 	import PriorityChip from '#lib/components/priority-chip.svelte';
+	import StatusBadge from '#lib/components/status-badge.svelte';
+	import TackleIssueDialog from '#lib/components/tackle-issue-dialog.svelte';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import { api, errorMessage } from '#lib/client/api.js';
 	import { relativeShort } from '#lib/client/format.js';
@@ -26,6 +28,8 @@
 	import { addDays, dueLabel, nextWeekday, toDateOnly } from '#lib/todos/dates.js';
 	import { dueBucket, urgency, urgencyRatio } from '#lib/todos/urgency.js';
 	import type { DispatchRequest } from '#lib/types.js';
+	import { canRouteTodo, todoRouteState, type RouteIssue } from '#lib/todos/route-state.js';
+	import { untrack } from 'svelte';
 
 	interface Props {
 		todo: Todo;
@@ -71,37 +75,54 @@
 	const due_text = $derived(todo.due_at ? dueLabel(todo.due_at, now) : '');
 	const checked = $derived(done || completing);
 
-	let route_request = $state<DispatchRequest | null>(null);
-	const routed = $derived(todo.routed_dispatch_id !== null && todo.routed_project_id !== null);
+	// The routing mission and filed bead as last read: undefined until read,
+	// null when the mission is gone or Beads could not be read.
+	let route_request = $state<DispatchRequest | null | undefined>(undefined);
+	let route_issue = $state<RouteIssue | null | undefined>(undefined);
+	let tackle_open = $state(false);
+	const route = $derived(todoRouteState(todo, route_request, route_issue));
 	const route_project = $derived(
 		projectList().find((project) => project.id === todo.routed_project_id)
 	);
 	const route_name = $derived(route_project?.name ?? todo.routed_project_id ?? '');
-	const route_failed = $derived(
-		route_request?.status === 'failed' || route_request?.status === 'cancelled'
+	const can_route = $derived(canRouteTodo(route));
+	// Tackle is offered only where the project allows it (unknown policy: allowed).
+	const can_tackle = $derived(
+		route.kind === 'filed' && route.offer_tackle && route_project?.allow?.tackle !== false
 	);
 
-	// Follow the dispatch until it ends; the server links the bead when the runner reports it.
+	/*
+	 * Follow the routing: poll while the File mission runs (the server links the
+	 * bead when the runner reports it), then re-read when the tab comes back so a
+	 * bead closed elsewhere offers to complete the todo without a poll per card.
+	 */
+	// Primitives, so replacing the todo object (a bead id arrived) does not restart the poll.
+	const todo_id = $derived(todo.id);
+	const dispatch_id = $derived(todo.routed_dispatch_id);
 	$effect(() => {
-		const dispatch_id = todo.routed_dispatch_id;
-		if (dispatch_id === null) {
-			route_request = null;
+		const id = todo_id;
+		const routed_dispatch = dispatch_id;
+		route_request = undefined;
+		route_issue = undefined;
+		if (routed_dispatch === null) {
 			return;
 		}
 		let stopped = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const poll = async () => {
+			clearTimeout(timer);
 			try {
-				const result = await api.todoRoute(todo.id);
-				if (stopped || result.todo.routed_dispatch_id !== dispatch_id) {
+				const result = await api.todoRoute(id);
+				if (stopped || result.todo.routed_dispatch_id !== routed_dispatch) {
 					return;
 				}
 				route_request = result.request;
-				if (result.todo.routed_issue_id !== todo.routed_issue_id) {
+				route_issue = result.issue;
+				if (result.todo.routed_issue_id !== untrack(() => todo.routed_issue_id)) {
 					onrouted(result.todo);
 				}
-				const ended = ['succeeded', 'cancelled', 'failed'].includes(result.request?.status ?? '');
-				if (!ended) {
+				const state = todoRouteState(result.todo, result.request, result.issue);
+				if (state.kind === 'routing') {
 					timer = setTimeout(poll, 6000);
 				}
 			} catch {
@@ -110,10 +131,17 @@
 				}
 			}
 		};
+		const revisit = () => {
+			if (document.visibilityState === 'visible') {
+				void poll();
+			}
+		};
 		void poll();
+		document.addEventListener('visibilitychange', revisit);
 		return () => {
 			stopped = true;
 			clearTimeout(timer);
+			document.removeEventListener('visibilitychange', revisit);
 		};
 	});
 
@@ -235,24 +263,45 @@
 					<span class="tc-tag">{tag}</span>
 				{/each}
 			</div>
-			{#if routed}
+			{#if route.kind !== 'unrouted'}
 				<div class="tc-routed" transition:expand={{ duration: 160 }}>
 					<span class="tc-quiet">routed →</span>
-					<a class="tc-route-project" href="/p/{todo.routed_project_id}">{route_name}</a>
-					{#if todo.routed_issue_id}
-						<a
-							class="tc-route-issue mono-num"
-							href="/p/{todo.routed_project_id}/i/{todo.routed_issue_id}"
-						>
-							{todo.routed_issue_id}
+					<a class="tc-route-project" href="/p/{route.project_id}">{route_name}</a>
+					{#if route.kind === 'filed'}
+						<a class="tc-route-issue mono-num" href="/p/{route.project_id}/i/{route.issue_id}">
+							{route.issue_id}
 						</a>
-					{:else if route_request}
-						<MissionStatus status={route_request.status} />
-						{#if !route_failed && route_request.status !== 'succeeded'}
-							<span class="tc-quiet">pending</span>
+						{#if route.issue_status !== null}
+							<StatusBadge status={route.issue_status} />
 						{/if}
-					{:else}
-						<span class="tc-quiet">pending</span>
+						{#if route.offer_complete}
+							<button class="tc-route-act" type="button" onclick={complete}>
+								Bead closed · complete todo
+							</button>
+						{:else if can_tackle}
+							<button class="tc-route-act" type="button" onclick={() => (tackle_open = true)}>
+								Tackle it
+							</button>
+						{/if}
+					{:else if route.kind === 'routing'}
+						{#if route.mission_status !== null}
+							<MissionStatus status={route.mission_status} />
+						{/if}
+						<span class="tc-quiet">filing…</span>
+					{:else if route.kind === 'failed'}
+						{#if route.mission_status === 'missing'}
+							<span class="tc-route-bad">mission gone</span>
+						{:else}
+							<MissionStatus status={route.mission_status} />
+						{/if}
+						{#if route.error}
+							<span class="tc-quiet tc-route-error" title={route.error}>{route.error}</span>
+						{/if}
+						<button class="tc-route-act" type="button" onclick={() => onroute(todo)}>
+							Route again
+						</button>
+					{:else if route.kind === 'unreported'}
+						<span class="tc-quiet">finished without reporting a bead</span>
 					{/if}
 					{#if route_request?.agent_url}
 						<a class="tc-quiet" href={route_request.agent_url} target="_blank" rel="noopener">
@@ -290,9 +339,9 @@
 			<button
 				class="btn btn-sm btn-ghost btn-icon"
 				type="button"
-				aria-label={routed && !route_failed ? 'Routed to a project' : 'Route to project…'}
-				{@attach tip(routed && !route_failed ? 'Already routed' : 'Route to project… (r)')}
-				disabled={routed && !route_failed}
+				aria-label={can_route ? 'Route to project…' : 'Routed to a project'}
+				{@attach tip(can_route ? 'Route to project… (r)' : 'Already routed')}
+				disabled={!can_route}
 				onclick={() => onroute(todo)}
 			>
 				<PaperPlaneTiltIcon size={14} />
@@ -386,6 +435,16 @@
 		<div class="tc-urg-fill" style:width="{ratio * 100}%"></div>
 	</div>
 </article>
+
+{#if route.kind === 'filed' && can_tackle}
+	<TackleIssueDialog
+		project_id={route.project_id}
+		issue_id={route.issue_id}
+		issue_title={route.issue_title ?? todo.title}
+		bind:open={tackle_open}
+		show_trigger={false}
+	/>
+{/if}
 
 <style>
 	.tc {
@@ -525,6 +584,35 @@
 	.tc-route-project:hover,
 	.tc-route-issue:hover {
 		text-decoration: underline;
+	}
+	.tc-route-bad {
+		color: var(--tx-dim);
+	}
+	.tc-route-error {
+		max-width: 32ch;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	/* The next step after routing (complete, tackle, retry): small to sit in the meta line, taller on touch. */
+	.tc-route-act {
+		padding: 2px 6px;
+		margin: -2px 0;
+		border: 1px solid var(--line-2);
+		border-radius: var(--r-1);
+		background: transparent;
+		color: var(--tx-hi);
+		font: inherit;
+		cursor: pointer;
+	}
+	.tc-route-act:hover {
+		background: var(--s3);
+		border-color: var(--line-3);
+	}
+	@media (pointer: coarse) {
+		.tc-route-act {
+			min-height: 32px;
+		}
 	}
 	.tc-actions {
 		display: flex;

@@ -35,6 +35,7 @@ import type {
 } from '#lib/types.js';
 
 import type { Todo, TodoComment, TodoStatus } from '#lib/server/todos/store.js';
+import type { RouteIssue } from '#lib/todos/route-state.js';
 import type {
 	MateChat,
 	MateChatDetail,
@@ -581,7 +582,7 @@ export const api = {
 
 	/** The routed todo with its dispatch refreshed; `request` is null when unrouted. */
 	todoRoute(id: string, init?: RequestInitLike) {
-		return request<{ todo: Todo; request: DispatchRequest | null }>(
+		return request<{ todo: Todo; request: DispatchRequest | null; issue: RouteIssue | null }>(
 			'GET',
 			`/todos/${encodeURIComponent(id)}/route`,
 			init

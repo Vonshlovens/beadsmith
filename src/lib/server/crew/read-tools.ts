@@ -23,6 +23,8 @@ import {
 } from '../validation.js';
 import type { DispatchRequest, IssueSummary, Project } from '#lib/types.js';
 import type { Todo } from '../todos/store.js';
+import { readTodoRoute } from '../todos/route.js';
+import { todoRouteState, type TodoRouteState } from '#lib/todos/route-state.js';
 import {
 	CrewToolError,
 	defineTool,
@@ -121,6 +123,42 @@ export function compactTodo(todo: Todo) {
 		comment_count: todo.comment_count,
 		updated_at: todo.updated_at
 	};
+}
+
+/**
+ * A routed todo's progress into Beads (`#lib/todos/route-state.ts`), with the
+ * next step spelled out so the model offers what the todos page offers.
+ */
+export function compactRouting(state: TodoRouteState) {
+	switch (state.kind) {
+		case 'unrouted':
+			return undefined;
+		case 'routing':
+			return { state: 'routing', mission_status: state.mission_status ?? undefined };
+		case 'failed':
+			return {
+				state: 'failed',
+				mission_status: state.mission_status,
+				error: state.error,
+				next: 'route_todo again to retry'
+			};
+		case 'unreported':
+			return {
+				state: 'finished_without_bead',
+				next: 'show_mission to see what the agent reported'
+			};
+		case 'filed':
+			return {
+				state: 'filed',
+				issue_status: state.issue_status ?? undefined,
+				issue_title: state.issue_title ?? undefined,
+				next: state.offer_complete
+					? 'the bead is closed: complete_todo'
+					: state.offer_tackle
+						? 'tackle_issue to work the bead'
+						: undefined
+			};
+	}
 }
 
 function listResult<T>(items: T[], limit: number) {
@@ -326,8 +364,9 @@ export const show_mission = defineTool({
 export const list_todos = defineTool({
 	name: 'list_todos',
 	description:
-		"The owner's todo list in manual order, with routing (project, issue, mission) " +
-		'when a todo has been routed.',
+		"The owner's todo list in manual order. A routed todo carries its project, mission and " +
+		'bead ids and a routing summary: routing, failed (route again), finished without a ' +
+		'bead, or filed with the bead status and the next step (complete or tackle).',
 	input: z.strictObject({
 		status: z.enum(['open', 'done', 'archived', 'all']).default('open'),
 		tag: todo_tag_schema.optional(),
@@ -344,7 +383,28 @@ export const list_todos = defineTool({
 			q: input.text,
 			limit: input.limit
 		});
-		return { todos: todos.map(compactTodo), ...listResult(todos, input.limit) };
+		const project = async (id: string) =>
+			(await allProjects(deps)).find((candidate) => candidate.id === id);
+		const listed = await Promise.all(
+			todos.map(async (todo) => {
+				if (todo.routed_dispatch_id === null) {
+					return compactTodo(todo);
+				}
+				try {
+					const read = await readTodoRoute(store, todo, {
+						dispatch: deps.dispatch,
+						read: deps.read,
+						project
+					});
+					const state = todoRouteState(read.todo, read.request, read.issue);
+					return { ...compactTodo(read.todo), routing: compactRouting(state) };
+				} catch {
+					// One unreadable mission must not hide the rest of the list.
+					return compactTodo(todo);
+				}
+			})
+		);
+		return { todos: listed, ...listResult(todos, input.limit) };
 	}
 });
 
