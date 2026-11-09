@@ -73,11 +73,15 @@ export interface E2bMateDeps {
 
 /**
  * Production crew tools: the full tool list, acting as whoever owns the chat
- * behind a session, looked up in `state.db` on every call.
+ * behind a session, looked up in `state.db` on every call, with each answered
+ * call kept for the chat's owner.
  */
 export function defaultCrewBridgeDeps(): CrewBridgeDeps {
 	return {
-		handler: createCrewMcpHandler(),
+		handler: createCrewMcpHandler({
+			// The owner's record of what Beadsmith did for the chat (ADR-0020).
+			record: async (ctx, call) => (await getMateStore()).recordCrewCall(ctx.chat_id, call)
+		}),
 		async context(session_id) {
 			const caller = await (await getMateStore()).crewCaller(session_id);
 			if (caller === undefined) return undefined;

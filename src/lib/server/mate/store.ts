@@ -9,10 +9,28 @@
  * thinking cut short. `origin` tells runner events from the placeholder
  * replies Beadsmith writes itself when no runner is connected; only runner
  * ids are ever sent back to the runner.
+ *
+ * Crew calls (`mate_crew_calls`) are a separate, bounded record of the crew
+ * tool calls Beadsmith answered for a chat: the arguments and the result or
+ * error text it sent back, each cut short, keyed by Claude Code's tool use id
+ * so the chat can attach them to their activity lines. Crew tools run inside
+ * Beadsmith, so this is Beadsmith's own action log for the chat's owner; the
+ * agent's other tools' arguments and output are still never stored.
  */
 import type { Client } from '@libsql/client';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { MATE_RUNNER_IDS, type MateChat, type MateEvent, type MateRunnerId } from '#lib/mate.js';
+import {
+	CREW_CALL_ARGUMENTS_MAX,
+	CREW_CALL_REASON_MAX,
+	CREW_CALL_RESULT_MAX,
+	CREW_CALLS_PER_CHAT,
+	MATE_RUNNER_IDS,
+	type MateChat,
+	type MateCrewCall,
+	type MateCrewCallDetail,
+	type MateEvent,
+	type MateRunnerId
+} from '#lib/mate.js';
 import type { MissionEvent } from '#lib/mission-events.js';
 import { accountRole, type AccountRole } from '../auth/roles.js';
 
@@ -43,7 +61,19 @@ export const MATE_SCHEMA_SQL: string[] = [
 		git_pr_url TEXT,
 		at TEXT NOT NULL,
 		UNIQUE (chat_id, event_id)
-	)`
+	)`,
+	`CREATE TABLE IF NOT EXISTS mate_crew_calls (
+		chat_id TEXT NOT NULL REFERENCES mate_chats (id) ON DELETE CASCADE,
+		call_id TEXT NOT NULL,
+		tool TEXT NOT NULL,
+		arguments TEXT NOT NULL,
+		result TEXT NOT NULL,
+		is_error INTEGER NOT NULL,
+		mission_id TEXT,
+		at TEXT NOT NULL,
+		PRIMARY KEY (chat_id, call_id)
+	)`,
+	'CREATE INDEX IF NOT EXISTS mate_crew_calls_at ON mate_crew_calls (chat_id, at)'
 ];
 
 /** Thinking is kept short: the UI shows it folded, if at all. */
@@ -98,6 +128,28 @@ export interface MateStore {
 	listEvents(chat_id: string, options: { after?: string; limit: number }): Promise<MateEvent[]>;
 	/** The newest event id that came from the runner: the catch-up cursor. */
 	lastRunnerEventId(chat_id: string): Promise<string | undefined>;
+	/**
+	 * Keep one crew call, bounded, replacing an earlier answer to the same call
+	 * (a retry), and prune the chat to its newest `CREW_CALLS_PER_CHAT`.
+	 * Server-internal: the chat id comes from the caller Beadsmith resolved.
+	 */
+	recordCrewCall(chat_id: string, call: CrewCallInput): Promise<void>;
+	/** The chat's crew calls without their bodies, oldest first. Callers check ownership. */
+	listCrewCalls(chat_id: string): Promise<MateCrewCall[]>;
+	/** One crew call with its arguments and result. Callers check ownership. */
+	getCrewCall(chat_id: string, call_id: string): Promise<MateCrewCallDetail | undefined>;
+}
+
+/** One crew call as the MCP handler answered it, before it is bounded. */
+export interface CrewCallInput {
+	call_id: string;
+	tool: string;
+	/** JSON text of the arguments the agent sent. */
+	arguments: string;
+	/** The text the agent was given. */
+	result: string;
+	is_error: boolean;
+	mission_id?: string;
 }
 
 export interface CrewCaller {
@@ -248,6 +300,27 @@ function columnsFor(event: MissionEvent): Columns {
 	}
 }
 
+/** Cut text to `max` characters, saying so, as crew results are cut for the agent. */
+function bound(text: string, max: number): string {
+	return text.length <= max ? text : `${text.slice(0, max)}… [cut ${text.length - max} chars]`;
+}
+
+function toCrewCall(value: unknown): MateCrewCall {
+	const r = row(value);
+	const is_error = Number(r.is_error ?? 0) !== 0;
+	const call: MateCrewCall = {
+		call_id: String(r.call_id),
+		tool: String(r.tool),
+		is_error,
+		at: String(r.at)
+	};
+	const reason = optText(r.reason);
+	if (is_error && reason !== undefined) call.reason = reason;
+	const mission_id = optText(r.mission_id);
+	if (mission_id !== undefined) call.mission_id = mission_id;
+	return call;
+}
+
 const EVENT_COLUMNS =
 	'seq, event_id, type, text, message_id, call_id, tool_name, status, duration_ms, git_pr_url, at';
 
@@ -366,6 +439,7 @@ export function createMateStore(client: Client, now: () => Date = () => new Date
 			await client.batch(
 				[
 					{ sql: 'DELETE FROM mate_events WHERE chat_id = ?', args: [id] },
+					{ sql: 'DELETE FROM mate_crew_calls WHERE chat_id = ?', args: [id] },
 					{ sql: 'DELETE FROM mate_chats WHERE id = ? AND owner_id = ?', args: [id, owner_id] }
 				],
 				'write'
@@ -429,6 +503,64 @@ export function createMateStore(client: Client, now: () => Date = () => new Date
 				args: [chat_id, after_seq, options.limit]
 			});
 			return result.rows.map(toEvent).filter((event) => event !== undefined);
+		},
+
+		async recordCrewCall(chat_id, call) {
+			await client.batch(
+				[
+					{
+						sql: `INSERT INTO mate_crew_calls
+							(chat_id, call_id, tool, arguments, result, is_error, mission_id, at)
+							VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+							ON CONFLICT (chat_id, call_id) DO UPDATE SET tool = excluded.tool,
+								arguments = excluded.arguments, result = excluded.result,
+								is_error = excluded.is_error, mission_id = excluded.mission_id,
+								at = excluded.at`,
+						args: [
+							chat_id,
+							call.call_id,
+							call.tool,
+							bound(call.arguments, CREW_CALL_ARGUMENTS_MAX),
+							bound(call.result, CREW_CALL_RESULT_MAX),
+							call.is_error ? 1 : 0,
+							call.mission_id ?? null,
+							now().toISOString()
+						]
+					},
+					{
+						sql: `DELETE FROM mate_crew_calls WHERE chat_id = ? AND call_id NOT IN (
+								SELECT call_id FROM mate_crew_calls WHERE chat_id = ?
+								ORDER BY at DESC, rowid DESC LIMIT ?
+							)`,
+						args: [chat_id, chat_id, CREW_CALLS_PER_CHAT]
+					}
+				],
+				'write'
+			);
+		},
+
+		async listCrewCalls(chat_id) {
+			// Only a refusal's opening words travel with the list; bodies are read on demand.
+			const result = await client.execute({
+				sql: `SELECT call_id, tool, is_error, mission_id, at,
+						CASE WHEN is_error <> 0 THEN substr(result, 1, ?) END AS reason
+					FROM mate_crew_calls WHERE chat_id = ? ORDER BY at, rowid`,
+				args: [CREW_CALL_REASON_MAX, chat_id]
+			});
+			return result.rows.map(toCrewCall);
+		},
+
+		async getCrewCall(chat_id, call_id) {
+			const result = await client.execute({
+				sql: `SELECT call_id, tool, is_error, mission_id, at, arguments, result,
+						CASE WHEN is_error <> 0 THEN substr(result, 1, ?) END AS reason
+					FROM mate_crew_calls WHERE chat_id = ? AND call_id = ?`,
+				args: [CREW_CALL_REASON_MAX, chat_id, call_id]
+			});
+			const found = result.rows[0];
+			if (found === undefined) return undefined;
+			const r = row(found);
+			return { ...toCrewCall(found), arguments: String(r.arguments), result: String(r.result) };
 		},
 
 		async lastRunnerEventId(chat_id) {

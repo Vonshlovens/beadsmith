@@ -33,6 +33,7 @@ describe('initStateSchema', () => {
 			'dispatch_turns',
 			'file_checkout_maps',
 			'mate_chats',
+			'mate_crew_calls',
 			'mate_events',
 			'settings',
 			'tackle_repository_maps',
@@ -43,7 +44,7 @@ describe('initStateSchema', () => {
 	});
 
 	it('declares the application, todo and account tables and indexes', () => {
-		expect(STATE_SCHEMA_SQL).toHaveLength(21);
+		expect(STATE_SCHEMA_SQL).toHaveLength(23);
 	});
 
 	it('adds run result columns to an existing table', async () => {

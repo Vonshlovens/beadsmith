@@ -14,8 +14,20 @@ import { isBusyStatus, isFollowedMission, THREAD_POLL_MS } from '#lib/client/age
 import { api, errorMessage } from '#lib/client/api.js';
 import { statusSnapshot } from '#lib/client/projects.svelte.js';
 import { isMissionEvent } from '#lib/mission-events.js';
-import { chatTitle, isWorking, mergeEvents, touchesMissions } from '#lib/client/mate-chat.js';
-import type { MateChat, MateEvent, MateStatus } from '#lib/mate.js';
+import {
+	chatTitle,
+	isWorking,
+	mergeEvents,
+	touchesCrewCalls,
+	touchesMissions
+} from '#lib/client/mate-chat.js';
+import type {
+	MateChat,
+	MateCrewCall,
+	MateCrewCallDetail,
+	MateEvent,
+	MateStatus
+} from '#lib/mate.js';
 import type { DispatchRequest, Mission } from '#lib/types.js';
 
 /**
@@ -84,9 +96,21 @@ class MateChats {
 	/** Why a mission's cancel failed, by mission id, until the next try. */
 	cancel_errors = $state<Record<string, string>>({});
 
+	/**
+	 * Beadsmith's record of the open chat's crew tool calls, by tool use id:
+	 * why a refused one failed and which mission a launch started.
+	 */
+	crew_calls = $state<Record<string, MateCrewCall>>({});
+	/** Arguments and results, read when the owner opens a call's details. */
+	crew_details = $state<
+		Record<string, { call?: MateCrewCallDetail; loading?: boolean; error?: string }>
+	>({});
+
 	#generation = 0;
 	/** Bumped per missions read; a reply from an older read is dropped. */
 	#missions_seq = 0;
+	/** Same, for crew call reads. */
+	#crew_seq = 0;
 	#mission_poll: ReturnType<typeof setInterval> | null = null;
 	#source: EventSource | null = null;
 	#loading: Promise<void> | null = null;
@@ -161,6 +185,7 @@ class MateChats {
 			this.#add(detail.events);
 			this.#upsertChat(detail.chat);
 			void this.loadMissions(id);
+			void this.loadCrewCalls(id);
 			if (this.connected) {
 				this.#follow(id);
 			}
@@ -191,7 +216,49 @@ class MateChats {
 		this.missions_error = null;
 		this.cancelling = {};
 		this.cancel_errors = {};
+		this.crew_calls = {};
+		this.crew_details = {};
 		this.#syncMissionPoll();
+	}
+
+	/**
+	 * Read the open chat's crew call records. A failure keeps what is shown:
+	 * the activity lines still read without them.
+	 *
+	 * @param id - The open chat's id.
+	 */
+	async loadCrewCalls(id: string) {
+		const generation = this.#generation;
+		const seq = ++this.#crew_seq;
+		try {
+			const { calls } = await api.mateCrewCalls(id);
+			if (this.#generation !== generation || seq !== this.#crew_seq) return;
+			this.crew_calls = Object.fromEntries(calls.map((call) => [call.call_id, call]));
+		} catch {
+			// The next finished crew call reads them again.
+		}
+	}
+
+	/**
+	 * Read one crew call's arguments and result, once; a failed read can be
+	 * retried by opening the details again.
+	 *
+	 * @param call_id - The call's tool use id.
+	 */
+	async loadCrewCall(call_id: string) {
+		const id = this.open_id;
+		const known = this.crew_details[call_id];
+		if (id === null || known?.call !== undefined || known?.loading) return;
+		const generation = this.#generation;
+		this.crew_details[call_id] = { loading: true };
+		try {
+			const { call } = await api.mateCrewCall(id, call_id);
+			if (this.#generation === generation) this.crew_details[call_id] = { call };
+		} catch (error) {
+			if (this.#generation === generation) {
+				this.crew_details[call_id] = { error: errorMessage(error) };
+			}
+		}
 	}
 
 	/**
@@ -465,6 +532,9 @@ class MateChats {
 		// Opening reads the missions itself, once, after the stored history.
 		if (this.open_id !== null && !this.opening && touchesMissions(incoming)) {
 			void this.loadMissions(this.open_id);
+		}
+		if (this.open_id !== null && !this.opening && touchesCrewCalls(incoming, this.crew_calls)) {
+			void this.loadCrewCalls(this.open_id);
 		}
 		const ids = new Set(this.events.map((event) => event.id));
 		const messages = new Set(

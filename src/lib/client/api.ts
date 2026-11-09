@@ -39,6 +39,8 @@ import type { RouteIssue } from '#lib/todos/route-state.js';
 import type {
 	MateChat,
 	MateChatDetail,
+	MateCrewCall,
+	MateCrewCallDetail,
 	MateRunnerId,
 	MateSendResult,
 	MateStatus
@@ -632,6 +634,24 @@ export const api = {
 		return request<{ missions: Mission[] }>(
 			'GET',
 			`/mate/chats/${encodeURIComponent(id)}/missions`,
+			init
+		);
+	},
+
+	/** The chat's crew tool calls, without their bodies (ADR-0020). */
+	mateCrewCalls(id: string, init?: RequestInitLike) {
+		return request<{ calls: MateCrewCall[] }>(
+			'GET',
+			`/mate/chats/${encodeURIComponent(id)}/crew-calls`,
+			init
+		);
+	},
+
+	/** One crew tool call with its arguments and result. */
+	mateCrewCall(id: string, call_id: string, init?: RequestInitLike) {
+		return request<{ call: MateCrewCallDetail }>(
+			'GET',
+			`/mate/chats/${encodeURIComponent(id)}/crew-calls/${encodeURIComponent(call_id)}`,
 			init
 		);
 	},

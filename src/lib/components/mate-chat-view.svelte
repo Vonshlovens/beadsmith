@@ -9,7 +9,9 @@
 	 *
 	 * The agent can speak unasked, so one of its messages may follow another.
 	 * Crew tool calls (Beadsmith acting for you, ADR-0020) read as activity
-	 * lines in words; the agent's own tools stay compact chips. A mission the
+	 * lines in words; the agent's own tools stay compact chips. A crew line
+	 * Beadsmith kept a record of opens to show what was sent and answered,
+	 * read on demand; a refused one says why without opening. A mission the
 	 * chat started shows as a card under the message it came from, with its
 	 * live status and thread. Thinking folds away, errors sit inline.
 	 * Crew notices (Beadsmith telling the agent a mission it started has
@@ -21,6 +23,7 @@
 	import ArrowDownIcon from 'phosphor-svelte/lib/ArrowDownIcon';
 	import ArrowLeftIcon from 'phosphor-svelte/lib/ArrowLeftIcon';
 	import BroadcastIcon from 'phosphor-svelte/lib/BroadcastIcon';
+	import CaretRightIcon from 'phosphor-svelte/lib/CaretRightIcon';
 	import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
 	import MinusCircleIcon from 'phosphor-svelte/lib/MinusCircleIcon';
 	import WarningCircleIcon from 'phosphor-svelte/lib/WarningCircleIcon';
@@ -40,6 +43,7 @@
 		initials,
 		placeChatMissions,
 		placeMateRows,
+		prettyJson,
 		toolActivity,
 		type MateBubble,
 		type MatePart,
@@ -429,23 +433,71 @@
 										<ul class="acts" aria-label="Beadsmith actions for First Mate">
 											{#each part.items as tool (tool.id)}
 												{@const act = toolActivity(tool.name, tool.status)}
+												{@const record =
+													tool.status === 'running'
+														? undefined
+														: mate_chats.crew_calls[tool.call_id]}
+												{@const detail = mate_chats.crew_details[tool.call_id]}
 												<li
 													class="act"
 													class:is-running={tool.status === 'running'}
 													class:is-stopped={tool.status === 'stopped'}
-													class:is-failed={tool.status === 'failed'}
+													class:is-failed={tool.status === 'failed' || record?.is_error === true}
 												>
-													<span class="act-ic" aria-hidden="true">
-														{#if tool.status === 'running'}<i class="act-dot"></i>
-														{:else if tool.status === 'stopped'}<MinusCircleIcon size={13} />
-														{:else if tool.status === 'failed'}<WarningCircleIcon size={13} />
-														{:else}<CheckIcon size={13} />{/if}
-													</span>
-													<span class="act-lbl">{act.label}</span>
-													{#if tool.status === 'stopped' || tool.status === 'failed'}<span
-															class="act-note">{tool.status}</span
-														>{/if}
-													<span class="sr-only">, {TOOL_STATE[tool.status]}</span>
+													{#snippet line()}
+														<span class="act-ic" aria-hidden="true">
+															{#if tool.status === 'running'}<i class="act-dot"></i>
+															{:else if tool.status === 'stopped'}<MinusCircleIcon size={13} />
+															{:else if tool.status === 'failed' || record?.is_error}<WarningCircleIcon
+																	size={13}
+																/>
+															{:else}<CheckIcon size={13} />{/if}
+														</span>
+														<span class="act-lbl">{act.label}</span>
+														{#if tool.status === 'stopped' || tool.status === 'failed'}<span
+																class="act-note">{record?.is_error ? 'refused' : tool.status}</span
+															>{/if}
+														<span class="sr-only">, {TOOL_STATE[tool.status]}</span>
+													{/snippet}
+													{#if record === undefined}
+														<div class="act-row">{@render line()}</div>
+													{:else}
+														<details
+															class="act-more"
+															ontoggle={(event) => {
+																if (event.currentTarget.open)
+																	void mate_chats.loadCrewCall(tool.call_id);
+															}}
+														>
+															<summary class="act-row">
+																{@render line()}
+																<CaretRightIcon class="act-caret" size={11} aria-hidden="true" />
+															</summary>
+															<div class="act-body">
+																{#if detail?.call}
+																	<p class="act-h">Sent</p>
+																	<pre class="act-pre">{prettyJson(detail.call.arguments)}</pre>
+																	<p class="act-h">{detail.call.is_error ? 'Error' : 'Answered'}</p>
+																	<pre class="act-pre">{prettyJson(detail.call.result)}</pre>
+																{:else if detail?.error}
+																	<p class="act-load is-error" role="status">
+																		Could not load the details. {detail.error}
+																		<button
+																			class="link-btn"
+																			type="button"
+																			onclick={() => void mate_chats.loadCrewCall(tool.call_id)}
+																			>Try again</button
+																		>
+																	</p>
+																{:else}
+																	<p class="act-load" role="status">Loading details…</p>
+																{/if}
+															</div>
+														</details>
+													{/if}
+													{#if record?.is_error && record.reason}
+														<p class="act-reason">{record.reason}</p>
+													{/if}
 												</li>
 											{/each}
 										</ul>
@@ -958,11 +1010,94 @@
 		font-size: var(--t-sm);
 	}
 	.act {
+		min-width: 0;
+		color: var(--tx-mid);
+	}
+	.act-row {
 		display: flex;
 		align-items: center;
 		gap: 6px;
 		min-width: 0;
+	}
+	/* A line with a record opens in place. The summary keeps the line's look;
+	   the caret and hover say it opens, and the target is tall enough to tap. */
+	summary.act-row {
+		width: fit-content;
+		max-width: 100%;
+		min-height: 28px;
+		margin: -4px 0;
+		padding: 0 4px;
+		margin-left: -4px;
+		border-radius: var(--r-2);
+		list-style: none;
+		cursor: pointer;
+	}
+	summary.act-row::-webkit-details-marker {
+		display: none;
+	}
+	summary.act-row:hover {
+		background: var(--s2);
+		color: var(--tx-hi);
+	}
+	.act-row :global(.act-caret) {
+		flex: none;
+		color: var(--tx-dim);
+		transition: transform 120ms ease-out;
+	}
+	.act-more[open] > .act-row :global(.act-caret) {
+		transform: rotate(90deg);
+	}
+	.act-body {
+		display: grid;
+		gap: 4px;
+		margin: 6px 0 var(--s-2) 20px;
+		min-width: 0;
+	}
+	.act-h {
+		margin: 0;
+		font-size: var(--t-xs);
+		font-weight: 600;
+		color: var(--tx-dim);
+	}
+	.act-pre {
+		max-height: 16rem;
+		margin: 0 0 4px;
+		padding: var(--s-2) var(--s-3);
+		overflow: auto;
+		border: 1px solid var(--line);
+		border-radius: var(--r-2);
+		background: var(--s1);
 		color: var(--tx-mid);
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		line-height: 1.5;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+	.act-load {
+		margin: 0;
+		font-size: var(--t-xs);
+		color: var(--tx-dim);
+	}
+	.act-load.is-error {
+		color: var(--danger-tx);
+	}
+	/* A refusal's reason reads without opening anything: the owner should not
+	   have to dig to learn why a launch did not happen. */
+	.act-reason {
+		display: -webkit-box;
+		margin: 0 0 2px 20px;
+		overflow: hidden;
+		font-size: var(--t-xs);
+		color: var(--tx-mid);
+		overflow-wrap: anywhere;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 3;
+		line-clamp: 3;
+	}
+	/* Open, the full error is right above: do not say it twice. */
+	.act-more[open] ~ .act-reason {
+		display: none;
 	}
 	.act.is-running {
 		color: var(--tx-hi);

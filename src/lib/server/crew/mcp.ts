@@ -8,6 +8,7 @@
  */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { CREW_CALL_ID_PATTERN } from '#lib/mate.js';
 import { roleCan } from '../auth/roles.js';
 import { safeError } from '../security.js';
 import { READ_TOOLS } from './read-tools.js';
@@ -65,13 +66,21 @@ const call_params_schema = z.object({
 /** Claude Code names each MCP call with its tool use id in `_meta`. */
 const TOOL_USE_ID_KEY = 'claudecode/toolUseId';
 
+/** The client's tool use id, when it sent a well-formed one. */
+function toolUseId(meta: Record<string, unknown> | undefined): string | undefined {
+	const tool_use_id = meta?.[TOOL_USE_ID_KEY];
+	return typeof tool_use_id === 'string' && CREW_CALL_ID_PATTERN.test(tool_use_id)
+		? tool_use_id
+		: undefined;
+}
+
 /**
  * The call's identity across retries: the client's tool use id, or a hash of
  * the tool and its validated arguments when the client sends none.
  */
 function callId(tool: CrewTool, meta: Record<string, unknown> | undefined, input: unknown): string {
-	const tool_use_id = meta?.[TOOL_USE_ID_KEY];
-	if (typeof tool_use_id === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(tool_use_id)) {
+	const tool_use_id = toolUseId(meta);
+	if (tool_use_id !== undefined) {
 		return `use:${tool_use_id}`;
 	}
 	const digest = createHash('sha256')
@@ -113,6 +122,29 @@ function toolText(text: string, is_error: boolean) {
 	return { content: [{ type: 'text', text }], ...(is_error ? { isError: true } : {}) };
 }
 
+/**
+ * One answered `tools/call`, for the chat's record of what Beadsmith did
+ * (`MateStore.recordCrewCall`). Only calls Claude Code named with a tool use
+ * id are reported, because that id is what ties the record to the chat's
+ * activity line.
+ */
+export interface CrewCallReport {
+	call_id: string;
+	tool: string;
+	/** The arguments as sent, as JSON text. */
+	arguments: string;
+	/** Exactly the text the agent was given. */
+	result: string;
+	is_error: boolean;
+	mission_id?: string;
+}
+
+/** The mission a launch tool's result names, if any. */
+function missionIdOf(result: unknown): string | undefined {
+	if (result === null || typeof result !== 'object' || !('mission_id' in result)) return undefined;
+	return typeof result.mission_id === 'string' ? result.mission_id : undefined;
+}
+
 export interface CrewMcpHandler {
 	/**
 	 * Handle one parsed JSON-RPC message. Undefined means no reply is due (a
@@ -125,17 +157,82 @@ export interface CrewMcpHandler {
 
 /**
  * Build the handler over a tool list.
- * @param options `tools` defaults to every crew tool; `deps` to production modules.
+ * @param options `tools` defaults to every crew tool; `deps` to production
+ *   modules. `record` keeps each answered call for the chat's owner; a
+ *   failure there is logged and never changes what the agent is told.
  */
 export function createCrewMcpHandler(
-	options: { tools?: CrewTool[]; deps?: CrewDeps; log?: (message: string) => void } = {}
+	options: {
+		tools?: CrewTool[];
+		deps?: CrewDeps;
+		log?: (message: string) => void;
+		record?: (ctx: CrewContext, call: CrewCallReport) => Promise<void>;
+	} = {}
 ): CrewMcpHandler {
 	const tools = options.tools ?? CREW_TOOLS;
 	const deps = options.deps ?? {};
 	const log = options.log ?? ((message: string) => console.warn(message));
+	const record = options.record;
 	const by_name = new Map(tools.map((tool) => [tool.name, tool]));
 
-	async function callTool(ctx: CrewContext, id: JsonRpcId, params: unknown) {
+	async function callTool(
+		ctx: CrewContext,
+		id: JsonRpcId,
+		params: unknown
+	): Promise<JsonRpcResponse> {
+		const response = await answerCall(ctx, id, params);
+		if (record !== undefined) await report(record, ctx, params, response);
+		return response;
+	}
+
+	/** Hand an answered call to `record`, when it can be tied to the chat's activity line. */
+	async function report(
+		keep: NonNullable<typeof record>,
+		ctx: CrewContext,
+		params: unknown,
+		response: JsonRpcResponse
+	) {
+		const call = call_params_schema.safeParse(params ?? {});
+		if (!call.success || !by_name.has(call.data.name)) return;
+		const call_id = toolUseId(call.data._meta);
+		if (call_id === undefined) return;
+		let text: string;
+		let is_error: boolean;
+		let mission_id: string | undefined;
+		if ('error' in response) {
+			text = response.error.message;
+			is_error = true;
+		} else {
+			const result = response.result as ReturnType<typeof toolText>;
+			text = result.content[0]?.text ?? '';
+			is_error = result.isError === true;
+			if (!is_error) {
+				try {
+					mission_id = missionIdOf(JSON.parse(text));
+				} catch {
+					// A result cut to fit is not JSON; it simply names no mission.
+				}
+			}
+		}
+		try {
+			await keep(ctx, {
+				call_id,
+				tool: call.data.name,
+				arguments: JSON.stringify(call.data.arguments ?? {}),
+				result: text,
+				is_error,
+				...(mission_id === undefined ? {} : { mission_id })
+			});
+		} catch (error) {
+			log(`crew call record failed for chat ${ctx.chat_id}: ${String(error)}`);
+		}
+	}
+
+	async function answerCall(
+		ctx: CrewContext,
+		id: JsonRpcId,
+		params: unknown
+	): Promise<JsonRpcResponse> {
 		const call = call_params_schema.safeParse(params ?? {});
 		if (!call.success) {
 			return fail(

@@ -402,6 +402,40 @@ export function touchesMissions(events: readonly MateEvent[]): boolean {
 }
 
 /**
+ * Indent JSON text for reading; text that is not whole JSON (a result cut
+ * to fit, an error sentence) is returned as it is.
+ *
+ * @param text - Crew call arguments or result, as kept.
+ */
+export function prettyJson(text: string): string {
+	try {
+		return JSON.stringify(JSON.parse(text), null, 2);
+	} catch {
+		return text;
+	}
+}
+
+/**
+ * Whether new events mean Beadsmith has answered crew calls the chat has not
+ * read yet: a crew tool call finished, either way.
+ *
+ * @param events - Events just added to the open chat.
+ * @param known - Call ids whose records the chat already holds.
+ */
+export function touchesCrewCalls(
+	events: readonly MateEvent[],
+	known: Readonly<Record<string, unknown>>
+): boolean {
+	return events.some(
+		(event) =>
+			event.type === 'tool_call' &&
+			event.status !== 'running' &&
+			known[event.call_id] === undefined &&
+			toolActivity(event.name, event.status).crew
+	);
+}
+
+/**
  * Where each mission the chat launched shows: under the agent's message that
  * was being written when it was created, the latest of the agent's bubbles
  * that began at or before it. A mission older than every agent bubble (a

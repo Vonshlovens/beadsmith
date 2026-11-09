@@ -108,8 +108,11 @@ message it came from: operation, issue, project, live status, run time, the
 pull request, a link to its thread and, while its runner can cancel it,
 Stop. The cards come from `GET /api/mate/chats/:id/missions` and refresh when
 a launch tool returns, when a crew notice arrives, and every 12 seconds while
-one is still working. Tool arguments and results are not shown: chats keep
-only each call's name and status.
+one is still working. A crew line opens to show what First Mate sent and
+what Beadsmith answered, read when you first open it, and a refused call
+(launch limit, dispatch off, no repository mapped) shows its reason under
+the line. Those are Beadsmith's own answers, kept per chat for its owner;
+the agent's other tools keep only their name and status.
 
 Mission tools need dispatch configured (`BDX_DISPATCH_PROVIDER`); without it
 they answer with the reason, and the read and todo tools still work. Chats on
@@ -118,7 +121,7 @@ setup until it gets a transport for the same tool module.
 
 ## What Beadsmith stores
 
-Two tables in `state.db` ([ADR-0004](../specs/decisions/0004-service-local-sqlite.md)):
+Three tables in `state.db` ([ADR-0004](../specs/decisions/0004-service-local-sqlite.md)):
 
 - `mate_chats`: id (`mc_` + 24 hex), owner account id, title, scope (a
   project id, or null for every project), the chat runner (`remote` or `e2b`;
@@ -131,6 +134,11 @@ Two tables in `state.db` ([ADR-0004](../specs/decisions/0004-service-local-sqlit
   its arguments or output); `thinking` cut to 2,000 characters; result status,
   duration and pull request link. `origin` is `runner`, or `local` for the
   placeholder replies written without a runner.
+- `mate_crew_calls`: the crew tool calls Beadsmith answered for a chat
+  ([ADR-0020](../specs/decisions/0020-first-mate-crew-tools.md)), keyed by
+  Claude Code's tool use id: tool, arguments as JSON (cut at 4,000
+  characters), the text the agent was given (cut at 8,000), whether it was an
+  error, and the mission a launch named. The newest 200 per chat are kept.
 
 The runner is the durable log of a chat. Beadsmith's copy lets a chat open
 without the runner and catch up from where it left off.
@@ -140,18 +148,20 @@ without the runner and catch up from where it left off.
 All under `/api/mate`. Mutations carry the usual `x-bdx-request: 1` header;
 errors use the normal `{ error: { code, message } }` envelope.
 
-| Route                                | Does                                                                                                                                                                                                                       |
-| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/mate/status`               | `{ connected, reason?, reachable?, runners? }` for any signed-in viewer. `reason`: `admin_only` or `unconfigured`. `reachable`: cached health of the default runner. `runners` (admins): `[{ id, label }]`, default first. |
-| `GET /api/mate/chats`                | `{ chats }`, the caller's own, most recently active first.                                                                                                                                                                 |
-| `POST /api/mate/chats`               | `{ title?, scope?, runner? }` → `201 { chat }`. `runner` must be configured (`400` otherwise); omitted, the default. `409` past 100 chats.                                                                                 |
-| `GET /api/mate/chats/:id`            | `{ chat, events }`: the stored log, oldest first (the latest 2,000 events).                                                                                                                                                |
-| `PATCH /api/mate/chats/:id`          | `{ title?, scope? }` → `{ chat }`. A new scope applies from the next message.                                                                                                                                              |
-| `DELETE /api/mate/chats/:id`         | Stops the runner session, then deletes the chat. If the runner cannot stop it, the chat stays (`503`) so the delete can be retried.                                                                                        |
-| `POST /api/mate/chats/:id/messages`  | `{ text, message_id? }` → `202`. With a runner: `{ event_id }`. Without: `{ events }`, the stored message and placeholder reply.                                                                                           |
-| `GET /api/mate/chats/:id/events`     | `text/event-stream`, below. `503` without a runner.                                                                                                                                                                        |
-| `GET /api/mate/chats/:id/missions`   | `{ missions }`: the missions this chat's crew tools launched, newest first (at most 50), in the `/api/missions` shape. Which chat launched a mission is never in the payload.                                              |
-| `POST /api/mate/chats/:id/interrupt` | `202`: stops the agent's current turn. The session keeps running.                                                                                                                                                          |
+| Route                                         | Does                                                                                                                                                                                                                       |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/mate/status`                        | `{ connected, reason?, reachable?, runners? }` for any signed-in viewer. `reason`: `admin_only` or `unconfigured`. `reachable`: cached health of the default runner. `runners` (admins): `[{ id, label }]`, default first. |
+| `GET /api/mate/chats`                         | `{ chats }`, the caller's own, most recently active first.                                                                                                                                                                 |
+| `POST /api/mate/chats`                        | `{ title?, scope?, runner? }` → `201 { chat }`. `runner` must be configured (`400` otherwise); omitted, the default. `409` past 100 chats.                                                                                 |
+| `GET /api/mate/chats/:id`                     | `{ chat, events }`: the stored log, oldest first (the latest 2,000 events).                                                                                                                                                |
+| `PATCH /api/mate/chats/:id`                   | `{ title?, scope? }` → `{ chat }`. A new scope applies from the next message.                                                                                                                                              |
+| `DELETE /api/mate/chats/:id`                  | Stops the runner session, then deletes the chat. If the runner cannot stop it, the chat stays (`503`) so the delete can be retried.                                                                                        |
+| `POST /api/mate/chats/:id/messages`           | `{ text, message_id? }` → `202`. With a runner: `{ event_id }`. Without: `{ events }`, the stored message and placeholder reply.                                                                                           |
+| `GET /api/mate/chats/:id/events`              | `text/event-stream`, below. `503` without a runner.                                                                                                                                                                        |
+| `GET /api/mate/chats/:id/missions`            | `{ missions }`: the missions this chat's crew tools launched, newest first (at most 50), in the `/api/missions` shape. Which chat launched a mission is never in the payload.                                              |
+| `GET /api/mate/chats/:id/crew-calls`          | `{ calls }`: the chat's crew call records, oldest first, without bodies: `call_id`, `tool`, `is_error`, `reason` (a refusal's first 300 characters), `mission_id`, `at`.                                                   |
+| `GET /api/mate/chats/:id/crew-calls/:call_id` | `{ call }`: one record with `arguments` and `result`.                                                                                                                                                                      |
+| `POST /api/mate/chats/:id/interrupt`          | `202`: stops the agent's current turn. The session keeps running.                                                                                                                                                          |
 
 `text` is trimmed and capped at 4,000 characters. `message_id`
 (`[A-Za-z0-9_-]{1,64}`) is generated by the browser once per message and
