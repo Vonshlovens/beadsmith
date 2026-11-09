@@ -42,6 +42,58 @@ E2B's egress re-signs HTTPS with a CA it adds to the sandbox's system bundle;
 the template points Node (Claude Code) at that bundle with
 `NODE_EXTRA_CA_CERTS`.
 
+## Inbound access
+
+Every new mission and chat explicitly sets `network.allowPublicTraffic=false`
+in the shared [E2B driver](../src/lib/server/e2b/sandbox.ts), independently of
+the E2B project's default. A service started inside a sandbox therefore
+requires that sandbox's traffic access token at its public URL. Requests
+without the `e2b-traffic-access-token` header return `403`. Authenticated SDK
+commands, file access and agent streams keep working; the outbound allowlist
+and credential header injection are separate and unchanged.
+
+Beadsmith does not publish sandbox services or expose traffic access tokens
+to the browser. Keep those tokens in trusted operator tooling only; never
+print them, put them in URLs, or include them in logs. See
+[E2B's public access documentation](https://docs.e2b.dev/network/restrict-public-access).
+
+### Existing sandboxes
+
+Changing the creation policy or the project's default does **not** change
+existing sandboxes. Running, paused, resumed and forked sandboxes retain their
+original ingress setting; pausing or forking a public sandbox does not fix it.
+
+After upgrading, inventory all running **and paused** sandboxes with metadata
+`beadsmith=1`. With the E2B SDK, use `Sandbox.list` with
+`query: { metadata: { beadsmith: '1' }, state: ['running', 'paused'] }` and
+consume every page. Check `network.allowPublicTraffic` on each sandbox's
+`Sandbox.getInfo` result. An absent setting is unknown, not evidence that
+access is private. Do not print the full SDK objects: network rules can
+contain injected credentials.
+
+For a public sandbox, first match its metadata to the mission or chat and
+check for active work. Let active work finish or arrange an interruption,
+then export any needed files and session state to protected operator
+storage. Mission state includes the checkout, uncommitted changes and
+`~/.beadsmith/runs`; chat state includes `/home/user/mate` and Claude's
+session files under `~/.claude`. Preserve Beadsmith's state database and
+`<state dir>/sand-mate` logs too. These exports can contain project data or
+credentials and must stay out of Git and public logs.
+
+Create a fresh private sandbox and restore the needed state, verifying the
+chat's session metadata or the mission's agent mapping and continuation
+before retiring the old instance. If continuation is unnecessary, retire
+the old sandbox only after confirming that its work and state are retained
+elsewhere. Do not silently delete a chat or kill a sandbox to force
+recreation: that can discard state, break follow-ups or interrupt an agent.
+
+Verify a fresh sandbox with a harmless HTTP server: its public URL must
+return `403` without the traffic token and succeed with the token in a
+trusted server-side request. Also verify SDK command/file access and an
+agent turn through the existing egress policy. Clean up the probe afterwards
+and record the results and inventory counts in private operator records,
+without tokens, credentials or full network configuration.
+
 ## Set it up
 
 ### 1. E2B
