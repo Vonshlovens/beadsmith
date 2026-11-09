@@ -117,9 +117,6 @@ bypass and OAuth work First Mate does not.
 
 ## Implementation notes
 
-To be filled in as the work lands: the bridge frame format, where the
-chat-to-mission link is stored, and the notification wording.
-
 **Tool module.** `src/lib/server/crew/registry.ts` holds the tool type (a
 zod input schema, published to clients as JSON Schema, so validation and the
 advertised schema cannot drift), the caller context (owner account and role,

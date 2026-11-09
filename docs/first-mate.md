@@ -15,8 +15,10 @@ the contract between the two.
 
 ## Who can use it
 
-First Mate chats are **admin-only** for now: the first mate works in a beads
-sandbox that can change Beads in every project it is granted. Every
+First Mate chats are **admin-only** for now: the first mate acts for the
+admin who owns the chat. On Sand its crew tools read every project, change
+that admin's todos and start missions as them; on the forge guest it works in
+a beads sandbox that can change Beads in every project it is granted. Every
 `/api/mate/chats` route, reads included, needs the `admin` role, and a chat
 belongs to the account that created it; anyone else's chat answers `404`.
 Members see a note saying First Mate is for admins; `⌘K` commands work as
@@ -55,6 +57,43 @@ place to run, the start screen's **Runs on** picker chooses where new chats
 (and new agent threads) go, and the chat header says where each chat runs.
 The `e2b` runner is the mate runner's own core running inside Beadsmith, so
 it follows the contract below exactly; it needs no URL or secret.
+
+## Crew tools
+
+On the `e2b` runner, First Mate can do more than talk. Beadsmith gives the
+chat's Claude Code an MCP server, `crew`, whose tools run inside Beadsmith as
+the admin who owns the chat ([ADR-0020](../specs/decisions/0020-first-mate-crew-tools.md)).
+A tool can do nothing that admin could not do in the browser: dispatch's arm
+switch, allow-list and repository mappings refuse a crew launch exactly as
+they refuse a click, with the same message.
+
+| Kind     | Tools                                                                                                     | What happens                                                                      |
+| -------- | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Read     | `list_projects`, `ready_work`, `list_issues`, `show_issue`, `list_missions`, `show_mission`, `list_todos` | Answers from the read model, missions and todos. Results are compact and bounded. |
+| Todos    | `create_todo`, `update_todo`, `complete_todo`, `route_todo`                                               | Changes the owner's todo list directly; `route_todo` files a todo with a mission. |
+| Missions | `file_issue`, `comment_issue`, `tackle_issue`, `discuss_issue`, `follow_up_mission`, `cancel_mission`     | Starts, continues or stops a mission on the default dispatch provider.            |
+
+Beads itself only changes through missions: First Mate files and comments by
+starting a File or comment mission, whose agent runs `bd` in a sandbox of its
+own. There are no delete tools. A mission started from a chat belongs to it
+(`dispatch_requests.chat_id`), shows up on the mission list and in its own
+agent thread like any other, and counts against a per-chat launch limit
+(`BDX_CREW_LAUNCH_LIMIT` per `BDX_CREW_LAUNCH_WINDOW_MINUTES`, default 10 per
+10 minutes). A retried call returns the mission it already started instead of
+launching a second one.
+
+When a chat's mission succeeds, fails or is cancelled, Beadsmith tells the
+chat with a one-line **crew notice** (`[crew] Tackle on <issue> (<project>)
+succeeded.`, the PR link if any, a short summary, the mission id and "Tell
+the captain."), so First Mate reports back unasked. Each outcome is told
+once (`dispatch_requests.chat_notice`); if the runner is down, opening the
+chat delivers what is owed. The chat shows these as a labelled crew update,
+not as your message.
+
+Mission tools need dispatch configured (`BDX_DISPATCH_PROVIDER`); without it
+they answer with the reason, and the read and todo tools still work. Chats on
+the `remote` runner have no crew tools yet: the forge guest keeps its own
+setup until it gets a transport for the same tool module.
 
 ## What Beadsmith stores
 
@@ -227,6 +266,9 @@ seconds and shows admins when the runner is not answering.
 ## Code
 
 - Runner client: [`src/lib/server/mate/runner.ts`](../src/lib/server/mate/runner.ts)
+- Crew tools: [`src/lib/server/crew/`](../src/lib/server/crew/) (the tool
+  module, launch limit and crew notices); the Sand relay:
+  [`src/lib/server/mate/crew-bridge.ts`](../src/lib/server/mate/crew-bridge.ts)
 - Storage: [`src/lib/server/mate/store.ts`](../src/lib/server/mate/store.ts)
 - Relay and placeholder replies: [`src/lib/server/mate/service.ts`](../src/lib/server/mate/service.ts)
 - Routes: [`src/routes/api/mate/`](../src/routes/api/mate/)
