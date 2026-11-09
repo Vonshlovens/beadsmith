@@ -1415,12 +1415,37 @@ describe('discuss missions and conversation turns', () => {
 		const result = await enqueueDispatch(discussInput('elaborate'), {
 			...DISCUSS_DEPS,
 			repositories: {},
+			file_maps: {},
 			store,
 			provider
 		});
 		expect(result.request.status).toBe('launched');
 		const turns = await listDispatchTurns(PROJECT.id, result.request.id, { store });
 		expect(turns?.[0]?.text).toBe('Elaborate the description and acceptance criteria.');
+	});
+
+	it('falls back to the File checkout when the project has no Tackle map', async () => {
+		const provider = providerWithLaunch(
+			vi.fn(async (input: AgentLaunchInput) => {
+				expect(input.auto_create_pr).toBe(false);
+				expect(input.repository).toEqual({
+					url: 'https://github.com/example-org/beads-web',
+					starting_ref: 'develop'
+				});
+				return { agent_id: 'bc-d' };
+			})
+		);
+		const result = await enqueueDispatch(discussInput('discuss'), {
+			...DISCUSS_DEPS,
+			repositories: {},
+			file_maps: {
+				[PROJECT.id]: { url: 'https://github.com/example-org/beads-web', ref: 'develop' }
+			},
+			store,
+			provider
+		});
+		expect(result.request.status).toBe('launched');
+		expect(provider.launch).toHaveBeenCalledOnce();
 	});
 
 	it('needs Tackle allowed to elaborate or close, but not to discuss', async () => {

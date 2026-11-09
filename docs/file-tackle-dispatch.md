@@ -217,7 +217,8 @@ record is written. It is not part of the idempotent payload.
 Discuss is the issue page's agent button (key `a`): the worker follows
 `.agents/skills/discuss/SKILL.md` and either talks the issue through, rewrites
 its description and acceptance criteria, or closes it with a reason, all with
-`bd`. It uses the Tackle checkout when the project has one, never opens a PR,
+`bd`. It uses the Tackle checkout when the project has one, else the File
+checkout, never opens a PR,
 and continues as a conversation through follow-up. A plain discussion is
 allowed when File or Tackle is allowed; `elaborate` and `close` need Tackle.
 The public record carries `intent` but never the message.

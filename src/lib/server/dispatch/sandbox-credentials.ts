@@ -163,7 +163,10 @@ export interface GithubTokenOptions {
 	app_id: string;
 	private_key: string;
 	repository_url: string;
-	/** Contents and pull requests write; otherwise contents read only. */
+	/**
+	 * Contents and pull requests write; otherwise both read only, so an agent
+	 * can still look up a pull request's state with `gh`.
+	 */
 	write: boolean;
 	fetch?: Fetch;
 	now?: Date;
@@ -216,7 +219,7 @@ export async function mintGithubRepositoryToken(options: GithubTokenOptions): Pr
 				repositories: [repository.repo],
 				permissions: options.write
 					? { contents: 'write', pull_requests: 'write' }
-					: { contents: 'read' }
+					: { contents: 'read', pull_requests: 'read' }
 			})
 		},
 		'GitHub'
