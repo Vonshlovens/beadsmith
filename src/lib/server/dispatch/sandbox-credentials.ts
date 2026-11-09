@@ -165,12 +165,19 @@ export interface GithubTokenOptions {
 	repository_url: string;
 	/**
 	 * Contents and pull requests write; otherwise both read only, so an agent
-	 * can still look up a pull request's state with `gh`.
+	 * can still look up a pull request's state with `gh`. Either way, checks
+	 * and commit statuses read only, for `gh pr checks`.
 	 */
 	write: boolean;
 	fetch?: Fetch;
 	now?: Date;
 }
+
+/**
+ * CI results a pull request shows (`gh pr checks`). The App and its
+ * installation must hold these, or GitHub refuses the token (docs/sand-e2b.md).
+ */
+const CI_READ = { checks: 'read', statuses: 'read' } as const;
 
 /** An installation token limited to one repository. */
 export async function mintGithubRepositoryToken(options: GithubTokenOptions): Promise<string> {
@@ -218,8 +225,8 @@ export async function mintGithubRepositoryToken(options: GithubTokenOptions): Pr
 			body: JSON.stringify({
 				repositories: [repository.repo],
 				permissions: options.write
-					? { contents: 'write', pull_requests: 'write' }
-					: { contents: 'read', pull_requests: 'read' }
+					? { contents: 'write', pull_requests: 'write', ...CI_READ }
+					: { contents: 'read', pull_requests: 'read', ...CI_READ }
 			})
 		},
 		'GitHub'

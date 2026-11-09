@@ -192,8 +192,11 @@ Missions with a checkout (Tackle, and File or discuss when a checkout is
 mapped) need a GitHub App:
 
 1. Create an App with repository permissions **Contents: read and write**,
-   **Pull requests: read and write** and **Metadata: read**. No webhook is
-   needed.
+   **Pull requests: read and write**, **Checks: read**, **Commit statuses:
+   read** and **Metadata: read**. No webhook is needed. Adding a permission
+   to an existing App takes effect only once each installation accepts it;
+   until then GitHub refuses Beadsmith's token requests and missions with a
+   checkout fail to launch.
 2. Install it on the repositories you map for Tackle, and protect their
    default branches so agents can only propose changes.
 3. Put the App id in `BDX_E2B_GITHUB_APP_ID` and its private key in a file
@@ -201,7 +204,8 @@ mapped) need a GitHub App:
 
 For each run Beadsmith mints an installation token for that one repository:
 contents and pull requests when the run may open a PR, both read-only
-otherwise (so a discussion can still ask `gh` whether a PR merged). Without
+otherwise (so a discussion can still ask `gh` whether a PR merged), plus
+checks and commit statuses read-only for `gh pr checks`. Without
 the App, missions without a checkout still run on Sand. A mission without a
 checkout gets no GitHub token and no `GH_TOKEN`, so `gh` reports it is not
 logged in rather than sending a placeholder GitHub rejects as bad

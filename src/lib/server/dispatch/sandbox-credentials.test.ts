@@ -101,7 +101,7 @@ describe('GitHub App tokens', () => {
 		expect(calls[1].url).toBe('https://api.github.com/app/installations/77/access_tokens');
 		expect(JSON.parse(String(calls[1].init.body))).toEqual({
 			repositories: ['beads-web'],
-			permissions: { contents: 'read', pull_requests: 'read' }
+			permissions: { contents: 'read', pull_requests: 'read', checks: 'read', statuses: 'read' }
 		});
 	});
 
