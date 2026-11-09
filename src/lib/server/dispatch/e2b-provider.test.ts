@@ -57,6 +57,12 @@ class FakeSandbox implements SandboxRef {
 					`started=1000\nfinished=6000\nresult=${run.result ?? ''}\n`
 			};
 		}
+		if (command.startsWith('tail -c')) {
+			return {
+				exit_code: 0,
+				stdout: `Error: Dolt refused ${DOLT_PASSWORD}\n--- setup.log\ncloning…\n`
+			};
+		}
 		if (command.startsWith('ls -1')) {
 			return { exit_code: 0, stdout: [...this.runs.keys()].join('\n') };
 		}
@@ -129,6 +135,7 @@ function setup(overrides: { create_fails?: boolean } = {}) {
 			return [];
 		}
 	};
+	const logs: string[] = [];
 	const mint_github_token = vi.fn(async () => GITHUB_TOKEN);
 	const mint_tailscale_key = vi.fn(async () => 'tskey-auth-single-use');
 	const provider = createE2bProvider({
@@ -141,9 +148,10 @@ function setup(overrides: { create_fails?: boolean } = {}) {
 		read_dolt_account: async (database) => {
 			if (database !== 'beads_web') throw new Error('no account');
 			return { user: 'sbx_beads_web', password: DOLT_PASSWORD };
-		}
+		},
+		log: (message) => logs.push(message)
 	});
-	return { provider, sandboxes, states, created, mint_github_token, mint_tailscale_key };
+	return { provider, sandboxes, states, created, mint_github_token, mint_tailscale_key, logs };
 }
 
 const TACKLE = {
@@ -243,8 +251,24 @@ describe('E2B provider', () => {
 	});
 
 	it('reports a create failure without the provider error text', async () => {
-		const { provider } = setup({ create_fails: true });
+		const { provider, logs } = setup({ create_fails: true });
 		await expect(provider.launch(TACKLE)).rejects.toThrow('Sand could not create a sandbox.');
+		// The detail goes to the server log, with credential shapes stripped.
+		expect(logs).toHaveLength(1);
+		expect(logs[0]).toContain('quota exceeded');
+		expect(logs[0]).not.toContain(ANTHROPIC_KEY);
+	});
+
+	it('logs the end of a failed run, redacted, once', async () => {
+		const { provider, sandboxes, logs } = setup();
+		await provider.launch(TACKLE);
+		sandboxes.get('sbx1')!.runs.set('r1', { exit: 1 });
+		expect(await provider.getRun('sbx1', 'r1')).toMatchObject({ status: 'failed' });
+		await provider.getRun('sbx1', 'r1');
+		expect(logs).toHaveLength(1);
+		expect(logs[0]).toContain('sbx1/r1 exited 1');
+		expect(logs[0]).toContain('Dolt refused [redacted]');
+		expect(logs[0]).not.toContain(DOLT_PASSWORD);
 	});
 
 	it('reads run status from the run files and sets the idle timeout once finished', async () => {

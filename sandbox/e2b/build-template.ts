@@ -23,7 +23,12 @@ const CLAUDE_CODE_VERSION = '2.1.311';
 
 const name = process.argv[2] ?? 'beadsmith-agent';
 
-/** First Mate's standing instructions; a chat sandbox has model access only. */
+/**
+ * Fallback standing instructions for First Mate. Beadsmith overwrites
+ * AGENTS.md with the current ones (crew tools, ADR-0020) every time it starts
+ * or resumes a chat sandbox (src/lib/server/mate/crew-bridge.ts), so this
+ * text only shows in a sandbox started by hand from the template.
+ */
 const MATE_INSTRUCTIONS =
 	'You are First Mate, a Beads assistant. This sandbox currently has model access only. ' +
 	'Do not claim Beads or repository access. Ask the operator when a requested action needs ' +
@@ -65,7 +70,7 @@ const template = Template({ fileContextPath: import.meta.dirname })
 	})
 	.runCmd([
 		// First Mate chats (src/lib/server/mate/e2b-runner.ts) run here, with the
-		// same instructions as the forge guest (fleet/hosts/forge/guests/mate.nix).
+		// fallback instructions; Beadsmith writes the current AGENTS.md on start.
 		'mkdir -p /home/user/mate',
 		`printf '%s\\n' ${JSON.stringify(MATE_INSTRUCTIONS)} > /home/user/mate/AGENTS.md`,
 		'ln -sf AGENTS.md /home/user/mate/CLAUDE.md',

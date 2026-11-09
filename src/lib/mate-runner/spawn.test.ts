@@ -17,6 +17,14 @@ describe('spawn', () => {
 		expect(claudeArgs({ ...LAUNCH, scope: 'd_x' })).toContain('--append-system-prompt');
 	});
 
+	it('passes an MCP config only when the spawner sets one', () => {
+		expect(claudeArgs(LAUNCH)).not.toContain('--mcp-config');
+		expect(claudeArgs({ ...LAUNCH, mcp_config: '/m/.crew/mcp.json' }).slice(-2)).toEqual([
+			'--mcp-config',
+			'/m/.crew/mcp.json'
+		]);
+	});
+
 	it('quotes the remote command for the shell', () => {
 		expect(shellQuote("it's")).toBe(`'it'\\''s'`);
 		const args = sshArgs(

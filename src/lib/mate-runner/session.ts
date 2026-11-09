@@ -30,6 +30,11 @@ export interface AgentLaunch {
 	/** Resume an existing Claude Code session instead of creating it. */
 	resume: boolean;
 	scope: string | null;
+	/**
+	 * An MCP config file in the agent's environment (`--mcp-config`). The Sand
+	 * runner sets it for crew tools (ADR-0020); other spawners leave it unset.
+	 */
+	mcp_config?: string;
 }
 
 export type SpawnAgent = (launch: AgentLaunch) => AgentProcess;
