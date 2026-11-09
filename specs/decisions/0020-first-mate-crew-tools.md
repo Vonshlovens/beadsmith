@@ -201,3 +201,13 @@ field, so the `crew-` message-id prefix is what marks the stored `user` event
 as Beadsmith's (`isCrewNotice`); the browser may not send that prefix, and the
 chat renders those events as a labelled crew update. Missions have no
 "needs input" state yet, so only finished, failed and cancelled are told.
+
+**Chat UI.** `mate-chat-view.svelte` words crew tool calls with
+`toolActivity` (`src/lib/client/mate-chat.ts`) and shows the chat's
+missions as cards (`mate-mission-card.svelte`) under the agent message each
+was started from (`placeChatMissions`), read from the owner-only
+`GET /api/mate/chats/:id/missions` (`ListDispatchFilter.chat_id`). Busy
+cards poll each mission's own status route, which records a finished run,
+not the missions list. Tool arguments and results stay out of the chat, as
+the contract requires, so a refused launch shows no card and only the
+agent's reply says why.

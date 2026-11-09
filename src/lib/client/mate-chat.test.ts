@@ -8,7 +8,10 @@ import {
 	initials,
 	isWorking,
 	mergeEvents,
-	placeMateRows
+	placeChatMissions,
+	placeMateRows,
+	toolActivity,
+	touchesMissions
 } from './mate-chat';
 
 const AT = '2026-11-05T00:00:00.000Z';
@@ -256,5 +259,112 @@ describe('initials', () => {
 		expect(initials('  ada  ', undefined)).toBe('A');
 		expect(initials('', 'eric@example.com')).toBe('E');
 		expect(initials(undefined, undefined)).toBe('?');
+	});
+});
+
+describe('toolActivity', () => {
+	it('words crew tools in the tense of their status', () => {
+		expect(toolActivity('mcp__crew__ready_work', 'running')).toEqual({
+			crew: true,
+			label: 'Checking ready work',
+			tool: 'ready_work',
+			launch: false
+		});
+		expect(toolActivity('mcp__crew__ready_work', 'completed').label).toBe('Checked ready work');
+		// A stopped call never finished, so it keeps the running phrase.
+		expect(toolActivity('mcp__crew__show_issue', 'stopped').label).toBe('Reading an issue');
+	});
+
+	it('says a launch was requested, not that it ran', () => {
+		const tackle = toolActivity('mcp__crew__tackle_issue', 'completed');
+		expect(tackle).toMatchObject({ label: 'Requested a Tackle mission', launch: true });
+		expect(toolActivity('mcp__crew__route_todo', 'completed').launch).toBe(true);
+		expect(toolActivity('mcp__crew__create_todo', 'completed').launch).toBe(false);
+	});
+
+	it('names an unknown crew tool in words', () => {
+		expect(toolActivity('mcp__crew__archive_board', 'running')).toEqual({
+			crew: true,
+			label: 'Archive board',
+			tool: 'archive_board',
+			launch: false
+		});
+		expect(toolActivity('mcp__crew__', 'running').label).toBe('Crew tool');
+	});
+
+	it('leaves the agent’s own tools as they are', () => {
+		expect(toolActivity('Bash', 'running')).toEqual({ crew: false, label: 'Bash', launch: false });
+		expect(toolActivity('mcp__other__ready_work', 'completed').crew).toBe(false);
+	});
+});
+
+describe('touchesMissions', () => {
+	it('is true when a launch tool returns or a crew notice arrives', () => {
+		const done = ev({
+			type: 'tool_call',
+			id: 't',
+			call_id: 'c',
+			name: 'mcp__crew__file_issue',
+			status: 'completed'
+		});
+		expect(touchesMissions([done])).toBe(true);
+		expect(
+			touchesMissions([ev({ type: 'user', id: 'n', text: '[crew] …', message_id: 'crew-abc' })])
+		).toBe(true);
+	});
+
+	it('ignores reads, running launches and your own messages', () => {
+		expect(
+			touchesMissions([
+				ev({
+					type: 'tool_call',
+					id: 't',
+					call_id: 'c',
+					name: 'mcp__crew__file_issue',
+					status: 'running'
+				}),
+				ev({
+					type: 'tool_call',
+					id: 'u',
+					call_id: 'd',
+					name: 'mcp__crew__ready_work',
+					status: 'completed'
+				}),
+				ev({ type: 'user', id: 'm', text: 'hi', message_id: 'm1' })
+			])
+		).toBe(false);
+	});
+});
+
+describe('placeChatMissions', () => {
+	const bubbles = [
+		{ id: 'y1', role: 'you' as const, at: '2026-11-05T10:00:00.000Z' },
+		{ id: 'm1', role: 'mate' as const, at: '2026-11-05T10:00:05.000Z' },
+		{ id: 'n1', role: 'crew' as const, at: '2026-11-05T10:20:00.000Z' },
+		{ id: 'm2', role: 'mate' as const, at: '2026-11-05T10:20:02.000Z' }
+	];
+	const mission = (id: string, created_at: string) => ({ id, created_at });
+
+	it('puts each mission under the agent message it was started from, oldest first', () => {
+		const { by_bubble, unplaced } = placeChatMissions(bubbles, [
+			mission('b', '2026-11-05T10:00:09.000Z'),
+			mission('c', '2026-11-05T10:25:00.000Z'),
+			mission('a', '2026-11-05T10:00:07.000Z')
+		]);
+		expect(by_bubble.get('m1')?.map((m) => m.id)).toEqual(['a', 'b']);
+		expect(by_bubble.get('m2')?.map((m) => m.id)).toEqual(['c']);
+		expect(unplaced).toEqual([]);
+	});
+
+	it('puts a mission older than every agent message under the first', () => {
+		const { by_bubble } = placeChatMissions(bubbles, [mission('x', '2026-11-05T09:00:00.000Z')]);
+		expect(by_bubble.get('m1')?.map((m) => m.id)).toEqual(['x']);
+	});
+
+	it('keeps missions with no agent message to sit under', () => {
+		const lone = mission('x', '2026-11-05T10:00:00.000Z');
+		const { by_bubble, unplaced } = placeChatMissions([bubbles[0]!], [lone]);
+		expect(by_bubble.size).toBe(0);
+		expect(unplaced).toEqual([lone]);
 	});
 });

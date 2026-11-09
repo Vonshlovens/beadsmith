@@ -304,3 +304,131 @@ export function initials(name: string | undefined, email: string | undefined): s
 			: ([...(email ?? '').trim()][0] ?? '');
 	return letters.toLocaleUpperCase() || '?';
 }
+
+/**
+ * Claude Code names MCP tools `mcp__<server>__<tool>`; the crew server is
+ * `crew` (ADR-0020), so these are Beadsmith's own tools acting for you.
+ */
+export const CREW_TOOL_PREFIX = 'mcp__crew__';
+
+/**
+ * What each crew tool does, in words: while it runs, and once it returned.
+ * A launch tool's "done" says the mission was requested, not that it ran:
+ * the call can return a refusal, and the mission card reports the outcome
+ * (design standards, section 9).
+ */
+const CREW_TOOL_VERBS: Record<string, readonly [running: string, done: string]> = {
+	list_projects: ['Listing projects', 'Listed projects'],
+	ready_work: ['Checking ready work', 'Checked ready work'],
+	list_issues: ['Searching issues', 'Searched issues'],
+	show_issue: ['Reading an issue', 'Read an issue'],
+	list_missions: ['Checking missions', 'Checked missions'],
+	show_mission: ['Reading a mission', 'Read a mission'],
+	list_todos: ['Reading your todos', 'Read your todos'],
+	create_todo: ['Adding a todo', 'Added a todo'],
+	update_todo: ['Editing a todo', 'Edited a todo'],
+	complete_todo: ['Completing a todo', 'Completed a todo'],
+	route_todo: ['Routing a todo', 'Asked to route a todo'],
+	file_issue: ['Requesting a File mission', 'Requested a File mission'],
+	comment_issue: ['Requesting a Comment mission', 'Requested a Comment mission'],
+	tackle_issue: ['Requesting a Tackle mission', 'Requested a Tackle mission'],
+	discuss_issue: ['Requesting a Discuss mission', 'Requested a Discuss mission'],
+	follow_up_mission: ['Sending a follow-up', 'Asked for a follow-up'],
+	cancel_mission: ['Asking to cancel a mission', 'Asked to cancel a mission']
+};
+
+/** Crew tools whose call can start a mission this chat owns. */
+const LAUNCH_TOOLS: ReadonlySet<string> = new Set([
+	'route_todo',
+	'file_issue',
+	'comment_issue',
+	'tackle_issue',
+	'discuss_issue',
+	'follow_up_mission',
+	'cancel_mission'
+]);
+
+export interface ToolActivity {
+	/** One of Beadsmith's crew tools, rather than the agent's own (Bash, Read…). */
+	crew: boolean;
+	/** For a crew tool, a sentence-case phrase; otherwise the tool's name as sent. */
+	label: string;
+	/** For a crew tool, the bare name (`ready_work`), for the full-detail line. */
+	tool?: string;
+	/** A crew call that can start or change a mission. */
+	launch: boolean;
+}
+
+/**
+ * How a tool call reads in the chat. Crew tools get a phrase in the tense of
+ * their status ("Checking ready work", then "Checked ready work"); a stopped
+ * call keeps the running phrase, since it never finished. A crew tool this
+ * build does not know reads as its name in words. Other tools keep their
+ * name: they are the agent's own working steps, shown as chips.
+ *
+ * @param name - The tool name from the event, such as `mcp__crew__ready_work`.
+ * @param status - Its latest status.
+ */
+export function toolActivity(
+	name: string,
+	status: MissionToolCallStatus | 'stopped'
+): ToolActivity {
+	if (!name.startsWith(CREW_TOOL_PREFIX)) {
+		return { crew: false, label: name, launch: false };
+	}
+	const tool = name.slice(CREW_TOOL_PREFIX.length);
+	const verbs = CREW_TOOL_VERBS[tool];
+	const words = tool.replaceAll('_', ' ').trim();
+	const fallback = words.length > 0 ? words[0]!.toUpperCase() + words.slice(1) : 'Crew tool';
+	const label = verbs === undefined ? fallback : status === 'completed' ? verbs[1] : verbs[0];
+	return { crew: true, label, tool, launch: LAUNCH_TOOLS.has(tool) };
+}
+
+/**
+ * Whether new events mean the chat's missions may have changed: a launch
+ * tool returned, or a crew notice reported an outcome.
+ *
+ * @param events - Events just added to the open chat.
+ */
+export function touchesMissions(events: readonly MateEvent[]): boolean {
+	return events.some(
+		(event) =>
+			(event.type === 'user' && isCrewNotice(event)) ||
+			(event.type === 'tool_call' &&
+				event.status === 'completed' &&
+				toolActivity(event.name, event.status).launch)
+	);
+}
+
+/**
+ * Where each mission the chat launched shows: under the agent's message that
+ * was being written when it was created, the latest of the agent's bubbles
+ * that began at or before it. A mission older than every agent bubble (a
+ * clock skew, or its message fell out of the loaded page) goes under the
+ * first; with no agent bubbles at all it goes in `unplaced`. Each list is
+ * oldest first, the order they were started in.
+ *
+ * @param bubbles - The chat's bubbles, oldest first.
+ * @param missions - The chat's missions, in any order.
+ */
+export function placeChatMissions<M extends { id: string; created_at: string }>(
+	bubbles: readonly Pick<MateBubble, 'id' | 'role' | 'at'>[],
+	missions: readonly M[]
+): { by_bubble: Map<string, M[]>; unplaced: M[] } {
+	const agent = bubbles.filter((bubble) => bubble.role === 'mate');
+	const by_bubble = new Map<string, M[]>();
+	const unplaced: M[] = [];
+	const ordered = [...missions].sort(
+		(a, b) => Date.parse(a.created_at) - Date.parse(b.created_at) || a.id.localeCompare(b.id)
+	);
+	for (const mission of ordered) {
+		const created = Date.parse(mission.created_at);
+		const owner = agent.findLast((bubble) => Date.parse(bubble.at) <= created) ?? agent[0];
+		if (owner === undefined) {
+			unplaced.push(mission);
+			continue;
+		}
+		by_bubble.set(owner.id, [...(by_bubble.get(owner.id) ?? []), mission]);
+	}
+	return { by_bubble, unplaced };
+}

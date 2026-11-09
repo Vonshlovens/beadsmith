@@ -626,6 +626,15 @@ export const api = {
 		});
 	},
 
+	/** Missions this chat's crew tools launched, newest first. */
+	mateChatMissions(id: string, init?: RequestInitLike) {
+		return request<{ missions: Mission[] }>(
+			'GET',
+			`/mate/chats/${encodeURIComponent(id)}/missions`,
+			init
+		);
+	},
+
 	deleteMateChat(id: string, init?: RequestInitLike) {
 		return request<{ deleted: true }>('DELETE', `/mate/chats/${encodeURIComponent(id)}`, init);
 	},

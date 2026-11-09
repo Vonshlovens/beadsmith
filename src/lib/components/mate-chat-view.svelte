@@ -8,7 +8,10 @@
 	 * already says who spoke.
 	 *
 	 * The agent can speak unasked, so one of its messages may follow another.
-	 * Tool calls are compact chips, thinking folds away, errors sit inline.
+	 * Crew tool calls (Beadsmith acting for you, ADR-0020) read as activity
+	 * lines in words; the agent's own tools stay compact chips. A mission the
+	 * chat started shows as a card under the message it came from, with its
+	 * live status and thread. Thinking folds away, errors sit inline.
 	 * Crew notices (Beadsmith telling the agent a mission it started has
 	 * finished) are quiet system rows, labelled, so they never read as yours.
 	 * Stop interrupts the agent's current turn; the session keeps running.
@@ -19,6 +22,7 @@
 	import ArrowLeftIcon from 'phosphor-svelte/lib/ArrowLeftIcon';
 	import BroadcastIcon from 'phosphor-svelte/lib/BroadcastIcon';
 	import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
+	import MinusCircleIcon from 'phosphor-svelte/lib/MinusCircleIcon';
 	import CommandIcon from 'phosphor-svelte/lib/CommandIcon';
 	import CopyIcon from 'phosphor-svelte/lib/CopyIcon';
 	import SquareIcon from 'phosphor-svelte/lib/SquareIcon';
@@ -27,12 +31,15 @@
 	import ChatComposer from '#lib/components/chat-composer.svelte';
 	import MarkdownBody from '#lib/components/markdown-body.svelte';
 	import MateContextSelect from '#lib/components/mate-context-select.svelte';
+	import MateMissionCard from '#lib/components/mate-mission-card.svelte';
 	import { absoluteStamp } from '#lib/client/format.js';
 	import {
 		clockTime,
 		groupMateEvents,
 		initials,
+		placeChatMissions,
 		placeMateRows,
+		toolActivity,
 		type MateBubble,
 		type MatePart,
 		type MateRole
@@ -79,6 +86,7 @@
 	const connected = $derived(mate_chats.connected);
 	const viewer = $derived(currentViewer());
 	const my_initials = $derived(initials(viewer?.name, viewer?.email));
+	const placed_missions = $derived(placeChatMissions(bubbles, mate_chats.missions));
 
 	type Row =
 		| { kind: 'bubble'; key: string; role: MateRole; at: string; bubble: MateBubble }
@@ -111,18 +119,23 @@
 		cancelled: 'Interrupted'
 	};
 
-	/** Consecutive tool calls render as one row of chips. */
-	function runs(
-		parts: MatePart[]
-	): (MatePart | { kind: 'tools'; id: string; items: MatePart[] })[] {
-		const out: (MatePart | { kind: 'tools'; id: string; items: MatePart[] })[] = [];
+	type ToolPart = MatePart & { kind: 'tool' };
+	type ToolRun = { kind: 'tools' | 'crew'; id: string; items: ToolPart[] };
+
+	/**
+	 * Consecutive tool calls of one sort render together: the agent's own
+	 * tools as one row of chips, crew tools as a list of activity lines.
+	 */
+	function runs(parts: MatePart[]): (MatePart | ToolRun)[] {
+		const out: (MatePart | ToolRun)[] = [];
 		for (const part of parts) {
 			const last = out.at(-1);
 			if (part.kind === 'tool') {
-				if (last !== undefined && last.kind === 'tools') {
+				const kind = toolActivity(part.name, part.status).crew ? 'crew' : 'tools';
+				if (last !== undefined && last.kind === kind) {
 					last.items.push(part);
 				} else {
-					out.push({ kind: 'tools', id: part.id, items: [part] });
+					out.push({ kind, id: part.id, items: [part] });
 				}
 			} else {
 				out.push(part);
@@ -130,6 +143,12 @@
 		}
 		return out;
 	}
+
+	const TOOL_STATE: Record<ToolPart['status'], string> = {
+		running: 'in progress',
+		completed: 'done',
+		stopped: 'stopped before it finished'
+	};
 
 	/** What Copy puts on the clipboard: the message's text, as written. */
 	function copyText(row: Row): string {
@@ -404,6 +423,26 @@
 											<summary>Thinking</summary>
 											<p>{part.text}</p>
 										</details>
+									{:else if part.kind === 'crew'}
+										<ul class="acts" aria-label="Beadsmith actions for First Mate">
+											{#each part.items as tool (tool.id)}
+												{@const act = toolActivity(tool.name, tool.status)}
+												<li
+													class="act"
+													class:is-running={tool.status === 'running'}
+													class:is-stopped={tool.status === 'stopped'}
+												>
+													<span class="act-ic" aria-hidden="true">
+														{#if tool.status === 'running'}<i class="act-dot"></i>
+														{:else if tool.status === 'stopped'}<MinusCircleIcon size={13} />
+														{:else}<CheckIcon size={13} />{/if}
+													</span>
+													<span class="act-lbl">{act.label}</span>
+													{#if tool.status === 'stopped'}<span class="act-note">stopped</span>{/if}
+													<span class="sr-only">, {TOOL_STATE[tool.status]}</span>
+												</li>
+											{/each}
+										</ul>
 									{:else if part.kind === 'tools'}
 										<ul class="tools" aria-label="Tool calls">
 											{#each part.items as tool (tool.id)}
@@ -426,6 +465,14 @@
 										>
 									</p>
 								{/if}
+								{#each placed_missions.by_bubble.get(row.bubble.id) ?? [] as mission (mission.id)}
+									<MateMissionCard
+										{mission}
+										cancelling={mate_chats.cancelling[mission.id] === true}
+										cancel_error={mate_chats.cancel_errors[mission.id]}
+										oncancel={() => void mate_chats.cancelMission(mission)}
+									/>
+								{/each}
 								<!-- After the turn's content, so it shows on grouped messages too. -->
 								{#if row.bubble.result && RESULT_NOTE[row.bubble.result.status]}
 									<p class="outcome">
@@ -453,6 +500,33 @@
 					{/if}
 				</li>
 			{/each}
+
+			{#if placed_missions.unplaced.length > 0}
+				<li class="msg is-head">
+					<div class="gutter"></div>
+					<div class="msg-main parts">
+						<p class="msg-hd">Missions from this chat</p>
+						{#each placed_missions.unplaced as mission (mission.id)}
+							<MateMissionCard
+								{mission}
+								cancelling={mate_chats.cancelling[mission.id] === true}
+								cancel_error={mate_chats.cancel_errors[mission.id]}
+								oncancel={() => void mate_chats.cancelMission(mission)}
+							/>
+						{/each}
+					</div>
+				</li>
+			{/if}
+			{#if mate_chats.missions_error && mate_chats.missions.length === 0 && !mate_chats.opening}
+				<li class="note err" role="status">
+					Could not load the missions this chat started. {mate_chats.missions_error}
+					<button
+						class="btn btn-sm btn-ghost"
+						type="button"
+						onclick={() => void mate_chats.loadMissions(chat.id)}>Retry</button
+					>
+				</li>
+			{/if}
 
 			{#if mate_chats.stream_error}
 				<li class="note err" role="status">
@@ -857,6 +931,53 @@
 		font-size: var(--t-xs);
 		color: var(--tx-dim);
 	}
+	/* Crew activity: what Beadsmith did for the agent, in words. Quiet, like
+	   the tool chips, but readable as a list of steps. */
+	.acts {
+		display: grid;
+		gap: 2px;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		font-size: var(--t-sm);
+	}
+	.act {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		min-width: 0;
+		color: var(--tx-mid);
+	}
+	.act.is-running {
+		color: var(--tx-hi);
+	}
+	.act.is-stopped .act-lbl {
+		color: var(--tx-dim);
+	}
+	.act-ic {
+		display: grid;
+		flex: none;
+		place-items: center;
+		width: 14px;
+		height: 14px;
+		color: var(--tx-dim);
+	}
+	.act-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: currentColor;
+		color: var(--tx-hi);
+		animation: bdui-pulse 1.2s ease-in-out infinite;
+	}
+	.act-lbl {
+		min-width: 0;
+		overflow-wrap: anywhere;
+	}
+	.act-note {
+		font-size: var(--t-xs);
+		color: var(--tx-dim);
+	}
 	.thinking {
 		font-size: var(--t-xs);
 		color: var(--tx-dim);
@@ -978,6 +1099,9 @@
 	@media (prefers-reduced-motion: reduce) {
 		.msg-tools {
 			transition: none;
+		}
+		.act-dot {
+			animation: none;
 		}
 	}
 </style>
