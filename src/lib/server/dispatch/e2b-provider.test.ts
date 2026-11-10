@@ -12,7 +12,7 @@ import {
 	type SandboxRef
 } from './e2b-provider.js';
 import { AGENT_BUSY_MESSAGE } from './provider.js';
-import { ANTHROPIC_PLACEHOLDER } from '../e2b/sandbox.js';
+import { ANTHROPIC_PLACEHOLDER, GITHUB_PLACEHOLDER } from '../e2b/sandbox.js';
 
 const SETTINGS = parseE2bSettings({
 	BDX_E2B_API_KEY_FILE: '/run/secrets/e2b',
@@ -207,7 +207,8 @@ describe('E2B provider', () => {
 			BEADS_DOLT_PASSWORD: DOLT_PASSWORD,
 			BEADS_DOLT_SERVER_DATABASE: 'beads_web',
 			BEADSMITH_DOLT_TAILNET_HOST: 'beads',
-			BEADSMITH_REPO_URL: TACKLE.repository.url
+			BEADSMITH_REPO_URL: TACKLE.repository.url,
+			GH_TOKEN: GITHUB_PLACEHOLDER
 		});
 		// Rule 6: the real keys only travel in the egress rules.
 		const envs = JSON.stringify(input.envs);
@@ -218,6 +219,12 @@ describe('E2B provider', () => {
 
 		const sandbox = sandboxes.get('sbx1')!;
 		expect(sandbox.files.get('/home/user/.beadsmith/runs/r1/prompt')).toBe('Tackle bw-1');
+		// The skills the prompts name ride along, whatever the checkout holds.
+		for (const name of ['file', 'tackle', 'comment', 'discuss']) {
+			expect(sandbox.files.get(`/home/user/.beadsmith/skills/${name}/SKILL.md`)).toMatch(
+				new RegExp(`^---\\nname: ${name}\\n`)
+			);
+		}
 		expect(sandbox.started).toEqual([
 			{
 				command: 'beadsmith-run r1',
@@ -236,6 +243,7 @@ describe('E2B provider', () => {
 		});
 		expect(mint_github_token).not.toHaveBeenCalled();
 		expect(created[0].network.headers['github.com']).toBeUndefined();
+		expect(created[0].envs.GH_TOKEN).toBeUndefined();
 	});
 
 	it('fails closed for a project without a sandbox Dolt account or a non-GitHub checkout', async () => {

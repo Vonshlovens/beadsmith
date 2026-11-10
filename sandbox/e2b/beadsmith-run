@@ -114,6 +114,23 @@ if [ ! -d "$work" ]; then
 fi
 cd "$work" || finish 12
 
+# The prompt names .agents/skills/<name>/SKILL.md. Those skills belong to
+# Beadsmith, which writes them to ~/.beadsmith/skills before each run; install
+# any the checkout lacks (another repository, or none) and keep them out of git.
+for skill in "$base"/skills/*/SKILL.md; do
+	[ -f "$skill" ] || continue
+	name="$(basename "$(dirname "$skill")")"
+	target=".agents/skills/$name"
+	if [ ! -f "$target/SKILL.md" ] || [ -f "$target/.beadsmith" ]; then
+		mkdir -p "$target"
+		cp -f "$skill" "$target/SKILL.md"
+		touch "$target/.beadsmith"
+		if git rev-parse --git-dir >/dev/null 2>&1; then
+			grep -qxF "/$target/" .git/info/exclude 2>/dev/null || echo "/$target/" >>.git/info/exclude
+		fi
+	fi
+done
+
 # bd needs a .beads/ workspace even when BEADS_DOLT_* says where the server
 # is, and .beads/ is usually not committed. Write a server-mode one unless
 # the checkout brought its own; the environment overrides its values anyway.

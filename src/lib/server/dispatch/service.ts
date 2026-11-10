@@ -724,8 +724,9 @@ async function planLaunch(
 }
 
 /**
- * A discussion reads the project's Tackle checkout when one is mapped, so the
- * agent can look at the code it is asked about. It never opens a pull
+ * A discussion reads the project's Tackle checkout when one is mapped, else
+ * its File checkout, so the agent can look at the code (and, on Sand, the
+ * repository's pull requests) it is asked about. It never opens a pull
  * request, and an unmapped or invalid map just launches without a checkout.
  */
 async function discussCheckout(
@@ -734,10 +735,14 @@ async function discussCheckout(
 ): Promise<Pick<AgentLaunchInput, 'repository'>> {
 	try {
 		const resolved = await resolveLaunchMaps(deps);
-		const mapping = resolved.invalid ? undefined : resolved.mappings[record.project_id];
-		return mapping === undefined
-			? {}
-			: { repository: { url: mapping.url, starting_ref: mapping.ref } };
+		const tackle = resolved.invalid ? undefined : resolved.mappings[record.project_id];
+		if (tackle !== undefined) {
+			return { repository: { url: tackle.url, starting_ref: tackle.ref } };
+		}
+		const file = await resolveFileCheckout(record.project_id, deps);
+		return file.kind === 'valid'
+			? { repository: { url: file.mapping.url, starting_ref: file.mapping.ref } }
+			: {};
 	} catch {
 		return {};
 	}

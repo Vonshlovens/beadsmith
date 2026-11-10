@@ -192,16 +192,25 @@ Missions with a checkout (Tackle, and File or discuss when a checkout is
 mapped) need a GitHub App:
 
 1. Create an App with repository permissions **Contents: read and write**,
-   **Pull requests: read and write** and **Metadata: read**. No webhook is
-   needed.
+   **Pull requests: read and write**, **Checks: read**, **Commit statuses:
+   read** and **Metadata: read**. No webhook is needed. Adding a permission
+   to an existing App takes effect only once each installation accepts it;
+   until then GitHub refuses Beadsmith's token requests and missions with a
+   checkout fail to launch.
 2. Install it on the repositories you map for Tackle, and protect their
    default branches so agents can only propose changes.
 3. Put the App id in `BDX_E2B_GITHUB_APP_ID` and its private key in a file
    (`BDX_E2B_GITHUB_APP_PRIVATE_KEY_FILE`).
 
 For each run Beadsmith mints an installation token for that one repository:
-contents and pull requests when the run may open a PR, contents read-only
-otherwise. Without the App, missions without a checkout still run on Sand.
+contents and pull requests when the run may open a PR, both read-only
+otherwise (so a discussion can still ask `gh` whether a PR merged), plus
+checks and commit statuses read-only for `gh pr checks`. Without
+the App, missions without a checkout still run on Sand. A mission without a
+checkout gets no GitHub token and no `GH_TOKEN`, so `gh` reports it is not
+logged in rather than sending a placeholder GitHub rejects as bad
+credentials. Map a File or Tackle checkout for a project whose agents should
+see its pull requests.
 
 ### 5. Turn it on
 
@@ -252,10 +261,13 @@ the console says so (`E2B settings are incomplete`).
    there is a checkout) and creates the sandbox with the egress rules,
    placeholders and the project's Dolt settings. Its agent id is the sandbox
    id; runs are `r1`, `r2`, and so on.
-2. It writes the prompt to `~/.beadsmith/runs/r1/prompt` and starts
+2. It writes the prompt to `~/.beadsmith/runs/r1/prompt` and the dispatch
+   skills (`.agents/skills/{file,tackle,comment,discuss}`, bundled into the
+   server at build time) to `~/.beadsmith/skills/`, then starts
    [`beadsmith-run`](../sandbox/e2b/beadsmith-run) with a fresh Tailscale
    key. The script joins the tailnet, opens the Dolt forward, clones the
-   checkout and runs `claude -p --output-format stream-json`.
+   checkout, installs any skill the checkout lacks under `.agents/skills/`
+   (excluded from git) and runs `claude -p --output-format stream-json`.
 3. Beadsmith reads the run's files for status, and tails its event log for
    the thread's live view (text, thinking and tool names only; never tool
    inputs or output).

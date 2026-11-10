@@ -35,6 +35,7 @@ import {
 	type AgentStreamOptions,
 	type AgentStreamOutcome
 } from './provider.js';
+import { DISPATCH_SKILLS } from './agent-skills.js';
 import {
 	ClaudeStreamMapper,
 	findPullRequestUrl,
@@ -72,6 +73,8 @@ export type {
 
 /** Where the template's `beadsmith-run` keeps each run (the default user's home). */
 export const RUNS_DIR = '/home/user/.beadsmith/runs';
+/** Where `beadsmith-run` finds the dispatch skills to install into the workspace. */
+export const SKILLS_DIR = '/home/user/.beadsmith/skills';
 const RUN_ID_PATTERN = /^r[1-9][0-9]{0,5}$/;
 const SANDBOX_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const DEFAULT_DOLT_LOCAL_PORT = '3306';
@@ -289,7 +292,13 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 
 	async function startRun(sandbox: SandboxRef, run_id: string, prompt: string, resume: boolean) {
 		const dir = `${RUNS_DIR}/${run_id}`;
-		await sandbox.exec(`mkdir -p '${dir}'`);
+		const skills = Object.keys(DISPATCH_SKILLS).map((name) => `'${SKILLS_DIR}/${name}'`);
+		await sandbox.exec(`mkdir -p '${dir}' ${skills.join(' ')}`);
+		// The prompt names .agents/skills/<name>/SKILL.md; the checkout may not
+		// have them (another repository, or none), so beadsmith-run installs these.
+		for (const [name, text] of Object.entries(DISPATCH_SKILLS)) {
+			await sandbox.writeFile(`${SKILLS_DIR}/${name}/SKILL.md`, text);
+		}
 		await sandbox.writeFile(`${dir}/prompt`, prompt);
 		await sandbox.start(`beadsmith-run ${run_id}`, {
 			BEADSMITH_TS_AUTHKEY: await mintTailscale(),
@@ -383,7 +392,11 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 						...modelPlaceholderEnvs(
 							settings.anthropic_api_key_file === undefined ? 'oauth_token' : 'api_key'
 						),
-						GH_TOKEN: GITHUB_PLACEHOLDER
+						// Only when the egress will replace it: a placeholder that reaches
+						// GitHub unreplaced reads as "bad credentials", which misleads.
+						...(network.headers['api.github.com'] === undefined
+							? {}
+							: { GH_TOKEN: GITHUB_PLACEHOLDER })
 					}
 				});
 			} catch (error) {
