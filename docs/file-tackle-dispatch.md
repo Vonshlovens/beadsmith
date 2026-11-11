@@ -208,6 +208,19 @@ instead of on the default provider. It must be one the server lists in
 `GET /api/status` → `dispatch.providers`; anything else is refused before a
 record is written. It is not part of the idempotent payload.
 
+Every body may also carry `model` and `effort`: the model and reasoning
+effort the agent runs with instead of the runner's default. Each must be one
+the operator offers (`BDX_AGENT_MODELS`, `BDX_AGENT_EFFORTS`, listed in
+`GET /api/status` → `dispatch.models` / `dispatch.efforts`); anything else is
+refused with `400` before a record is written, so the browser cannot name a
+model the operator has not chosen to pay for. Only a runner whose
+`capabilities.models` is true takes them (Sand); any other refuses a launch
+that asks with `403`. They are part of the idempotent payload, and the check
+runs at every launch, an automation's included, so a choice the operator has
+since withdrawn fails rather than runs. On Sand the choice is kept on the
+sandbox, so a follow-up that has to relaunch the CLI (`--resume`) runs the
+same model.
+
 - `{ operation: "file", idempotency_key, notes, title?, issue_type?, priority?, labels?, status? }`
 - `{ operation: "tackle", idempotency_key, issue_id }`
 - `{ operation: "comment", idempotency_key, issue_id, text }`
@@ -289,6 +302,9 @@ these terminal result fields when the provider supplies them:
 - `result_summary` — bounded, credential-scrubbed final assistant text;
 - `duration_ms` — the runner's terminal run duration; and
 - `git_pr_url` — a validated `https://github.com/.../pull/:number` URL.
+
+Every record also carries `model` and `effort` when the launch asked for
+them; absent means the runner's default.
 
 A loop mission also carries `loop`: its `mode`, optional `issue_id`,
 `harness`, `model`, `effort`, `max_iterations` and

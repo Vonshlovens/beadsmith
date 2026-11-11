@@ -234,7 +234,9 @@ export async function getStatus(deps: StatusDeps = {}): Promise<StatusSnapshot> 
 					}),
 			...(env.dispatch_provider_error === undefined
 				? {}
-				: { provider_error: env.dispatch_provider_error })
+				: { provider_error: env.dispatch_provider_error }),
+			...(env.agent_models.length === 0 ? {} : { models: env.agent_models }),
+			...(env.agent_efforts.length === 0 ? {} : { efforts: env.agent_efforts })
 		}
 	};
 }

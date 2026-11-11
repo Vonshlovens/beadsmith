@@ -8,8 +8,18 @@ import type { StatusKey } from '#lib/client/format.js';
 import type { RalphHarness, RalphMode } from '#lib/ralph.js';
 import type { LoopEnd } from './provider.js';
 
+/**
+ * The model and reasoning effort a launch asked for. Each is one of the
+ * operator's choices (`BDX_AGENT_MODELS`, `BDX_AGENT_EFFORTS`), checked when
+ * the mission is created; absent means the runner's default.
+ */
+export interface AgentChoice {
+	model?: string;
+	effort?: string;
+}
+
 /** Validated File payload stored on the dispatch record. */
-export interface FilePayload {
+export interface FilePayload extends AgentChoice {
 	operation: 'file';
 	notes: string;
 	title?: string;
@@ -23,7 +33,7 @@ export interface FilePayload {
 export type TackleDestinationStatus = 'open' | 'in_progress' | 'blocked' | 'deferred' | 'closed';
 
 /** Validated Tackle payload stored on the dispatch record. */
-export interface TacklePayload {
+export interface TacklePayload extends AgentChoice {
 	operation: 'tackle';
 	issue_id: string;
 	title?: string;
@@ -33,7 +43,7 @@ export interface TacklePayload {
 }
 
 /** Validated human-comment payload stored on the dispatch record. */
-export interface CommentPayload {
+export interface CommentPayload extends AgentChoice {
 	operation: 'comment';
 	issue_id: string;
 	text: string;
@@ -45,7 +55,7 @@ export interface CommentPayload {
  * Validated agent-conversation payload. The operator's
  * optional message steers the run; the agent does any Beads change with bd.
  */
-export interface DiscussPayload {
+export interface DiscussPayload extends AgentChoice {
 	operation: 'discuss';
 	issue_id: string;
 	intent: DiscussIntent;
@@ -61,7 +71,7 @@ export interface DiscussPayload {
  * per-run scope. Everything else (prompts, validation, limits) comes from the
  * checkout's own `.ralph/` configuration, which Beadsmith never edits.
  */
-export interface LoopPayload {
+export interface LoopPayload extends AgentChoice {
 	operation: 'loop';
 	mode: RalphMode;
 	/** What a `run` loop does each iteration; only `run` takes one. */
@@ -69,8 +79,6 @@ export interface LoopPayload {
 	/** The one bead a `build` or `run` loop works on; absent = the project's plan. */
 	issue_id?: string;
 	harness?: RalphHarness;
-	model?: string;
-	effort?: string;
 	max_iterations?: number;
 	iteration_timeout_minutes?: number;
 	/** The bead's title, recorded at launch for display. */
@@ -118,9 +126,9 @@ export interface DispatchRecord {
 }
 
 export class DispatchError extends Error {
-	readonly code: 'unavailable' | 'conflict' | 'forbidden';
+	readonly code: 'unavailable' | 'conflict' | 'forbidden' | 'bad_request';
 
-	constructor(code: 'unavailable' | 'conflict' | 'forbidden', message: string) {
+	constructor(code: 'unavailable' | 'conflict' | 'forbidden' | 'bad_request', message: string) {
 		super(message);
 		this.name = 'DispatchError';
 		this.code = code;

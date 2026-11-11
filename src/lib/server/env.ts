@@ -10,6 +10,7 @@ import {
 	type TackleRepositoryMapping
 } from './dispatch/repositories.js';
 import { resolveStateDir } from './state/dir.js';
+import { EFFORT_PATTERN, MODEL_PATTERN } from '#lib/agent-session/claude-code.js';
 import type { E2bBaseSettings } from './e2b/sandbox.js';
 
 export { resolveStateDir };
@@ -114,6 +115,14 @@ export interface ServerEnv {
 	 * per `BDX_CREW_LAUNCH_WINDOW_MINUTES` (default 10).
 	 */
 	crew_launch_limit: { count: number; window_minutes: number };
+	/**
+	 * The models and reasoning efforts a launch may ask for, in the
+	 * operator's order: `BDX_AGENT_MODELS` and `BDX_AGENT_EFFORTS` (comma
+	 * lists). Empty means launches take the runner's default only; an entry
+	 * that is not a model name or effort level is dropped.
+	 */
+	agent_models: string[];
+	agent_efforts: string[];
 	/**
 	 * Underclass's admin API, read by the console (ADR-0022 rule 4): its
 	 * origin (`BDX_UNDERCLASS_URL`) and the path of its UI token
@@ -410,6 +419,11 @@ function resolveDispatchProvider(source: NodeJS.ProcessEnv): ResolvedDispatch {
 	return resolved;
 }
 
+/** A comma list of launch choices, de-duplicated, keeping only well-formed entries. */
+function parseChoices(raw: string | undefined, pattern: RegExp): string[] {
+	return [...new Set(splitList(raw).filter((entry) => pattern.test(entry)))];
+}
+
 /** Client-safe configuration class for the console. Never names an env var. */
 export type ConfigClass =
 	'ok' | 'dolt_unconfigured' | 'incomplete' | 'invalid_service_token_id' | 'public_origin_error';
@@ -631,6 +645,8 @@ export function readEnv(source: NodeJS.ProcessEnv = process.env): ServerEnv {
 			count: parsePositiveInt(source.BDX_CREW_LAUNCH_LIMIT, 10),
 			window_minutes: parsePositiveInt(source.BDX_CREW_LAUNCH_WINDOW_MINUTES, 10)
 		},
+		agent_models: parseChoices(source.BDX_AGENT_MODELS, MODEL_PATTERN),
+		agent_efforts: parseChoices(source.BDX_AGENT_EFFORTS, EFFORT_PATTERN),
 		underclass: underclass.underclass,
 		underclass_error: underclass.error
 	};

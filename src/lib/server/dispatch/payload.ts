@@ -5,13 +5,25 @@
  * hand would.
  */
 import type { LaunchBody } from '../validation.js';
-import type { DispatchPayload } from './types.js';
+import type { AgentChoice, DispatchPayload } from './types.js';
 
 /**
  * @param body - The launch fields, already validated (no idempotency key or runner).
  * @param actor - Who the comment is written as; a comment's author is its launcher.
  */
 export function launchPayload(body: LaunchBody, actor: string): DispatchPayload {
+	return { ...operationPayload(body, actor), ...agentChoice(body) };
+}
+
+/** The model and effort a launch asked for, leaving out the ones it did not. */
+function agentChoice(body: LaunchBody): AgentChoice {
+	return {
+		...(body.model === undefined ? {} : { model: body.model }),
+		...(body.effort === undefined ? {} : { effort: body.effort })
+	};
+}
+
+function operationPayload(body: LaunchBody, actor: string): DispatchPayload {
 	switch (body.operation) {
 		case 'file':
 			return {
@@ -42,7 +54,7 @@ export function launchPayload(body: LaunchBody, actor: string): DispatchPayload 
 				...(body.message === undefined ? {} : { message: body.message })
 			};
 		case 'loop': {
-			const { operation, issue_id, ...settings } = body;
+			const { operation, issue_id, model: _model, effort: _effort, ...settings } = body;
 			const flags = Object.fromEntries(
 				Object.entries(settings).filter(([, value]) => value !== undefined)
 			) as typeof settings;

@@ -21,6 +21,7 @@ import {
 	AGENT_BUSY_MESSAGE,
 	getAgentProvider,
 	LOOP_NOT_RUNNING_MESSAGE,
+	PROVIDER_CAPABILITIES,
 	RUN_NOT_CANCELLABLE_MESSAGE,
 	type AgentLaunch,
 	type AgentLaunchInput,
@@ -30,6 +31,13 @@ import {
 	type AgentRunUpdate,
 	type AgentStreamOutcome
 } from './provider.js';
+import {
+	agentChoiceProblem,
+	asksForAgentChoice,
+	configuredAgentChoices,
+	MODELS_NOT_SUPPORTED_MESSAGE,
+	type AgentChoices
+} from './agent-choice.js';
 import { buildDispatchAgentName, buildDispatchPrompt } from './prompts.js';
 import {
 	deniedOperationMessage,
@@ -91,6 +99,8 @@ export interface DispatchDeps {
 	 * defaults to `deliverCrewNotice`, which skips outcomes already told.
 	 */
 	notify_chat?: (record: DispatchRecord) => Promise<unknown>;
+	/** Models and efforts a launch may ask for; defaults to the server's. */
+	agent_choices?: AgentChoices;
 }
 
 const NOT_CONFIGURED_MESSAGE = 'Agent dispatch is not configured on this service.';
@@ -499,6 +509,8 @@ export function toPublicDispatch(record: DispatchRecord) {
 		created_at: record.created_at,
 		updated_at: record.updated_at,
 		error_message: record.status === 'failed' ? record.error_message : undefined,
+		model: record.payload.model,
+		effort: record.payload.effort,
 		loop: publicLoop(record.payload, record.loop_end, record.loop_stop_requested)
 	};
 }
@@ -564,6 +576,19 @@ export async function enqueueDispatch(
 		const runner = resolveProvider(deps, input.provider);
 		if (runner !== undefined && runner.launchLoop === undefined) {
 			throw new DispatchError('forbidden', LOOP_NOT_SUPPORTED_MESSAGE);
+		}
+	}
+	if (asksForAgentChoice(input.payload)) {
+		// Checked at every launch, an automation's too, so a choice the
+		// operator has since withdrawn is refused rather than run.
+		const problem = agentChoiceProblem(
+			input.payload,
+			deps.agent_choices ?? configuredAgentChoices()
+		);
+		if (problem !== undefined) throw new DispatchError('bad_request', problem);
+		const runner = resolveProvider(deps, input.provider);
+		if (runner !== undefined && !PROVIDER_CAPABILITIES[runner.id].models) {
+			throw new DispatchError('forbidden', MODELS_NOT_SUPPORTED_MESSAGE);
 		}
 	}
 
@@ -753,6 +778,24 @@ function launchPlanned(provider: AgentProvider, plan: LaunchPlan): Promise<Agent
 }
 
 async function planLaunch(
+	record: DispatchRecord,
+	deps: DispatchDeps
+): Promise<LaunchPlan | { ok: false; error_message: string }> {
+	const plan = await planOperation(record, deps);
+	if (!plan.ok || plan.input === undefined) return plan;
+	// A loop carries its model and effort among its ralph flags.
+	const { model, effort } = record.payload;
+	return {
+		ok: true,
+		input: {
+			...plan.input,
+			...(model === undefined ? {} : { model }),
+			...(effort === undefined ? {} : { effort })
+		}
+	};
+}
+
+async function planOperation(
 	record: DispatchRecord,
 	deps: DispatchDeps
 ): Promise<LaunchPlan | { ok: false; error_message: string }> {

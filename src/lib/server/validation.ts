@@ -82,6 +82,16 @@ export const FOLLOW_UP_TEXT_MAX = 4000;
 const dispatch_provider_schema = z.enum(DISPATCH_PROVIDER_IDS).optional();
 
 /**
+ * Model and effort any launch may ask for. The shape only keeps them from
+ * being flags; whether the operator offers them is checked by the dispatch
+ * service against BDX_AGENT_MODELS / BDX_AGENT_EFFORTS.
+ */
+const agent_choice_shape = {
+	model: z.string().regex(MODEL_PATTERN, 'invalid model').optional(),
+	effort: z.string().regex(EFFORT_PATTERN, 'invalid effort').optional()
+};
+
+/**
  * The fields of each launch operation, without the launch envelope (the
  * idempotency key and runner). A launch request adds the envelope; an
  * automation stores the fields alone as its template (ADR-0019 rule 7) and
@@ -128,8 +138,6 @@ const loop_launch_shape = {
 	prompt: z.string().trim().min(1).max(LOOP_PROMPT_MAX).optional(),
 	issue_id: issue_id_schema.optional(),
 	harness: z.enum(RALPH_HARNESSES).optional(),
-	model: z.string().regex(MODEL_PATTERN, 'invalid model').optional(),
-	effort: z.string().regex(EFFORT_PATTERN, 'invalid effort').optional(),
 	max_iterations: z.number().int().min(1).max(LOOP_MAX_ITERATIONS),
 	iteration_timeout_minutes: z
 		.number()
@@ -168,12 +176,12 @@ function loopRules(loop: LoopRuleFields, ctx: z.RefinementCtx): void {
 /** Every launch operation's fields plus `envelope`, extra keys refused. */
 function launchSchema<E extends z.ZodRawShape>(envelope: E) {
 	return z.discriminatedUnion('operation', [
-		z.object({ ...file_launch_shape, ...envelope }).strict(),
-		z.object({ ...tackle_launch_shape, ...envelope }).strict(),
-		z.object({ ...comment_launch_shape, ...envelope }).strict(),
-		z.object({ ...discuss_launch_shape, ...envelope }).strict(),
+		z.object({ ...file_launch_shape, ...agent_choice_shape, ...envelope }).strict(),
+		z.object({ ...tackle_launch_shape, ...agent_choice_shape, ...envelope }).strict(),
+		z.object({ ...comment_launch_shape, ...agent_choice_shape, ...envelope }).strict(),
+		z.object({ ...discuss_launch_shape, ...agent_choice_shape, ...envelope }).strict(),
 		z
-			.object({ ...loop_launch_shape, ...envelope })
+			.object({ ...loop_launch_shape, ...agent_choice_shape, ...envelope })
 			.strict()
 			.superRefine((loop, ctx) => loopRules(loop as LoopRuleFields, ctx))
 	]);

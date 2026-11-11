@@ -43,6 +43,9 @@ export interface AgentLaunchInput {
 		url: string;
 		starting_ref: string;
 	};
+	/** Only on a provider with the `models` capability (checked before launch). */
+	model?: string;
+	effort?: string;
 }
 
 /**
@@ -190,11 +193,27 @@ export const WEBHOOK_PROVIDER_LABEL = 'Webhook agent runner';
  * implements `launchLoop`: the webhook contract has no loop, and Sand gains
  * one when its template carries ralph. `terminal` is true exactly when the
  * provider implements `attachTerminal` (Sand's hc relay; the webhook contract
- * has none). A new provider adds its row here.
+ * has none). `models` is true when the provider passes a launch's model and
+ * effort to its agent; the webhook contract carries neither. A new provider
+ * adds its row here.
  */
 export const PROVIDER_CAPABILITIES: Record<DispatchProviderId, DispatchCapabilities> = {
-	webhook: { live_events: false, follow_up: true, cancel: true, loop: false, terminal: false },
-	e2b: { live_events: true, follow_up: true, cancel: true, loop: true, terminal: true }
+	webhook: {
+		live_events: false,
+		follow_up: true,
+		cancel: true,
+		loop: false,
+		terminal: false,
+		models: false
+	},
+	e2b: {
+		live_events: true,
+		follow_up: true,
+		cancel: true,
+		loop: true,
+		terminal: true,
+		models: true
+	}
 };
 
 /** Label for a provider id, for status and messages. */

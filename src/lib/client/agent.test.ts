@@ -25,7 +25,8 @@ function health(patch: Partial<DispatchHealth> = {}): { dispatch: DispatchHealth
 				follow_up: true,
 				cancel: true,
 				loop: false,
-				terminal: false
+				terminal: false,
+				models: false
 			},
 			...patch
 		}
@@ -103,14 +104,16 @@ describe('missions across several runners', () => {
 		follow_up: false,
 		cancel: true,
 		loop: false,
-		terminal: false
+		terminal: false,
+		models: false
 	};
 	const sand_caps = {
 		live_events: true,
 		follow_up: true,
 		cancel: true,
 		loop: false,
-		terminal: false
+		terminal: false,
+		models: false
 	};
 	const dispatch = {
 		armed: true,
@@ -173,7 +176,8 @@ describe('composerState', () => {
 						follow_up: false,
 						cancel: false,
 						loop: false,
-						terminal: false
+						terminal: false,
+						models: false
 					}
 				}).dispatch
 			).reason
@@ -191,7 +195,8 @@ describe('composerState', () => {
 				follow_up: true,
 				cancel: true,
 				loop: true,
-				terminal: false
+				terminal: false,
+				models: false
 			}
 		}).dispatch;
 		expect(composerState(loop, looping)).toEqual({
@@ -214,7 +219,14 @@ describe('canRestartLoop', () => {
 		operation: 'loop' as const
 	};
 	const looping = health({
-		capabilities: { live_events: false, follow_up: true, cancel: true, loop: true, terminal: false }
+		capabilities: {
+			live_events: false,
+			follow_up: true,
+			cancel: true,
+			loop: true,
+			terminal: false,
+			models: false
+		}
 	}).dispatch;
 
 	it('offers Restart on an ended loop, on a loop runner, while armed', () => {
@@ -267,7 +279,8 @@ describe('missionCardState', () => {
 		follow_up: true,
 		cancel,
 		loop: false,
-		terminal: false
+		terminal: false,
+		models: false
 	});
 	const dispatch = {
 		armed: true,

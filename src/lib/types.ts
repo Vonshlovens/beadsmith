@@ -166,6 +166,13 @@ export interface DispatchHealth {
 	 * missions keep the provider that launched them.
 	 */
 	providers?: DispatchProviderInfo[];
+	/**
+	 * Models and efforts a launch may ask for (`BDX_AGENT_MODELS`,
+	 * `BDX_AGENT_EFFORTS`), operator's order; absent when none are offered.
+	 * Not asking is always allowed and means the runner's default.
+	 */
+	models?: string[];
+	efforts?: string[];
 }
 
 /**
@@ -189,6 +196,12 @@ export interface DispatchCapabilities {
 	 * provider implements `attachTerminal`.
 	 */
 	terminal: boolean;
+	/**
+	 * Launches its agents with the model and effort a launch asks for. A
+	 * launch that asks on a provider without it is refused before anything
+	 * starts.
+	 */
+	models: boolean;
 }
 
 /** Public GitHub checkout shown on the operator console. Not a secret. */
@@ -477,6 +490,9 @@ export interface DispatchRequest {
 	created_at: string;
 	updated_at: string;
 	error_message?: string;
+	/** The model and effort the launch asked for; absent = the runner's default. */
+	model?: string;
+	effort?: string;
 	/** Present on `loop` missions. */
 	loop?: DispatchLoop;
 }

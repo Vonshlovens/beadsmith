@@ -54,7 +54,7 @@
 import { randomUUID } from 'node:crypto';
 import { HcError, type HcClient, type HcTerminal } from '#lib/hc/client.js';
 import type { MissionEvent, MissionResultEvent, MissionResultStatus } from '#lib/mission-events.js';
-import { claudeCode } from '#lib/agent-session/claude-code.js';
+import { claudeCode, EFFORT_PATTERN, MODEL_PATTERN } from '#lib/agent-session/claude-code.js';
 import {
 	AgentSession,
 	parseSessionEventId,
@@ -136,6 +136,13 @@ const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
 const DEFAULT_DOLT_LOCAL_PORT = '3306';
 /** Sandbox metadata key holding the CLI's session id. */
 export const SESSION_METADATA = 'beadsmith_session';
+/**
+ * Sandbox metadata keys holding the model and effort the mission was launched
+ * with, so every relaunch of its CLI (a `--resume` after the terminal went)
+ * runs the same ones. Absent = the CLI's default.
+ */
+export const MODEL_METADATA = 'beadsmith_model';
+export const EFFORT_METADATA = 'beadsmith_effort';
 /** Sandbox metadata key holding a loop's ralph run name; only loop sandboxes have it. */
 export const LOOP_METADATA = 'beadsmith_loop';
 /** hc terminal names in a loop sandbox. */
@@ -534,15 +541,31 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		return id !== undefined && SESSION_ID_PATTERN.test(id) ? id : undefined;
 	}
 
+	/** The model and effort a mission's sandbox was launched with, when well-formed. */
+	function choiceOf(info: SandboxInfo): { model?: string; effort?: string } {
+		const model = info.metadata[MODEL_METADATA];
+		const effort = info.metadata[EFFORT_METADATA];
+		return {
+			...(model !== undefined && MODEL_PATTERN.test(model) ? { model } : {}),
+			...(effort !== undefined && EFFORT_PATTERN.test(effort) ? { effort } : {})
+		};
+	}
+
+	/** A session on the mission's CLI; `info` must be a mission sandbox (it has a session id). */
 	function newSession(
-		session_id: string,
+		info: SandboxInfo,
 		redact: string,
 		on_event: (event: MissionEvent) => void,
 		options: { after?: string; on_state?: (state: string) => void } = {}
 	): AgentSession {
 		return new AgentSession({
 			harness: claudeCode,
-			launch: { session_id, cwd: WORK_DIR, config_dir: CLAUDE_CONFIG_DIR },
+			launch: {
+				session_id: sessionIdOf(info)!,
+				cwd: WORK_DIR,
+				config_dir: CLAUDE_CONFIG_DIR,
+				...choiceOf(info)
+			},
 			redact,
 			after: options.after,
 			onEvent: on_event,
@@ -660,13 +683,12 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		const dir = `${RUNS_DIR}/${run_id}`;
 		const claim = await sandbox.exec(`mkdir '${dir}/claim' 2>/dev/null`);
 		if (claim.exit_code !== 0) return;
-		const session_id = sessionIdOf(info)!;
 		let client: HcClient | undefined;
 		let session: AgentSession | undefined;
 		try {
 			const { stdout: prompt } = await sandbox.exec(`cat '${dir}/prompt'`);
 			client = await connectHc(sandbox);
-			session = newSession(session_id, redact, () => {});
+			session = newSession(info, redact, () => {});
 			await session.attach(client);
 			const mark = await session.send(prompt);
 			await sandbox.writeFile(`${dir}/turn.json`, JSON.stringify(mark));
@@ -693,7 +715,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 	 */
 	async function observeTurn(
 		sandbox: SandboxRef,
-		session_id: string,
+		info: SandboxInfo,
 		run_id: string,
 		turn: TurnMark,
 		redact: string
@@ -701,7 +723,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		let result: MissionResultEvent | undefined;
 		let error_message: string | undefined;
 		const client = await connectHc(sandbox);
-		const session = newSession(session_id, redact, (event) => {
+		const session = newSession(info, redact, (event) => {
 			if (event.type === 'result') result ??= event;
 			else if (event.type === 'error') error_message ??= event.message;
 		});
@@ -747,10 +769,12 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 	): Promise<boolean> {
 		const { exit_code } = await sandbox.exec(cancelCommand(run_id));
 		if (exit_code === 3) return false;
-		const session_id = sessionIdOf(info);
-		if (session_id !== undefined && (files.turn !== undefined || files.claim_age_s !== undefined)) {
+		if (
+			sessionIdOf(info) !== undefined &&
+			(files.turn !== undefined || files.claim_age_s !== undefined)
+		) {
 			const client = await connectHc(sandbox);
-			const session = newSession(session_id, '', () => {});
+			const session = newSession(info, '', () => {});
 			try {
 				await session.attach(client, { turn: files.turn, relaunch: false });
 				await session.cancel();
@@ -1298,7 +1322,11 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 				dolt_database: input.dolt_database,
 				repository: input.repository,
 				write: input.auto_create_pr,
-				metadata: { [SESSION_METADATA]: randomUUID() },
+				metadata: {
+					[SESSION_METADATA]: randomUUID(),
+					...(input.model === undefined ? {} : { [MODEL_METADATA]: input.model }),
+					...(input.effort === undefined ? {} : { [EFFORT_METADATA]: input.effort })
+				},
 				on_timeout: 'pause'
 			});
 			try {
@@ -1393,7 +1421,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 				step.done ??
 				(step.turn === undefined
 					? undefined
-					: await observeTurn(sandbox, sessionIdOf(info)!, run_id, step.turn, redact));
+					: await observeTurn(sandbox, info, run_id, step.turn, redact));
 			if (done === undefined) return { status: 'running' };
 			const update = publicUpdate(done);
 			finished.set(key, update);
@@ -1541,7 +1569,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			const stopped = new Promise<void>((resolve) => (stop = resolve));
 			const client = await connectHc(sandbox);
 			const session = newSession(
-				sessionIdOf(info)!,
+				info,
 				redact,
 				(event) => {
 					if (event.type === 'error') error_message ??= event.message;

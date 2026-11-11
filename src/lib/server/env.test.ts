@@ -448,3 +448,21 @@ describe('Underclass settings', () => {
 		expect(resolveUnderclass(token)).toEqual({ error: 'url_missing' });
 	});
 });
+
+describe('agent model and effort choices', () => {
+	it('lists the operator choices in order, once each, dropping anything that could be a flag', () => {
+		const env = readEnv({
+			HOME: '/home/tester',
+			BDX_AGENT_MODELS: 'opus, claude-sonnet-5-5[1m],opus,--dangerously-skip-permissions,',
+			BDX_AGENT_EFFORTS: 'medium,high,-x,HIGH'
+		});
+		expect(env.agent_models).toEqual(['opus', 'claude-sonnet-5-5[1m]']);
+		expect(env.agent_efforts).toEqual(['medium', 'high']);
+	});
+
+	it('offers none when unset, so launches take the runner default', () => {
+		const env = readEnv({ HOME: '/home/tester' });
+		expect(env.agent_models).toEqual([]);
+		expect(env.agent_efforts).toEqual([]);
+	});
+});

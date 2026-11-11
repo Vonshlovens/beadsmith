@@ -11,6 +11,11 @@ import {
 	LOOP_NOT_ALLOWED_MESSAGE,
 	TACKLE_NOT_ALLOWED_MESSAGE
 } from './policy.js';
+import {
+	EFFORT_NOT_OFFERED_MESSAGE,
+	MODEL_NOT_OFFERED_MESSAGE,
+	MODELS_NOT_SUPPORTED_MESSAGE
+} from './agent-choice.js';
 import { INVALID_FILE_CHECKOUT_MESSAGE } from './file-maps.js';
 import type { AgentLaunchInput, AgentLoopLaunchInput, AgentProvider } from './provider.js';
 import type { RalphIteration } from './ralph.js';
@@ -1715,6 +1720,8 @@ describe('chat notices (ADR-0020 rule 5)', () => {
 });
 
 describe('loop missions (ADR-0019 rule 5)', () => {
+	/** The operator offers the model and effort BUILD_LOOP asks for. */
+	const LOOP_CHOICES = { models: ['opus'], efforts: ['high'] };
 	const BUILD_LOOP = {
 		operation: 'loop' as const,
 		mode: 'build' as const,
@@ -1761,6 +1768,7 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 				provider,
 				configured: true,
 				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES,
 				repositories: BEADS_WEB_MAP,
 				schedule_background: NO_BACKGROUND
 			}
@@ -1814,6 +1822,7 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 				provider,
 				configured: true,
 				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES,
 				repositories: BEADS_WEB_MAP,
 				sleep: async () => {},
 				schedule_background: (task) => {
@@ -1843,6 +1852,7 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 				provider,
 				configured: true,
 				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES,
 				repositories: BEADS_WEB_MAP,
 				schedule_background: NO_BACKGROUND
 			}
@@ -1871,6 +1881,7 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 					provider,
 					configured: true,
 					policy: ALLOW_ALL,
+					agent_choices: LOOP_CHOICES,
 					repositories: BEADS_WEB_MAP,
 					schedule_background: NO_BACKGROUND
 				}
@@ -1898,6 +1909,7 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 					providers: [sand, webhook],
 					configured: true,
 					policy: ALLOW_ALL,
+					agent_choices: LOOP_CHOICES,
 					repositories: BEADS_WEB_MAP,
 					schedule_background: NO_BACKGROUND
 				}
@@ -1912,6 +1924,7 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 			store,
 			provider,
 			configured: true,
+			agent_choices: LOOP_CHOICES,
 			repositories: BEADS_WEB_MAP,
 			schedule_background: NO_BACKGROUND
 		};
@@ -1944,6 +1957,7 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 				provider,
 				configured: true,
 				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES,
 				repositories: {},
 				schedule_background: NO_BACKGROUND
 			}
@@ -1955,6 +1969,7 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 				provider,
 				configured: true,
 				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES,
 				repositories_invalid: true,
 				schedule_background: NO_BACKGROUND
 			}
@@ -1978,6 +1993,7 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 			provider,
 			configured: true,
 			policy: ALLOW_ALL,
+			agent_choices: LOOP_CHOICES,
 			repositories: BEADS_WEB_MAP,
 			schedule_background: NO_BACKGROUND
 		};
@@ -2029,6 +2045,7 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 				provider,
 				configured: true,
 				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES,
 				repositories: BEADS_WEB_MAP,
 				schedule_background: (task) => {
 					background = task();
@@ -2082,7 +2099,8 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 				store,
 				provider,
 				configured: true,
-				policy: ALLOW_ALL
+				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES
 			})
 		).rejects.toMatchObject({ code: 'conflict', message: LOOP_FOLLOW_UP_MESSAGE });
 		expect(provider.createRun).not.toHaveBeenCalled();
@@ -2124,7 +2142,8 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 				store,
 				provider,
 				configured: true,
-				policy: ALLOW_ALL
+				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES
 			});
 
 			expect(result).toMatchObject({ id, status: 'running' });
@@ -2139,7 +2158,13 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 
 		it('refuses a steer when disarmed, on a non-loop, or once the loop has ended', async () => {
 			const provider = controlledProvider();
-			const deps = { store, provider, configured: true, policy: ALLOW_ALL };
+			const deps = {
+				store,
+				provider,
+				configured: true,
+				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES
+			};
 			const id = await runningLoop();
 
 			await expect(
@@ -2182,7 +2207,8 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 					store,
 					provider,
 					configured: true,
-					policy: ALLOW_ALL
+					policy: ALLOW_ALL,
+					agent_choices: LOOP_CHOICES
 				})
 			).rejects.toMatchObject({ code: 'forbidden' });
 		});
@@ -2225,7 +2251,13 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 				})
 			});
 			const id = await runningLoop();
-			const deps = { store, provider, configured: true, policy: ALLOW_ALL };
+			const deps = {
+				store,
+				provider,
+				configured: true,
+				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES
+			};
 
 			const result = await stopDispatchAfterIteration(PROJECT.id, id, deps);
 
@@ -2246,7 +2278,8 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 				store,
 				provider,
 				configured: true,
-				policy: ALLOW_ALL
+				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES
 			});
 			await store.updateStatus(id, { status: 'cancelled' });
 			await store.startFollowUp(id, { run_id: 'r2', status: 'launched' });
@@ -2289,6 +2322,7 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 			provider,
 			configured: true,
 			policy: ALLOW_ALL,
+			agent_choices: LOOP_CHOICES,
 			repositories: BEADS_WEB_MAP,
 			schedule_background: NO_BACKGROUND
 		});
@@ -2451,5 +2485,100 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 			});
 			expect(provider.restartLoop).toHaveBeenCalledTimes(1);
 		});
+	});
+});
+
+describe('model and effort per launch', () => {
+	const CHOICES = { models: ['opus', 'sonnet'], efforts: ['medium', 'high'] };
+
+	function sandProvider(launch: AgentProvider['launch']): AgentProvider {
+		return { ...providerWithLaunch(launch), id: 'e2b', label: 'Sand' };
+	}
+
+	function fileLaunch(key: string, choice: { model?: string; effort?: string }) {
+		return {
+			idempotency_key: key,
+			project: PROJECT,
+			actor: 'web',
+			payload: { operation: 'file' as const, notes: 'notes', ...choice }
+		};
+	}
+
+	it('passes an offered model and effort to the runner and shows them on the record', async () => {
+		const launch = vi.fn(async (_input: AgentLaunchInput) => ({ agent_id: 'sbx-1' }));
+		const result = await enqueueDispatch(
+			fileLaunch('idem-choice-01', { model: 'opus', effort: 'medium' }),
+			{
+				store,
+				provider: sandProvider(launch),
+				configured: true,
+				policy: ALLOW_ALL,
+				agent_choices: CHOICES,
+				schedule_background: NO_BACKGROUND
+			}
+		);
+
+		expect(launch).toHaveBeenCalledWith(
+			expect.objectContaining({ model: 'opus', effort: 'medium' })
+		);
+		expect(result.request).toMatchObject({ model: 'opus', effort: 'medium' });
+	});
+
+	it('leaves the runner its default when the launch asks for nothing', async () => {
+		const launch = vi.fn(async (_input: AgentLaunchInput) => ({ agent_id: 'sbx-2' }));
+		// No choices offered at all: a launch that does not ask still goes.
+		const result = await enqueueDispatch(fileLaunch('idem-choice-02', {}), {
+			store,
+			provider: providerWithLaunch(launch),
+			configured: true,
+			policy: ALLOW_ALL,
+			agent_choices: { models: [], efforts: [] },
+			schedule_background: NO_BACKGROUND
+		});
+
+		const input = launch.mock.calls[0]![0];
+		expect(input).not.toHaveProperty('model');
+		expect(input).not.toHaveProperty('effort');
+		expect(result.request.model).toBeUndefined();
+		expect(result.request.effort).toBeUndefined();
+	});
+
+	it.each([
+		[{ model: 'claude-mythos' }, MODEL_NOT_OFFERED_MESSAGE],
+		[{ effort: 'max' }, EFFORT_NOT_OFFERED_MESSAGE],
+		[{ model: 'opus', effort: 'max' }, EFFORT_NOT_OFFERED_MESSAGE]
+	])(
+		'refuses %o when the operator does not offer it, before recording',
+		async (choice, message) => {
+			const launch = vi.fn(async () => ({ agent_id: 'never' }));
+			await expect(
+				enqueueDispatch(fileLaunch('idem-choice-03', choice), {
+					store,
+					provider: sandProvider(launch),
+					configured: true,
+					policy: ALLOW_ALL,
+					agent_choices: CHOICES,
+					schedule_background: NO_BACKGROUND
+				})
+			).rejects.toMatchObject({ code: 'bad_request', message });
+			expect(launch).not.toHaveBeenCalled();
+			expect(await store.list({ limit: 10 })).toEqual([]);
+		}
+	);
+
+	it('refuses a choice on a runner that cannot honour it', async () => {
+		const launch = vi.fn(async () => ({ agent_id: 'never' }));
+		await expect(
+			enqueueDispatch(fileLaunch('idem-choice-04', { model: 'opus' }), {
+				store,
+				provider: providerWithLaunch(launch),
+				configured: true,
+				policy: ALLOW_ALL,
+				agent_choices: CHOICES,
+				schedule_background: NO_BACKGROUND
+			})
+		).rejects.toMatchObject({ code: 'forbidden', message: MODELS_NOT_SUPPORTED_MESSAGE });
+		expect(launch).not.toHaveBeenCalled();
+		expect(await store.list({ limit: 10 })).toEqual([]);
 	});
 });

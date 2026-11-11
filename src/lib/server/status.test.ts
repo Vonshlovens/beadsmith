@@ -261,7 +261,8 @@ describe('getStatus', () => {
 			follow_up: true,
 			cancel: true,
 			loop: false,
-			terminal: false
+			terminal: false,
+			models: false
 		};
 		const providers = [{ id: 'webhook', label: 'Webhook agent runner', capabilities }];
 		expect(armed.dispatch).toEqual({
@@ -283,6 +284,26 @@ describe('getStatus', () => {
 		expect(JSON.stringify(armed)).not.toContain('not-a-real-secret');
 	});
 
+	it('lists the model and effort choices a launch may ask for, only when offered', async () => {
+		const base = {
+			HOME: '/home/tester',
+			BDX_DISPATCH_PROVIDER: 'webhook',
+			BDX_DISPATCH_WEBHOOK_URL: 'https://runner.example.com/beadsmith',
+			BDX_DISPATCH_WEBHOOK_SECRET: 'x'.repeat(40)
+		};
+		const deps = { dolt: fakeDolt(), projects: async () => [], state_ok: true, armed: true };
+		const offered = await getStatus({
+			...deps,
+			env: readEnv({ ...base, BDX_AGENT_MODELS: 'opus,sonnet', BDX_AGENT_EFFORTS: 'high' })
+		});
+		expect(offered.dispatch.models).toEqual(['opus', 'sonnet']);
+		expect(offered.dispatch.efforts).toEqual(['high']);
+
+		const none = await getStatus({ ...deps, env: readEnv(base) });
+		expect(none.dispatch).not.toHaveProperty('models');
+		expect(none.dispatch).not.toHaveProperty('efforts');
+	});
+
 	it('reports what a webhook runner can do, so the console polls instead of streaming', async () => {
 		const status = await getStatus({
 			env: readEnv({
@@ -302,7 +323,8 @@ describe('getStatus', () => {
 			follow_up: true,
 			cancel: true,
 			loop: false,
-			terminal: false
+			terminal: false,
+			models: false
 		});
 		expect(JSON.stringify(status)).not.toContain('x'.repeat(40));
 	});

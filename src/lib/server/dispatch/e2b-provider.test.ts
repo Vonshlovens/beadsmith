@@ -15,6 +15,8 @@ import {
 	SERVE_TERMINAL,
 	settledUpdate,
 	SESSION_METADATA,
+	MODEL_METADATA,
+	EFFORT_METADATA,
 	type SandboxCreateInput,
 	type SandboxDriver,
 	type SandboxNetwork,
@@ -577,6 +579,29 @@ describe('E2B provider', () => {
 		expect(claude.runs()[1]).toContain('--resume');
 		expect(claude.runs()[1]).toContain(created[0].metadata[SESSION_METADATA]);
 		expect(claude.sends().at(-1)).toBe('again');
+	});
+
+	it('launches the CLI with the mission model and effort, and resumes with them', async () => {
+		const { provider, claude, created } = setup();
+		await provider.launch({ ...TACKLE, model: 'opus', effort: 'medium' });
+		expect(created[0].metadata).toMatchObject({
+			[MODEL_METADATA]: 'opus',
+			[EFFORT_METADATA]: 'medium'
+		});
+		await provider.getRun('sbx1', 'r1');
+		await later(10);
+		expect((await provider.getRun('sbx1', 'r1')).status).toBe('succeeded');
+		expect(claude.runs()[0]).toEqual(
+			expect.arrayContaining(['--model', 'opus', '--effort', 'medium'])
+		);
+
+		// A relaunch after the terminal went keeps the launch's choice.
+		claude.core.exit(claude.live()!.address);
+		await provider.createRun!('sbx1', 'again');
+		await provider.getRun('sbx1', 'r2');
+		expect(claude.runs()[1]).toEqual(
+			expect.arrayContaining(['--resume', '--model', 'opus', '--effort', 'medium'])
+		);
 	});
 
 	it('fails a turn whose terminal was lost', async () => {

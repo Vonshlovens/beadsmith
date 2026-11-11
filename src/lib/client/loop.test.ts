@@ -153,7 +153,8 @@ const CAPS: DispatchCapabilities = {
 	follow_up: true,
 	cancel: true,
 	loop: false,
-	terminal: false
+	terminal: false,
+	models: false
 };
 
 function runner(

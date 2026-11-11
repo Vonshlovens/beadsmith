@@ -83,6 +83,29 @@ describe('theme settings', () => {
 });
 
 describe('dispatch body', () => {
+	it('takes a model and effort on every operation, never one shaped like a flag', () => {
+		const tackle = {
+			operation: 'tackle',
+			idempotency_key: 'idem-aaaaaaaa',
+			issue_id: 'beads-web-1'
+		};
+		expect(parseValue(dispatch_schema, { ...tackle, model: 'opus', effort: 'medium' }).ok).toBe(
+			true
+		);
+		expect(
+			parseValue(dispatch_schema, {
+				operation: 'discuss',
+				idempotency_key: 'idem-aaaaaaaa',
+				issue_id: 'beads-web-1',
+				intent: 'discuss',
+				model: 'claude-opus-5-5[1m]'
+			}).ok
+		).toBe(true);
+		expect(parseValue(dispatch_schema, { ...tackle, model: '--print' }).ok).toBe(false);
+		expect(parseValue(dispatch_schema, { ...tackle, effort: '-x' }).ok).toBe(false);
+		expect(parseValue(dispatch_schema, { ...tackle, model: '' }).ok).toBe(false);
+	});
+
 	it('accepts file, tackle, and comment payloads and rejects other operations', () => {
 		expect(
 			parseValue(dispatch_schema, {
