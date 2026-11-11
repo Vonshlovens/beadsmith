@@ -221,6 +221,17 @@ since withdrawn fails rather than runs. On Sand the choice is kept on the
 sandbox, so a follow-up that has to relaunch the CLI (`--resume`) runs the
 same model.
 
+In the browser, the File, agent (Discuss, Elaborate, Close, Tackle), board
+drop and loop dialogs show a Model and an Effort picker when the server
+lists at least one of either and the launch's runner (the "Runs on" pick, else
+the default) has `capabilities.models`; otherwise the picker is hidden rather
+than offered and refused. "Runner default" leaves the field out. The pick is
+remembered per viewer (localStorage) for the next dialog, and a remembered
+name the operator has since withdrawn is dropped rather than sent. Launches
+without a picker (a comment from the composer) use the runner's default. A
+mission's thread header shows what it asked for; a loop shows it among its
+flags.
+
 - `{ operation: "file", idempotency_key, notes, title?, issue_type?, priority?, labels?, status? }`
 - `{ operation: "tackle", idempotency_key, issue_id }`
 - `{ operation: "comment", idempotency_key, issue_id, text }`

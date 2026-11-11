@@ -248,7 +248,7 @@ export function loopPresets(scope: LoopScope): LoopPreset[] {
  * The provider a new launch goes to: the viewer's "Runs on" pick when it
  * names one, else the server default, with what it can do.
  */
-function launchRunner(
+export function launchRunner(
 	dispatch: StatusSnapshot['dispatch'],
 	picked: DispatchProviderId | undefined
 ): DispatchProviderInfo | undefined {

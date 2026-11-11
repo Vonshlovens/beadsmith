@@ -6,7 +6,12 @@
 	import XIcon from 'phosphor-svelte/lib/XIcon';
 	import { toast } from 'svelte-sonner';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
+	import AgentChoiceSelect from '#lib/components/agent-choice-select.svelte';
 	import { api, errorMessage } from '#lib/client/api.js';
+	import { agent_choice } from '#lib/client/agent-choice.svelte.js';
+	import { launchTakesChoice } from '#lib/client/agent-choice.js';
+	import { run_place } from '#lib/client/agent-runner.svelte.js';
+	import { statusSnapshot } from '#lib/client/projects.svelte.js';
 	import {
 		boardDispatchStatusCopy,
 		type BoardDispatchAction,
@@ -41,6 +46,9 @@
 			: boardDispatchStatusCopy(pending.source_status, pending.action.destination)
 	);
 	const can_launch = $derived(dispatch_enabled && tackle_enabled);
+	const choice_takes = $derived(
+		can_launch && launchTakesChoice(statusSnapshot(), run_place.launchField().provider)
+	);
 	const blocked_reason = $derived(
 		!dispatch_enabled
 			? 'Agent dispatch is unavailable. The card stays in its current column.'
@@ -94,7 +102,8 @@
 			const result = await api.tackleIssue(project_id, {
 				idempotency_key: crypto.randomUUID(),
 				issue_id: current.issue.id,
-				destination_status: current.action.destination
+				destination_status: current.action.destination,
+				...agent_choice.forLaunch(statusSnapshot(), run_place.launchField().provider)
 			});
 			announce(result.request, current.action);
 			pending = null;
@@ -133,6 +142,11 @@
 				</p>
 				{#if blocked_reason}
 					<p class="hint" role="status">{blocked_reason}</p>
+				{/if}
+				{#if choice_takes}
+					<div class="mt-3">
+						<AgentChoiceSelect takes={choice_takes} disabled={submitting} />
+					</div>
 				{/if}
 			</div>
 			<div class="modal-ft">

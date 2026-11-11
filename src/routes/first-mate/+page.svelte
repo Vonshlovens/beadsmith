@@ -27,6 +27,7 @@
 	import MateChatView from '#lib/components/mate-chat-view.svelte';
 	import MateContextSelect from '#lib/components/mate-context-select.svelte';
 	import RunnerSelect from '#lib/components/runner-select.svelte';
+	import AgentChoiceSelect from '#lib/components/agent-choice-select.svelte';
 	import { api, errorMessage } from '#lib/client/api.js';
 	import {
 		agentAvailability,
@@ -458,6 +459,7 @@
 					{#snippet controls()}
 						<MateContextSelect bind:value={scope} disabled={starting || !can_chat} />
 						<RunnerSelect />
+						<AgentChoiceSelect takes={can_chat && mate_chats.connected} disabled={starting} />
 						<button
 							class="btn btn-sm btn-ghost"
 							type="button"

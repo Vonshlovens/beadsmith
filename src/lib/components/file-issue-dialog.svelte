@@ -5,6 +5,11 @@
 	 */
 	import XIcon from 'phosphor-svelte/lib/XIcon';
 	import SelectField from '#lib/components/select-field.svelte';
+	import AgentChoiceSelect from '#lib/components/agent-choice-select.svelte';
+	import { agent_choice } from '#lib/client/agent-choice.svelte.js';
+	import { launchTakesChoice } from '#lib/client/agent-choice.js';
+	import { run_place } from '#lib/client/agent-runner.svelte.js';
+	import { statusSnapshot } from '#lib/client/projects.svelte.js';
 	import { toast } from 'svelte-sonner';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import { api, errorMessage } from '#lib/client/api.js';
@@ -25,6 +30,10 @@
 
 	const TYPE_OPTIONS = ['', 'bug', 'feature', 'task', 'epic', 'chore'] as const;
 	const PRIORITY_OPTIONS = ['', '0', '1', '2', '3', '4'] as const;
+
+	const choice_takes = $derived(
+		launchTakesChoice(statusSnapshot(), run_place.launchField().provider)
+	);
 
 	let notes = $state('');
 	let title = $state('');
@@ -83,7 +92,8 @@
 				title: title.trim() || undefined,
 				issue_type: issue_type || undefined,
 				priority: priority === '' ? undefined : Number.parseInt(priority, 10),
-				...(file_status === undefined ? {} : { status: file_status })
+				...(file_status === undefined ? {} : { status: file_status }),
+				...agent_choice.forLaunch(statusSnapshot(), run_place.launchField().provider)
 			});
 			announce(result.request);
 			resetForm();
@@ -160,6 +170,11 @@
 						/>
 					</label>
 				</div>
+				{#if choice_takes}
+					<div class="field">
+						<AgentChoiceSelect takes={choice_takes} disabled={submitting} />
+					</div>
+				{/if}
 			</div>
 			<div class="modal-ft">
 				<span class="xs faint"><span class="kbd">ESC</span> close</span>

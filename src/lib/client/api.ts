@@ -48,6 +48,7 @@ import type {
 
 import type { Todo, TodoComment, TodoStatus } from '#lib/server/todos/store.js';
 import type { RouteIssue } from '#lib/todos/route-state.js';
+import type { AgentChoice } from '#lib/client/agent-choice.js';
 import type { LoopLaunch } from '#lib/client/loop.js';
 import type {
 	MateChat,
@@ -433,7 +434,7 @@ export const api = {
 			priority?: number;
 			labels?: string[];
 			status?: string;
-		},
+		} & AgentChoice,
 		init?: RequestInitLike
 	) {
 		return request<{ request: DispatchRequest }>(
@@ -450,7 +451,7 @@ export const api = {
 			idempotency_key: string;
 			issue_id: string;
 			destination_status?: 'open' | 'in_progress' | 'blocked' | 'deferred' | 'closed';
-		},
+		} & AgentChoice,
 		init?: RequestInitLike
 	) {
 		return request<{ request: DispatchRequest }>(
@@ -476,7 +477,12 @@ export const api = {
 	/** Ask an agent to discuss, elaborate, or close an issue. */
 	discussIssue(
 		project_id: string,
-		body: { idempotency_key: string; issue_id: string; intent: DiscussIntent; message?: string },
+		body: {
+			idempotency_key: string;
+			issue_id: string;
+			intent: DiscussIntent;
+			message?: string;
+		} & AgentChoice,
 		init?: RequestInitLike
 	) {
 		return request<{ request: DispatchRequest }>(
@@ -489,7 +495,7 @@ export const api = {
 	/** Start a ralph loop (ADR-0019) on the project's plan or on one bead. */
 	launchLoop(
 		project_id: string,
-		body: { idempotency_key: string } & LoopLaunch,
+		body: { idempotency_key: string } & LoopLaunch & AgentChoice,
 		init?: RequestInitLike
 	) {
 		return request<{ request: DispatchRequest }>(
@@ -759,7 +765,7 @@ export const api = {
 	},
 
 	createMateChat(
-		body: { title?: string; scope: string | null; runner?: MateRunnerId },
+		body: { title?: string; scope: string | null; runner?: MateRunnerId } & AgentChoice,
 		init?: RequestInitLike
 	) {
 		return request<{ chat: MateChat }>('POST', '/mate/chats', { ...init, body });

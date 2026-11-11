@@ -82,6 +82,10 @@ and the forge runner serves the same core over the contract, so a forge
 runner must be built from a Beadsmith version that knows the fields (an
 older one ignores them and runs its default).
 
+The new-chat composer shows the same Model and Effort picker as the launch
+dialogs when the server offers a choice, and the chat header shows what the
+chat runs on.
+
 The start screen says where a new chat will run and what it can do there:
 crew tools on Sand, its own Beads sandbox elsewhere. When a runner is
 configured it also offers next actions from live data, such as "4 ready

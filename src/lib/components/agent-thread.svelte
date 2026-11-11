@@ -41,6 +41,7 @@
 	} from '#lib/client/agent.js';
 	import { absoluteStamp, relativeShort } from '#lib/client/format.js';
 	import { iterationLimitError } from '#lib/client/loop.js';
+	import { agentChoiceLine } from '#lib/client/agent-choice.js';
 	import { currentViewer, statusSnapshot } from '#lib/client/projects.svelte.js';
 	import type { DispatchRequest, DispatchTurn, LoopIteration } from '#lib/types.js';
 
@@ -107,6 +108,10 @@
 		busy && capabilities?.cancel === true && mission?.agent_id !== undefined
 	);
 	const is_loop = $derived(mission?.operation === 'loop');
+	/** A loop shows its model and effort among its flags (LoopIterations). */
+	const choice_line = $derived(
+		mission === undefined || is_loop ? undefined : agentChoiceLine(mission)
+	);
 	// A loop's steer notes carry the run they steer; the turns that start a
 	// run (the launch, a restart) carry none, so the latest of those is when
 	// the current run began.
@@ -365,6 +370,9 @@
 					>{formatElapsed(mission.duration_ms)}</span
 				>
 			{/if}
+			{#if choice_line}
+				<span class="faint choice" {@attach tip('Model · effort')}>{choice_line}</span>
+			{/if}
 			<span class="spacer"></span>
 			{#if mission.git_pr_url}
 				<a
@@ -564,6 +572,13 @@
 		align-items: center;
 		gap: var(--s-2);
 		min-height: 28px;
+	}
+	.choice {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: var(--t-xs);
 	}
 	.verb {
 		font-weight: 600;

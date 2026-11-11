@@ -57,6 +57,7 @@
 	import type { MateChat } from '#lib/mate.js';
 	import { app_state } from '#lib/client/stores.svelte.js';
 	import { run_place } from '#lib/client/agent-runner.svelte.js';
+	import { agentChoiceLine } from '#lib/client/agent-choice.js';
 
 	interface Props {
 		chat: MateChat;
@@ -74,6 +75,9 @@
 			? (run_place.runners.find((runner) => runner.id === chat.runner)?.label ?? 'removed runner')
 			: undefined
 	);
+
+	/** The model and effort the chat asked for; nothing when it runs on the defaults. */
+	const choice_line = $derived(agentChoiceLine(chat));
 
 	const has_terminal = $derived(
 		run_place.runners.find((runner) => runner.id === chat.runner)?.terminal === true
@@ -292,7 +296,8 @@
 			Started <time datetime={chat.created_at} {@attach tip(absoluteStamp(chat.created_at))}
 				>{absoluteStamp(chat.created_at)}</time
 			>{#if runner_label}
-				· on {runner_label}{/if}
+				· on {runner_label}{/if}{#if choice_line}
+				· <span {@attach tip('Model · effort')}>{choice_line}</span>{/if}
 		</p>
 		<button
 			bind:this={delete_button}
