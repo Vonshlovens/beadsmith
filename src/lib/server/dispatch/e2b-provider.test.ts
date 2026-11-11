@@ -448,5 +448,8 @@ describe('run files', () => {
 		expect(runUpdateFromFiles({ exists: true, exit_code: 13, cancelled: false }, '')).toMatchObject(
 			{ error_message: 'The sandbox joined the tailnet but Dolt did not answer.' }
 		);
+		expect(runUpdateFromFiles({ exists: true, exit_code: 14, cancelled: false }, '')).toMatchObject(
+			{ error_message: 'The sandbox could not start its terminal server (hc).' }
+		);
 	});
 });

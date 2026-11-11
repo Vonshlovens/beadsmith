@@ -15,6 +15,9 @@
 #   cancelled    created by the provider before it stops the run
 #   setup.log    this script's own output
 #
+# The run also starts the sandbox's hc core (the terminal server agents run
+# in, ADR-0021) once setup is done.
+#
 # Environment from the sandbox: BEADSMITH_REPO_URL/_REF, BEADSMITH_TS_TAGS,
 # BEADSMITH_DOLT_TAILNET_HOST/_PORT, BEADS_DOLT_* (the project's own scoped
 # Dolt account) and placeholder ANTHROPIC_API_KEY / GH_TOKEN values, which
@@ -144,6 +147,22 @@ if [ ! -f .beads/metadata.json ]; then
 	if git rev-parse --git-dir >/dev/null 2>&1; then
 		grep -qxF '.beads/' .git/info/exclude 2>/dev/null || echo '.beads/' >>.git/info/exclude
 	fi
+fi
+
+# --- The terminal server (ADR-0021) -------------------------------------------
+# Agents run in hc terminals, which take their environment from the hc core,
+# not from whoever asks for them. Start the core here, after the tailnet, the
+# Dolt forward and the checkout are ready, so it inherits this sandbox's
+# BEADS_DOLT_* account, placeholders and CA settings (the single-use
+# Tailscale key is already unset). Already running (a follow-up, or a resumed
+# sandbox): `hc server start` leaves it as it is. Its own session, so a
+# cancel that stops this run's process group leaves the core and the other
+# runs' terminals alone. The core listens only on its Unix socket in a 0700
+# directory; Beadsmith reaches it through beadsmith-hc over the E2B process
+# channel, never a port (ADR-0021 rule 1).
+if ! setsid -w hc server start --json; then
+	echo "hc server start failed"
+	finish 14
 fi
 
 # --- The agent ----------------------------------------------------------------

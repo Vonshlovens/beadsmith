@@ -36,9 +36,9 @@ import {
 	type SandboxDriver,
 	type SandboxRef
 } from '../e2b/sandbox.js';
+import { MATE_WORKDIR } from '../e2b/image.js';
 import {
 	CREW_MCP_CONFIG_PATH,
-	MATE_WORKDIR,
 	prepareChatSandbox,
 	startCrewBridge,
 	stopRelayCommand,

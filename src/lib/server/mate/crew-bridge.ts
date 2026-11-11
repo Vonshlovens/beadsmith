@@ -25,10 +25,9 @@ import { z } from 'zod';
 import { shellQuote } from '#lib/mate-runner/spawn.js';
 import type { CrewMcpHandler } from '../crew/mcp.js';
 import type { CrewContext } from '../crew/registry.js';
+import { MATE_WORKDIR } from '../e2b/image.js';
 import type { InteractiveCommand, SandboxRef } from '../e2b/sandbox.js';
 
-/** The chat agent's working directory in the template. */
-export const MATE_WORKDIR = '/home/user/mate';
 /** Bridge files, beside the chat's working tree. */
 export const CREW_DIR = `${MATE_WORKDIR}/.crew`;
 export const CREW_RELAY_PATH = `${CREW_DIR}/relay.cjs`;

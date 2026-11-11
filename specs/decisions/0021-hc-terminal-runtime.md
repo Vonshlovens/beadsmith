@@ -227,12 +227,21 @@ Shipped:
   Tests run against the fake core. Chats and missions still use the
   stream-json paths until they move; the old mappings go with them.
 
+- The Sand template (`sandbox/e2b/build-template.ts`) installs hc from the
+  pin in `nix/herdr-core.json` (version, generation and the `linux-x86_64`
+  SHA-256, checked against the release once by hand), writes `notes = false`
+  and Claude Code's first-run answers (`src/lib/server/e2b/image.ts`: the
+  key names are the pinned CLI's own, `skipDangerousModePermissionPrompt` in
+  `settings.json` for the bypass warning), and ships `beadsmith-hc connect`,
+  the byte-safe carrier: base64 lines both ways around `hc connect`.
+  `beadsmith-run` starts the core after setup (exit 14 if it cannot) so
+  terminals inherit the sandbox's environment; it still runs `claude -p`
+  until missions move.
+
 Planned, each in its own change:
 
 - chats and missions on the session core, deleting the two stream-json
-  mappings;
-- hc and the first-run settings in the E2B template and `beadsmith-run`, then
-  Sand missions and chats on the session core;
+  mappings and `beadsmith-run`'s `claude -p` tail;
 - the forge guest's hc and the runner wired to it;
 - the relay route, its audit rows in `state.db` (0004 updated when they
   ship), and the terminal view in First Mate chats and mission threads.

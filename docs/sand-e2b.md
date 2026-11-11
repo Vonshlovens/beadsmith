@@ -110,7 +110,12 @@ without tokens, credentials or full network configuration.
 
    It is named `beadsmith-agent` unless you pass a name (then set
    `BDX_E2B_TEMPLATE`). Rebuild after changing
-   [`sandbox/e2b/`](../sandbox/e2b/); running sandboxes keep their build.
+   [`sandbox/e2b/`](../sandbox/e2b/),
+   [`src/lib/server/e2b/image.ts`](../src/lib/server/e2b/image.ts) or the hc
+   pin in [`nix/herdr-core.json`](../nix/herdr-core.json); running sandboxes
+   keep their build. **Rebuild now if your template predates hc** (see
+   [Terminals](#terminals-hc)): the current `beadsmith-run` starts an hc core
+   and stops with "could not start its terminal server" on an older build.
 
 3. Write one model credential to a file: an Anthropic API key
    (`BDX_E2B_ANTHROPIC_API_KEY_FILE`) or a Claude subscription token from
@@ -255,6 +260,59 @@ Secrets are read when used and never stored in `state.db`, logged or sent to
 the browser. A missing required setting leaves that use of Sand inactive, and
 the console says so (`E2B settings are incomplete`).
 
+## Terminals (hc)
+
+Agents are moving from headless `claude -p` to interactive Claude Code in an
+[hc](https://github.com/herdrdev/herdr-core) terminal
+([ADR-0021](../specs/decisions/0021-hc-terminal-runtime.md)). The template
+carries what that needs:
+
+- `hc`, the version and `linux-x86_64` SHA-256 pinned in
+  [`nix/herdr-core.json`](../nix/herdr-core.json) (the same file the Nix
+  overlay reads for the forge guest). The build downloads the release
+  tarball and refuses it unless the hash matches. Nothing in a sandbox runs
+  `hc update`; a bump is a reviewed change to the pin, then a rebuild.
+- `~/.config/herdr-core/config.toml` with `notes = false`, so hc never types
+  into an agent on its own.
+- Claude Code's first-run answers (onboarding, folder trust for
+  `~/.beadsmith/work` and `~/mate`, the placeholder API key, the
+  bypass-permissions warning), from
+  [`src/lib/server/e2b/image.ts`](../src/lib/server/e2b/image.ts), so a
+  launch reaches the prompt without a keypress.
+- `beadsmith-hc connect`
+  ([`sandbox/e2b/beadsmith-hc.cjs`](../sandbox/e2b/beadsmith-hc.cjs)): `hc
+connect` with its binary frames carried as base64 lines, because the E2B
+  SDK hands command output to Beadsmith as text.
+
+`beadsmith-run` starts the core (`hc server start`) once setup is done, so
+terminals inherit the sandbox's Dolt forward and environment; a setup that
+cannot start it fails with exit code 14. The core runs as the sandbox's
+user on hc's default Unix socket, in a 0700 directory. No port is opened and
+nothing outside the sandbox speaks hc except Beadsmith, through the E2B
+process channel (ADR-0021 rule 1).
+
+Until missions and chats move onto the session core, `beadsmith-run` still
+runs the agent with `claude -p` after starting hc, and chats still start
+their own `claude -p`; the run directory contract below is unchanged.
+
+Live check after a rebuild (not yet run):
+
+1. Start a Sand mission. In the sandbox (E2B CLI or dashboard terminal), run
+   `hc --version` (the pinned version), `hc server status` (a core with
+   uptime); the socket's directory (`$XDG_RUNTIME_DIR/herdr-core`,
+   `/run/user/$(id -u)/herdr-core` or `~/.local/state/herdr-core/default`,
+   whichever exists) is mode `drwx------`, and `ss -ltnp` lists no port
+   owned by hc.
+2. In the mission's checkout, `hc run --bg claude` and then `hc get <t>`:
+   the terminal reaches `idle` with app `claude-code` (Claude Code reports
+   OSC 7501) and never `blocked` on a dialog. `hc ls` shows the terminal;
+   `hc kill <t>` ends it.
+3. From the same sandbox, `printf '' | beadsmith-hc connect; echo $?` exits
+   0, and `echo 'not base64!' | beadsmith-hc connect; echo $?` exits 2.
+
+Once missions run on the session core, step 2 becomes: start a mission and
+see its terminal in `hc ls` inside the sandbox.
+
 ## How a mission runs
 
 1. Beadsmith checks the project's Dolt account, mints the GitHub token (if
@@ -267,7 +325,8 @@ the console says so (`E2B settings are incomplete`).
    [`beadsmith-run`](../sandbox/e2b/beadsmith-run) with a fresh Tailscale
    key. The script joins the tailnet, opens the Dolt forward, clones the
    checkout, installs any skill the checkout lacks under `.agents/skills/`
-   (excluded from git) and runs `claude -p --output-format stream-json`.
+   (excluded from git), starts the sandbox's hc core and runs
+   `claude -p --output-format stream-json`.
 3. Beadsmith reads the run's files for status, and tails its event log for
    the thread's live view (text, thinking and tool names only; never tool
    inputs or output).
@@ -340,7 +399,7 @@ Not yet checked:
   rewritten and tools answer again.
 
 A failed setup step shows in the thread by name (joining the tailnet,
-reaching Dolt, cloning). `~/.beadsmith/runs/<run>/setup.log` and
+reaching Dolt, cloning, starting hc). `~/.beadsmith/runs/<run>/setup.log` and
 `stderr.log` in a mission's sandbox, and
 `~/.beadsmith/tailscale/tailscaled.log`, say what went wrong. Open them from
 E2B's dashboard or CLI; the mission's agent id is the sandbox id.

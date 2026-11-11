@@ -15,7 +15,6 @@ import {
 	FRAME_MAX_CHARS,
 	FrameReader,
 	MATE_AGENTS_MD,
-	MATE_WORKDIR,
 	prepareChatSandbox,
 	RELAY_MAX_RESTARTS,
 	RELAY_SOURCE,
@@ -23,6 +22,7 @@ import {
 	TextTail,
 	type RelayFrame
 } from './crew-bridge.js';
+import { MATE_WORKDIR } from '../e2b/image.js';
 
 const SESSION = '0e7c1a52-3f0b-4b7e-9a51-2a3c4d5e6f70';
 const CTX: CrewContext = {

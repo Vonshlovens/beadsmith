@@ -13,7 +13,8 @@ import type {
 	SandboxRef
 } from '../e2b/sandbox.js';
 import { OAUTH_PLACEHOLDER } from '../e2b/sandbox.js';
-import { CREW_MCP_CONFIG_PATH, CREW_RELAY_PATH, MATE_WORKDIR } from './crew-bridge.js';
+import { MATE_WORKDIR } from '../e2b/image.js';
+import { CREW_MCP_CONFIG_PATH, CREW_RELAY_PATH } from './crew-bridge.js';
 import { createE2bMateRunner } from './e2b-runner.js';
 
 const SESSION = '0e7c1a52-3f0b-4b7e-9a51-2a3c4d5e6f70';

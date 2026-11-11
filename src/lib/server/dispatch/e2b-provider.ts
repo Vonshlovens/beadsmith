@@ -36,6 +36,7 @@ import {
 	type AgentStreamOutcome
 } from './provider.js';
 import { DISPATCH_SKILLS } from './agent-skills.js';
+import { RUNS_DIR, SKILLS_DIR } from '../e2b/image.js';
 import {
 	ClaudeStreamMapper,
 	findPullRequestUrl,
@@ -71,10 +72,6 @@ export type {
 	SandboxRef
 } from '../e2b/sandbox.js';
 
-/** Where the template's `beadsmith-run` keeps each run (the default user's home). */
-export const RUNS_DIR = '/home/user/.beadsmith/runs';
-/** Where `beadsmith-run` finds the dispatch skills to install into the workspace. */
-export const SKILLS_DIR = '/home/user/.beadsmith/skills';
 const RUN_ID_PATTERN = /^r[1-9][0-9]{0,5}$/;
 const SANDBOX_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const DEFAULT_DOLT_LOCAL_PORT = '3306';
@@ -178,7 +175,8 @@ const SETUP_FAILURES: Record<number, string> = {
 	10: 'The sandbox could not join the tailnet.',
 	11: 'The sandbox could not clone the repository.',
 	12: 'The sandbox could not open its working directory.',
-	13: 'The sandbox joined the tailnet but Dolt did not answer.'
+	13: 'The sandbox joined the tailnet but Dolt did not answer.',
+	14: 'The sandbox could not start its terminal server (hc).'
 };
 
 /** A run's files → the provider-neutral run update. */
