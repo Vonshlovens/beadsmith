@@ -534,6 +534,29 @@ export const api = {
 		);
 	},
 
+	/** Queue a note for a working loop's next iteration (ADR-0019). */
+	steerDispatch(
+		project_id: string,
+		request_id: string,
+		body: { text: string },
+		init?: RequestInitLike
+	) {
+		return request<{ request: DispatchRequest }>(
+			'POST',
+			`/projects/${encodeURIComponent(project_id)}/dispatch/${encodeURIComponent(request_id)}/steer`,
+			{ ...init, body }
+		);
+	},
+
+	/** Let a working loop finish its current iteration, then stop it. */
+	stopDispatchAfterIteration(project_id: string, request_id: string, init?: RequestInitLike) {
+		return request<{ request: DispatchRequest }>(
+			'POST',
+			`/projects/${encodeURIComponent(project_id)}/dispatch/${encodeURIComponent(request_id)}/stop-after-iteration`,
+			init
+		);
+	},
+
 	/** Send a size-capped follow-up on the same agent. */
 	followUpDispatch(
 		project_id: string,

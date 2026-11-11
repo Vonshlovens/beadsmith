@@ -127,6 +127,11 @@ export interface DispatchStore {
 	appendTurn(request_id: string, turn: AppendTurnInput, now?: () => Date): Promise<void>;
 	/** Turns for one mission, oldest first. */
 	listTurns(request_id: string): Promise<DispatchTurn[]>;
+	/**
+	 * Note that an operator asked a working loop to stop after its current
+	 * iteration. A new run (restart) clears it. No-op once the mission ended.
+	 */
+	markLoopStopRequested(id: string, now?: () => Date): Promise<DispatchRecord | undefined>;
 	/** Record that the launching chat has been told the outcome `key`. */
 	markChatNotice(id: string, key: string): Promise<void>;
 	/**
@@ -167,7 +172,7 @@ const DISPATCH_SELECT = `SELECT
 	id, idempotency_key, project_id, dolt_database, operation, actor, payload_json,
 	status, provider, agent_id, agent_url, run_id, error_message,
 	result_summary, duration_ms, git_pr_url, chat_id, chat_notice,
-	loop_stop_reason, loop_needs_person, created_at, updated_at
+	loop_stop_reason, loop_needs_person, loop_stop_requested_at, created_at, updated_at
 FROM dispatch_requests`;
 
 function newId(): string {
@@ -245,6 +250,7 @@ function rowToRecord(row: Record<string, unknown>): DispatchRecord {
 		chat_id: asText(row.chat_id),
 		chat_notice: asText(row.chat_notice),
 		...rowToLoopEnd(row),
+		...(asText(row.loop_stop_requested_at) === undefined ? {} : { loop_stop_requested: true }),
 		created_at: String(row.created_at),
 		updated_at: String(row.updated_at)
 	};
@@ -446,6 +452,7 @@ export function createDispatchStore(client: Client): DispatchStore {
 					error_message = NULL,
 					loop_stop_reason = NULL,
 					loop_needs_person = NULL,
+					loop_stop_requested_at = NULL,
 					updated_at = ?
 				WHERE id = ?
 					AND agent_id IS NOT NULL
@@ -493,6 +500,21 @@ export function createDispatchStore(client: Client): DispatchStore {
 				args: [request_id]
 			});
 			return result.rows.map((row) => rowToTurn(row as Record<string, unknown>));
+		},
+
+		async markLoopStopRequested(
+			id: string,
+			now: () => Date = () => new Date()
+		): Promise<DispatchRecord | undefined> {
+			const at = now().toISOString();
+			await client.execute({
+				sql: `UPDATE dispatch_requests SET
+					loop_stop_requested_at = COALESCE(loop_stop_requested_at, ?),
+					updated_at = ?
+				WHERE id = ? AND status NOT IN ('succeeded', 'cancelled', 'failed')`,
+				args: [at, at, id]
+			});
+			return this.get(id);
 		},
 
 		async markChatNotice(id: string, key: string): Promise<void> {

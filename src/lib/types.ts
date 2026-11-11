@@ -498,6 +498,12 @@ export interface DispatchLoop {
 	stop_reason?: RalphStopReason;
 	/** The ended run asks a person to look (ralph's stop reason or report). */
 	needs_person?: boolean;
+	/**
+	 * An operator asked the current run to stop after its iteration; true
+	 * until a restart starts a new run. While the loop works, it says the
+	 * stop is on its way.
+	 */
+	stop_requested?: boolean;
 }
 
 /**

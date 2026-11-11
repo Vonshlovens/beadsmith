@@ -111,6 +111,8 @@ export interface DispatchRecord {
 	chat_notice?: string;
 	/** A loop's current run has ended and why; absent while it runs (ADR-0019 rule 4). */
 	loop_end?: LoopEnd;
+	/** An operator asked the current loop run to stop after its iteration. */
+	loop_stop_requested?: boolean;
 	created_at: string;
 	updated_at: string;
 }

@@ -5,7 +5,12 @@ import type { FileCheckoutMapping } from './dispatch/file-maps.js';
 import { parseGitHubRepositoryUrl, parseGitRef } from './dispatch/repositories.js';
 import type { TackleRepositoryMapping } from './dispatch/repositories.js';
 import { normalizeEndpoint } from './backup/s3.js';
-import { LOOP_MAX_ITERATIONS, RALPH_HARNESSES, RALPH_MODES } from '#lib/ralph.js';
+import {
+	LOOP_MAX_ITERATIONS,
+	RALPH_HARNESSES,
+	RALPH_MODES,
+	RALPH_STEER_MAX_LENGTH
+} from '#lib/ralph.js';
 import { AUTOMATION_NAME_MAX, AUTOMATION_OVERLAPS } from '#lib/automations.js';
 import { CRON_MAX_LENGTH } from './automations/cron.js';
 import { EFFORT_PATTERN, MODEL_PATTERN } from '#lib/agent-session/claude-code.js';
@@ -220,6 +225,13 @@ export const dispatch_request_id_schema = z
 export const follow_up_schema = z
 	.object({
 		text: z.string().trim().min(1).max(FOLLOW_UP_TEXT_MAX)
+	})
+	.strict();
+
+/** Body of `POST /api/projects/:id/dispatch/:requestId/steer`. Extra keys fail closed. */
+export const steer_schema = z
+	.object({
+		text: z.string().trim().min(1).max(RALPH_STEER_MAX_LENGTH)
 	})
 	.strict();
 

@@ -197,7 +197,9 @@ export interface ComposerState {
 
 /**
  * Whether the operator can reply on a thread, and if not, why. Order matters:
- * the most actionable reason wins.
+ * the most actionable reason wins. On a working loop the message is a steer
+ * note for its next iteration (ADR-0019), not a reply; an ended loop takes
+ * nothing.
  *
  * @param mission - The thread's mission.
  * @param dispatch - Current dispatch health.
@@ -221,14 +223,19 @@ export function composerState(
 	if (runner === undefined) {
 		return { can_send: false, reason: 'Started on a runner that is no longer configured.' };
 	}
-	// A loop's agent works from the plan; the service refuses a follow-up on it.
+	// A loop's agent works from the plan; the service refuses a follow-up on
+	// it, but a working loop takes steer notes.
 	if (mission.operation === 'loop') {
-		return {
-			can_send: false,
-			reason: isBusyStatus(mission.status)
-				? 'The loop is running. It works from its plan, not from replies.'
-				: 'A loop works from its plan and does not take replies.'
-		};
+		if (!isBusyStatus(mission.status)) {
+			return { can_send: false, reason: 'A loop works from its plan and does not take replies.' };
+		}
+		if (runner.capabilities.loop !== true) {
+			return { can_send: false, reason: 'This runner cannot steer loops.' };
+		}
+		if (!dispatch.armed) {
+			return { can_send: false, reason: 'Agent dispatch is disarmed in the console.' };
+		}
+		return { can_send: true };
 	}
 	if (isBusyStatus(mission.status)) {
 		return { can_send: false, reason: 'The agent is working. Wait for its reply or stop the run.' };

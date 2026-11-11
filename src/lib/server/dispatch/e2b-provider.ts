@@ -64,6 +64,7 @@ import type { E2bSettings } from '../env.js';
 import { RALPH_STOP_REASONS, type RalphStopReason } from '#lib/ralph.js';
 import {
 	AGENT_BUSY_MESSAGE,
+	LOOP_NOT_RUNNING_MESSAGE,
 	RUN_NOT_CANCELLABLE_MESSAGE,
 	type AgentFollowUpRun,
 	type AgentLaunch,
@@ -986,6 +987,39 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		return true;
 	}
 
+	/**
+	 * A started, unsettled loop's sandbox and ralph client, for steer and
+	 * graceful stop. Anything else (gone, not a loop, still in setup, ended)
+	 * is a conflict: the control has nothing to act on.
+	 */
+	async function runningLoop(
+		agent_id: string,
+		run_id: string
+	): Promise<{ ralph: RalphClient; name: string }> {
+		requireRunId(run_id);
+		const info = await driver.info(requireSandboxId(agent_id));
+		const name = info === undefined ? undefined : loopNameOf(info);
+		if (info === undefined || name === undefined || info.state === 'paused') {
+			throw new DispatchError('conflict', LOOP_NOT_RUNNING_MESSAGE);
+		}
+		const sandbox = await connectOrGone(agent_id, idle_ms);
+		const files = await readRun(sandbox, run_id);
+		if (files.started !== true || settledUpdate(files) !== undefined) {
+			throw new DispatchError('conflict', LOOP_NOT_RUNNING_MESSAGE);
+		}
+		return { ralph: new RalphClient(ralphFetch(sandbox), ''), name };
+	}
+
+	/** ralph refused a control: 404/409 mean the run is not running; anything else, unreachable. */
+	function loopControlError(error: unknown, what: string): DispatchError {
+		if (error instanceof DispatchError) return error;
+		if (error instanceof RalphError && (error.status === 404 || error.status === 409)) {
+			return new DispatchError('conflict', LOOP_NOT_RUNNING_MESSAGE);
+		}
+		log(`Sand loop ${what} failed: ${String(error)}`);
+		return new DispatchError('unavailable', `${deps.label} could not reach the loop.`);
+	}
+
 	/** getRun for a loop sandbox. */
 	async function getLoopRun(
 		sandbox: SandboxRef,
@@ -1259,6 +1293,27 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 				throw new DispatchError('conflict', RUN_NOT_CANCELLABLE_MESSAGE);
 			}
 			await sandbox.setTimeout(idle_ms).catch(() => undefined);
+		},
+
+		async steerRun(agent_id: string, run_id: string, text: string): Promise<void> {
+			try {
+				const { ralph, name } = await runningLoop(agent_id, run_id);
+				await ralph.steer(name, text);
+			} catch (error) {
+				throw loopControlError(error, 'steer');
+			}
+		},
+
+		async stopRunAfterIteration(agent_id: string, run_id: string): Promise<void> {
+			let state: Awaited<ReturnType<RalphClient['stop']>>;
+			try {
+				const { ralph, name } = await runningLoop(agent_id, run_id);
+				state = await ralph.stop(name, { graceful: true });
+			} catch (error) {
+				throw loopControlError(error, 'graceful stop');
+			}
+			// not_running / already_gone: it ended on its own; the next status read says how.
+			if (state !== 'stopping') throw new DispatchError('conflict', LOOP_NOT_RUNNING_MESSAGE);
 		},
 
 		async streamMissionEvents(

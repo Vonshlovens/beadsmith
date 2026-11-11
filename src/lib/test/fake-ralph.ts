@@ -91,9 +91,12 @@ export class FakeRalph {
 			case 'GET /report':
 				return json(this.reports.get(run.name) ?? {});
 			case 'POST /steer':
+				// ralph refuses a steer for a run that is not running (409).
+				if (run.status !== 'running') return json({ error: `run is ${run.status}` }, 409);
 				this.steers.push({ name: run.name, text: String(body.text) });
 				return json({ steerId: this.steers.length }, 201);
 			case 'POST /stop':
+				if (run.status !== 'running') return json({ state: 'not_running', message: 'ended' });
 				this.stops.push({ name: run.name, graceful: body.graceful === true });
 				return json({ state: body.graceful === true ? 'stopping' : 'stopped', message: 'ok' });
 			case 'GET /stream':

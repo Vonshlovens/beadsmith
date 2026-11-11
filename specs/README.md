@@ -82,8 +82,8 @@ reality**. Search `src/` before treating a spec as implemented.
   `ralph serve` on the sandbox's loopback over the channel it already holds,
   under the usual arm, allow and repository map. Sand runs loops today
   (curl to loopback over the E2B process channel), and admins start one from
-  a project or issue page or the agent dialog; forge and loop controls
-  follow. **Automations** are Beadsmith's: dispatch templates on a cron in
+  a project or issue page or the agent dialog; steer and graceful stop
+  are controls in the mission thread; forge and loop restart follow. **Automations** are Beadsmith's: dispatch templates on a cron in
   `state.db`, fired by an in-process ticker
   (`src/lib/server/automations/`) through dispatch as the automation on
   behalf of its creator; ralph's own schedules are not used. Admins

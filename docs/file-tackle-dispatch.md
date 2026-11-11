@@ -238,7 +238,17 @@ spends without a bound; `iteration_timeout_minutes` is 1 to 240. Only a
 runner whose `capabilities.loop` is true takes a loop (Sand; see
 [How a loop runs](sand-e2b.md#how-a-loop-runs)); any other, such as a
 webhook runner, refuses it with `403` before a record is written. A loop takes no follow-up (`409`):
-steer, stop and restart are its controls. Each finished iteration (number,
+steer and stop are its controls (restart is planned).
+`POST .../steer` with `{text}` (max 4000 characters, extra keys fail closed)
+queues a note that ralph adds to the next iteration's prompt; it needs the
+global arm and Tackle allowed, like a follow-up, and is kept in the thread as
+an operator turn. `POST .../stop-after-iteration` (no body) lets the current
+iteration finish and then ends the loop with ralph's graceful stop; the
+record's `loop.stop_requested` stays true until a new run, so the thread says
+the stop is on its way. Like cancel it is taken while disarmed. Cancel is
+"stop now". Both answer `409` when the loop is not running (still in setup,
+or ended), and stop-after-iteration answers with the ended record when the
+loop finished first. Each finished iteration (number,
 outcome, duration, tokens, cost, commit range, validation, open plan items)
 is copied into `state.db` as the runner reports it, because a Sand sandbox
 and ralph's own database go when the loop ends.

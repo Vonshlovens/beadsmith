@@ -25,6 +25,7 @@ import type { AgentRunStatus, AgentStreamOutcome } from './provider.js';
 import {
 	RALPH_ITERATION_OUTCOMES,
 	RALPH_MODES,
+	RALPH_STEER_MAX_LENGTH,
 	RALPH_STOP_REASON_TEXT,
 	RALPH_STOP_REASONS,
 	type RalphIterationOutcome,
@@ -36,8 +37,6 @@ import { readDurationMs, sanitizeResultSummary } from './sanitize.js';
 /** ralph's own run name rule; Beadsmith addresses a run by the name it launched it with. */
 const RUN_NAME_PATTERN = /^[A-Za-z0-9._-]{1,100}$/;
 const TOOL_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
-/** A steer is a note for the next iteration's prompt, not a document. */
-export const RALPH_STEER_MAX_LENGTH = 4_000;
 /** Bounds on what a report may carry into state.db. */
 const REPORT_MAX_COMMITS = 200;
 const REPORT_MAX_NOTES = 50;

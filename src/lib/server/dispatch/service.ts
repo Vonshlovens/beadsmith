@@ -20,6 +20,7 @@ import {
 import {
 	AGENT_BUSY_MESSAGE,
 	getAgentProvider,
+	LOOP_NOT_RUNNING_MESSAGE,
 	RUN_NOT_CANCELLABLE_MESSAGE,
 	type AgentLaunch,
 	type AgentLaunchInput,
@@ -94,7 +95,8 @@ export interface DispatchDeps {
 
 const NOT_CONFIGURED_MESSAGE = 'Agent dispatch is not configured on this service.';
 export const LOOP_NOT_SUPPORTED_MESSAGE = 'That agent runner cannot run loops.';
-export const LOOP_FOLLOW_UP_MESSAGE = 'A loop takes steer, stop or restart, not a follow-up.';
+export const LOOP_FOLLOW_UP_MESSAGE = 'A loop takes steer notes and stops, not a follow-up.';
+export const NOT_A_LOOP_MESSAGE = 'Only a loop takes steer notes and stops after an iteration.';
 export const MISSION_NOT_LAUNCHED_MESSAGE = 'This mission has not launched an agent yet.';
 
 export const UNKNOWN_PROVIDER_MESSAGE = 'That agent runner is not configured on this service.';
@@ -143,7 +145,7 @@ function requireRecordProvider(record: DispatchRecord, deps: DispatchDeps): Agen
 	}
 	return provider;
 }
-export { AGENT_BUSY_MESSAGE, RUN_NOT_CANCELLABLE_MESSAGE };
+export { AGENT_BUSY_MESSAGE, LOOP_NOT_RUNNING_MESSAGE, RUN_NOT_CANCELLABLE_MESSAGE };
 const DEFAULT_MAX_POLL_ATTEMPTS = 120;
 const active_followers = new Set<string>();
 
@@ -486,7 +488,7 @@ export function toPublicDispatch(record: DispatchRecord) {
 		created_at: record.created_at,
 		updated_at: record.updated_at,
 		error_message: record.status === 'failed' ? record.error_message : undefined,
-		loop: publicLoop(record.payload, record.loop_end)
+		loop: publicLoop(record.payload, record.loop_end, record.loop_stop_requested)
 	};
 }
 
@@ -496,7 +498,8 @@ export function toPublicDispatch(record: DispatchRecord) {
  */
 export function publicLoop(
 	payload: DispatchPayload,
-	loop_end?: DispatchRecord['loop_end']
+	loop_end?: DispatchRecord['loop_end'],
+	stop_requested?: boolean
 ): DispatchLoop | undefined {
 	if (payload.operation !== 'loop') return undefined;
 	const loop: DispatchLoop = { mode: payload.mode };
@@ -512,6 +515,7 @@ export function publicLoop(
 		if (loop_end.stop_reason !== null) loop.stop_reason = loop_end.stop_reason;
 		loop.needs_person = loop_end.needs_person;
 	}
+	if (stop_requested === true) loop.stop_requested = true;
 	return loop;
 }
 
@@ -1111,6 +1115,127 @@ export async function followUpDispatch(
 		// Follow-up remains durable if this process cannot schedule.
 	}
 	return toPublicDispatch(resumed);
+}
+
+/**
+ * A working loop mission, refreshed and with its run id, for a loop control.
+ * Refuses a mission that is not a loop, has not launched, or has ended.
+ */
+async function workingLoop(
+	project_id: string,
+	request_id: string,
+	store: DispatchStore,
+	deps: DispatchDeps
+): Promise<{ record: DispatchRecord; provider: AgentProvider } | undefined> {
+	const record = await loadOwnedRecord(project_id, request_id, store);
+	if (record === undefined) {
+		return undefined;
+	}
+	if (record.operation !== 'loop') {
+		throw new DispatchError('conflict', NOT_A_LOOP_MESSAGE);
+	}
+	if (record.agent_id === undefined) {
+		throw new DispatchError('conflict', MISSION_NOT_LAUNCHED_MESSAGE);
+	}
+	const provider = requireRecordProvider(record, deps);
+	let current = record;
+	if (isFollowableStatus(current.status)) {
+		try {
+			current = await refreshDispatchRecord(current, store, provider, deps);
+		} catch {
+			current = record;
+		}
+	}
+	if (!isFollowableStatus(current.status)) {
+		throw new DispatchError('conflict', LOOP_NOT_RUNNING_MESSAGE);
+	}
+	current = await resolveRunId(current, store, provider);
+	if (current.agent_id === undefined || current.run_id === undefined) {
+		throw new DispatchError('conflict', LOOP_NOT_RUNNING_MESSAGE);
+	}
+	return { record: current, provider };
+}
+
+/**
+ * Steer a working loop (ADR-0019 rules 3 and 5): queue a note that ralph
+ * adds to its next iteration's prompt. The note is the only thing the
+ * browser sends; it is kept in the transcript as an operator turn. Like a
+ * follow-up it puts words in front of an agent, so it needs dispatch armed
+ * and the loop's operation still allowed for the project.
+ */
+export async function steerDispatch(
+	project_id: string,
+	request_id: string,
+	text: string,
+	deps: DispatchDeps = {}
+): Promise<ReturnType<typeof toPublicDispatch> | undefined> {
+	await requireConfigured(deps);
+	const store = deps.store ?? (await getDispatchStore());
+	const found = await workingLoop(project_id, request_id, store, deps);
+	if (found === undefined) {
+		return undefined;
+	}
+	const { record, provider } = found;
+	const policy = await resolvePolicy(record.project_id, deps);
+	if (!policy.armed) {
+		throw new DispatchError('forbidden', DISARMED_DISPATCH_MESSAGE);
+	}
+	if (!operationAllowed(policy.allow, record.operation, payloadIntent(record.payload))) {
+		throw new DispatchError('forbidden', deniedOperationMessage(record.operation));
+	}
+	const steerRun = provider.steerRun;
+	if (steerRun === undefined) {
+		throw new DispatchError('forbidden', `${provider.label} cannot steer loops.`);
+	}
+	await steerRun(record.agent_id!, record.run_id!, text);
+	try {
+		await store.appendTurn(record.id, { role: 'operator', text, run_id: record.run_id });
+	} catch {
+		// ralph has the note; only the transcript misses it.
+	}
+	return toPublicDispatch((await store.get(record.id)) ?? record);
+}
+
+/**
+ * Ask a working loop to stop once its current iteration ends (ralph's
+ * graceful stop). Like cancel it only ever ends work, so a disarmed service
+ * still takes it. Stopping now is `cancelDispatch`.
+ */
+export async function stopDispatchAfterIteration(
+	project_id: string,
+	request_id: string,
+	deps: DispatchDeps = {}
+): Promise<ReturnType<typeof toPublicDispatch> | undefined> {
+	await requireConfigured(deps);
+	const store = deps.store ?? (await getDispatchStore());
+	const found = await workingLoop(project_id, request_id, store, deps);
+	if (found === undefined) {
+		return undefined;
+	}
+	const { record, provider } = found;
+	if (record.loop_stop_requested === true) {
+		return toPublicDispatch(record);
+	}
+	const stopRunAfterIteration = provider.stopRunAfterIteration;
+	if (stopRunAfterIteration === undefined) {
+		throw new DispatchError('forbidden', `${provider.label} cannot stop loops gracefully.`);
+	}
+	try {
+		await stopRunAfterIteration(record.agent_id!, record.run_id!);
+	} catch (error) {
+		if (error instanceof DispatchError && error.code === 'conflict') {
+			// It ended on its own meanwhile: report how, not a refusal.
+			const refreshed = await refreshDispatchRecord(record, store, provider, deps).catch(
+				() => undefined
+			);
+			if (refreshed !== undefined && isTerminalDispatchStatus(refreshed.status)) {
+				return toPublicDispatch(refreshed);
+			}
+		}
+		throw error;
+	}
+	const marked = await store.markLoopStopRequested(record.id);
+	return toPublicDispatch(marked ?? { ...record, loop_stop_requested: true });
 }
 
 function storedMissionEvent(record: DispatchRecord): MissionEvent | undefined {

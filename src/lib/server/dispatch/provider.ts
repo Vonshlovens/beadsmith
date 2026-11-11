@@ -121,6 +121,15 @@ export interface AgentProvider {
 	getRun(agent_id: string, run_id: string): Promise<AgentRunUpdate>;
 	createRun?(agent_id: string, prompt: string): Promise<AgentFollowUpRun>;
 	cancelRun?(agent_id: string, run_id: string): Promise<void>;
+	/**
+	 * Loop controls (ADR-0019 rules 3 and 5), on every provider that has
+	 * `launchLoop`. `steerRun` queues a note for the loop's next iteration;
+	 * `stopRunAfterIteration` lets the current iteration finish and then
+	 * ends the loop (ralph's graceful stop). Stopping now is `cancelRun`.
+	 * Both throw a `conflict` DispatchError when the loop is not running.
+	 */
+	steerRun?(agent_id: string, run_id: string, text: string): Promise<void>;
+	stopRunAfterIteration?(agent_id: string, run_id: string): Promise<void>;
 	streamRun?(
 		agent_id: string,
 		run_id: string,
@@ -145,6 +154,8 @@ export interface AgentProvider {
 export const AGENT_BUSY_MESSAGE = 'The agent is still busy.';
 /** Public message when the active run cannot be cancelled. */
 export const RUN_NOT_CANCELLABLE_MESSAGE = 'This run cannot be cancelled.';
+/** Public message when a loop control reaches a loop that is not (or not yet) running. */
+export const LOOP_NOT_RUNNING_MESSAGE = 'The loop is not running.';
 
 export const WEBHOOK_PROVIDER_LABEL = 'Webhook agent runner';
 

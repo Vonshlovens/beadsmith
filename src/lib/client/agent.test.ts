@@ -181,15 +181,27 @@ describe('composerState', () => {
 		expect(composerState(done, null).can_send).toBe(false);
 	});
 
-	it('never offers a reply on a loop, running or ended', () => {
+	it('takes a steer note on a working loop only, on a loop runner, while armed', () => {
 		const loop = { ...done, operation: 'loop' as const };
-		expect(composerState(loop, health().dispatch)).toEqual({
+		const running = { ...loop, status: 'running' as const };
+		const looping = health({
+			capabilities: {
+				live_events: false,
+				follow_up: true,
+				cancel: true,
+				loop: true,
+				terminal: false
+			}
+		}).dispatch;
+		expect(composerState(loop, looping)).toEqual({
 			can_send: false,
 			reason: 'A loop works from its plan and does not take replies.'
 		});
-		expect(composerState({ ...loop, status: 'running' }, health().dispatch).reason).toContain(
-			'The loop is running'
+		expect(composerState(running, looping)).toEqual({ can_send: true });
+		expect(composerState(running, health().dispatch).reason).toBe(
+			'This runner cannot steer loops.'
 		);
+		expect(composerState(running, { ...looping, armed: false }).reason).toContain('disarmed');
 	});
 });
 

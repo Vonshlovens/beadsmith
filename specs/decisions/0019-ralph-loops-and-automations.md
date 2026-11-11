@@ -246,6 +246,18 @@ Nothing ships with this record. Planned, each in its own change:
   runner reports `capabilities.loop`, and explains a refusal (disarmed, the
   picked runner has no ralph, Tackle not allowed). Without epic scope, an
   epic page says its build covers the whole plan;
+  Steer and graceful stop shipped as `AgentProvider.steerRun` and
+  `stopRunAfterIteration` (Sand implements both through the ralph client),
+  `POST .../dispatch/:requestId/steer` and `.../stop-after-iteration`, and
+  the mission thread: a working loop's composer sends steer notes (kept as
+  operator turns), and its footer offers Stop after iteration beside Stop
+  now (cancel). Steer needs the arm and Tackle allowed, like a follow-up; a
+  graceful stop only ends work, so, like cancel, it does not. The request is
+  kept on the record (`loop_stop_requested_at`, public
+  `loop.stop_requested`) until a new run. Restart is not built yet: on Sand
+  a loop's sandbox is destroyed shortly after the loop ends, so restarting
+  "in the same sandbox" needs a lifecycle decision first. Add sign stays out
+  until ralph has the route.
 - automations: tables, the ticker beside `src/lib/server/backup/runtime.ts`,
   and an automations page. ADR-0004's list of what `state.db` holds and
   `docs/contract.md`'s dispatch section are updated when these ship.

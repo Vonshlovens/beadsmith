@@ -23,13 +23,17 @@ import {
 	listDispatchTurns,
 	listLoopIterations,
 	listMissions,
+	steerDispatch,
+	stopDispatchAfterIteration,
 	streamDispatchMissionEvents,
 	toPublicDispatch,
 	toPublicMission,
 	AGENT_BUSY_MESSAGE,
 	LOOP_FOLLOW_UP_MESSAGE,
+	LOOP_NOT_RUNNING_MESSAGE,
 	LOOP_NOT_SUPPORTED_MESSAGE,
-	MISSION_NOT_LAUNCHED_MESSAGE
+	MISSION_NOT_LAUNCHED_MESSAGE,
+	NOT_A_LOOP_MESSAGE
 } from './service.js';
 import { createDispatchStore } from './store.js';
 import { DispatchError } from './types.js';
@@ -2048,5 +2052,171 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 			})
 		).rejects.toMatchObject({ code: 'conflict', message: LOOP_FOLLOW_UP_MESSAGE });
 		expect(provider.createRun).not.toHaveBeenCalled();
+	});
+
+	describe('loop controls: steer and stop after the iteration', () => {
+		function controlledProvider(patch: Partial<AgentProvider> = {}): AgentProvider {
+			return {
+				...loopProvider(async () => ({ agent_id: 'sbx-c', run_id: 'r1' })),
+				steerRun: vi.fn(async () => undefined),
+				stopRunAfterIteration: vi.fn(async () => undefined),
+				...patch
+			};
+		}
+
+		async function runningLoop(status: 'running' | 'succeeded' = 'running') {
+			const { record } = await store.create({
+				idempotency_key: `idem-loop-ctl-${status}`,
+				project_id: PROJECT.id,
+				dolt_database: PROJECT.dolt_database,
+				operation: 'loop',
+				actor: 'web',
+				payload: BUILD_LOOP
+			});
+			await store.updateStatus(record.id, {
+				status,
+				provider: 'e2b',
+				agent_id: 'sbx-c',
+				run_id: 'r1'
+			});
+			return record.id;
+		}
+
+		it('passes a steer note to the runner and keeps it in the transcript', async () => {
+			const provider = controlledProvider();
+			const id = await runningLoop();
+
+			const result = await steerDispatch(PROJECT.id, id, 'Fix the flaky test first.', {
+				store,
+				provider,
+				configured: true,
+				policy: ALLOW_ALL
+			});
+
+			expect(result).toMatchObject({ id, status: 'running' });
+			expect(provider.steerRun).toHaveBeenCalledWith('sbx-c', 'r1', 'Fix the flaky test first.');
+			const turns = await store.listTurns(id);
+			expect(turns.at(-1)).toMatchObject({
+				role: 'operator',
+				text: 'Fix the flaky test first.',
+				run_id: 'r1'
+			});
+		});
+
+		it('refuses a steer when disarmed, on a non-loop, or once the loop has ended', async () => {
+			const provider = controlledProvider();
+			const deps = { store, provider, configured: true, policy: ALLOW_ALL };
+			const id = await runningLoop();
+
+			await expect(
+				steerDispatch(PROJECT.id, id, 'Hi.', { ...deps, policy: { ...ALLOW_ALL, armed: false } })
+			).rejects.toMatchObject({ code: 'forbidden', message: DISARMED_DISPATCH_MESSAGE });
+			await expect(
+				steerDispatch(PROJECT.id, id, 'Hi.', {
+					...deps,
+					policy: { armed: true, allow: { file: true, tackle: false } }
+				})
+			).rejects.toMatchObject({ code: 'forbidden', message: LOOP_NOT_ALLOWED_MESSAGE });
+
+			const { record: tackle } = await store.create({
+				idempotency_key: 'idem-loop-ctl-tackle',
+				project_id: PROJECT.id,
+				dolt_database: PROJECT.dolt_database,
+				operation: 'tackle',
+				actor: 'web',
+				payload: { operation: 'tackle', issue_id: ISSUE.id }
+			});
+			await expect(steerDispatch(PROJECT.id, tackle.id, 'Hi.', deps)).rejects.toMatchObject({
+				code: 'conflict',
+				message: NOT_A_LOOP_MESSAGE
+			});
+
+			const ended = await runningLoop('succeeded');
+			await expect(steerDispatch(PROJECT.id, ended, 'Hi.', deps)).rejects.toMatchObject({
+				code: 'conflict',
+				message: LOOP_NOT_RUNNING_MESSAGE
+			});
+			expect(provider.steerRun).not.toHaveBeenCalled();
+			expect(await steerDispatch('d_other', id, 'Hi.', deps)).toBeUndefined();
+		});
+
+		it('refuses a runner without steer', async () => {
+			const provider = controlledProvider({ steerRun: undefined });
+			const id = await runningLoop();
+			await expect(
+				steerDispatch(PROJECT.id, id, 'Hi.', {
+					store,
+					provider,
+					configured: true,
+					policy: ALLOW_ALL
+				})
+			).rejects.toMatchObject({ code: 'forbidden' });
+		});
+
+		it('asks for a graceful stop once and shows it on the record, even disarmed', async () => {
+			const provider = controlledProvider();
+			const id = await runningLoop();
+			const deps = {
+				store,
+				provider,
+				configured: true,
+				policy: { ...ALLOW_ALL, armed: false }
+			};
+
+			const first = await stopDispatchAfterIteration(PROJECT.id, id, deps);
+			const second = await stopDispatchAfterIteration(PROJECT.id, id, deps);
+
+			expect(first?.loop).toMatchObject({ mode: 'build', stop_requested: true });
+			expect(first?.status).toBe('running');
+			expect(second?.loop?.stop_requested).toBe(true);
+			expect(provider.stopRunAfterIteration).toHaveBeenCalledTimes(1);
+			expect(provider.stopRunAfterIteration).toHaveBeenCalledWith('sbx-c', 'r1');
+		});
+
+		it('reports how the loop ended when it finished before the stop arrived', async () => {
+			let ended = false;
+			const provider = controlledProvider({
+				getRun: vi.fn(async () =>
+					ended
+						? {
+								status: 'succeeded' as const,
+								result_summary: 'Stopped: no open plan items are left.',
+								loop_end: { stop_reason: 'plan_complete' as const, needs_person: false }
+							}
+						: { status: 'running' as const }
+				),
+				stopRunAfterIteration: vi.fn(async () => {
+					ended = true;
+					throw new DispatchError('conflict', LOOP_NOT_RUNNING_MESSAGE);
+				})
+			});
+			const id = await runningLoop();
+			const deps = { store, provider, configured: true, policy: ALLOW_ALL };
+
+			const result = await stopDispatchAfterIteration(PROJECT.id, id, deps);
+
+			expect(result).toMatchObject({ status: 'succeeded', loop: { stop_reason: 'plan_complete' } });
+			expect(result?.loop?.stop_requested).toBeUndefined();
+			// Now it has ended: a second ask is refused before reaching the runner.
+			await expect(stopDispatchAfterIteration(PROJECT.id, id, deps)).rejects.toMatchObject({
+				code: 'conflict',
+				message: LOOP_NOT_RUNNING_MESSAGE
+			});
+			expect(provider.stopRunAfterIteration).toHaveBeenCalledTimes(1);
+		});
+
+		it('a new run clears the stop request', async () => {
+			const provider = controlledProvider();
+			const id = await runningLoop();
+			await stopDispatchAfterIteration(PROJECT.id, id, {
+				store,
+				provider,
+				configured: true,
+				policy: ALLOW_ALL
+			});
+			await store.updateStatus(id, { status: 'cancelled' });
+			await store.startFollowUp(id, { run_id: 'r2', status: 'launched' });
+			expect((await store.get(id))?.loop_stop_requested).toBeUndefined();
+		});
 	});
 });

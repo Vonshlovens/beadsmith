@@ -114,6 +114,12 @@ const DISPATCH_COLUMN_MIGRATIONS = [
 	{
 		name: 'loop_needs_person',
 		sql: 'ALTER TABLE dispatch_requests ADD COLUMN loop_needs_person INTEGER'
+	},
+	// When an operator asked the current loop run to stop after its iteration
+	// (ADR-0019 rule 5), so a reload still shows the stop is on its way.
+	{
+		name: 'loop_stop_requested_at',
+		sql: 'ALTER TABLE dispatch_requests ADD COLUMN loop_stop_requested_at TEXT'
 	}
 ] as const;
 

@@ -19,7 +19,12 @@ import {
 	type SandboxNetwork,
 	type SandboxRef
 } from './e2b-provider.js';
-import { AGENT_BUSY_MESSAGE, RUN_NOT_CANCELLABLE_MESSAGE } from './provider.js';
+import {
+	AGENT_BUSY_MESSAGE,
+	LOOP_NOT_RUNNING_MESSAGE,
+	RUN_NOT_CANCELLABLE_MESSAGE
+} from './provider.js';
+import { ralphRouteAllowed } from './ralph.js';
 import { ANTHROPIC_PLACEHOLDER, GITHUB_PLACEHOLDER } from '../e2b/sandbox.js';
 import { CLAUDE_CONFIG_DIR, HC_CARRIER, RUNS_DIR, WORK_DIR } from '../e2b/image.js';
 
@@ -960,6 +965,53 @@ describe('E2B provider loops', () => {
 		expect(terminals(claude).find((t) => t.name === LOOP_TERMINAL)?.state).toBe('finished');
 		expect(await provider.getRun('sbx1', 'r1')).toEqual({ status: 'cancelled' });
 		await expect(provider.cancelRun!('sbx1', 'r1')).rejects.toThrow(RUN_NOT_CANCELLABLE_MESSAGE);
+	});
+
+	it('steers a running loop through ralph, and refuses before it starts or after it ends', async () => {
+		const { provider, ralph, name } = await launched();
+		// Setup has not started ralph yet.
+		await expect(provider.steerRun!('sbx1', 'r1', 'Fix the test first.')).rejects.toThrow(
+			LOOP_NOT_RUNNING_MESSAGE
+		);
+		await provider.getRun('sbx1', 'r1');
+		// Started, but ralph has not recorded the run: its 404 reads as not running.
+		await expect(provider.steerRun!('sbx1', 'r1', 'Fix the test first.')).rejects.toThrow(
+			LOOP_NOT_RUNNING_MESSAGE
+		);
+		const run = ralph.addRun({ name });
+		await provider.steerRun!('sbx1', 'r1', 'Fix the test first.');
+		expect(ralph.steers).toEqual([{ name, text: 'Fix the test first.' }]);
+		run.status = 'finished';
+		await expect(provider.steerRun!('sbx1', 'r1', 'Too late.')).rejects.toMatchObject({
+			code: 'conflict',
+			message: LOOP_NOT_RUNNING_MESSAGE
+		});
+		expect(ralph.requests.every((r) => ralphRouteAllowed(r.method, r.path))).toBe(true);
+	});
+
+	it("stops after the iteration with ralph's graceful stop, leaving the terminal running", async () => {
+		const { provider, claude, ralph, name } = await launched();
+		await provider.getRun('sbx1', 'r1');
+		const run = ralph.addRun({ name });
+		await provider.stopRunAfterIteration!('sbx1', 'r1');
+		expect(ralph.stops).toEqual([{ name, graceful: true }]);
+		expect(terminals(claude).find((t) => t.name === LOOP_TERMINAL)?.state).not.toBe('finished');
+		expect((await provider.getRun('sbx1', 'r1')).status).toBe('running');
+		run.status = 'stopped';
+		await expect(provider.stopRunAfterIteration!('sbx1', 'r1')).rejects.toMatchObject({
+			code: 'conflict'
+		});
+	});
+
+	it('refuses loop controls on a one-shot mission', async () => {
+		const env = setup();
+		const launch = await env.provider.launch(TACKLE);
+		await expect(env.provider.steerRun!(launch.agent_id, 'r1', 'Hi.')).rejects.toThrow(
+			LOOP_NOT_RUNNING_MESSAGE
+		);
+		await expect(env.provider.stopRunAfterIteration!(launch.agent_id, 'r1')).rejects.toThrow(
+			LOOP_NOT_RUNNING_MESSAGE
+		);
 	});
 
 	it('refuses a follow-up', async () => {

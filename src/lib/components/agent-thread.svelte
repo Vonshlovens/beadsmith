@@ -5,7 +5,9 @@
 	 * provider. With live events the current run streams in; without them the
 	 * thread polls status and the reply lands when the run finishes. A runner
 	 * that cannot take follow-ups gets a disabled composer that says so. A
-	 * loop mission adds its iteration table above the conversation. Admins get
+	 * loop mission adds its iteration table above the conversation; while it
+	 * works, the composer steers it (a note for its next iteration) and it can
+	 * stop after the current iteration or now (ADR-0019). Admins get
 	 * the agent's live terminal above it too, on runners that relay one
 	 * (ADR-0021).
 	 */
@@ -14,6 +16,7 @@
 	import { toast } from 'svelte-sonner';
 	import ArrowSquareOutIcon from 'phosphor-svelte/lib/ArrowSquareOutIcon';
 	import GitPullRequestIcon from 'phosphor-svelte/lib/GitPullRequestIcon';
+	import SkipForwardIcon from 'phosphor-svelte/lib/SkipForwardIcon';
 	import SquareIcon from 'phosphor-svelte/lib/SquareIcon';
 	import ChatComposer from '#lib/components/chat-composer.svelte';
 	import LoopIterations from '#lib/components/loop-iterations.svelte';
@@ -64,6 +67,7 @@
 	let text = $state('');
 	let sending = $state(false);
 	let cancelling = $state(false);
+	let winding_down = $state(false);
 	let now = $state(Date.now());
 	let composer_el = $state<HTMLTextAreaElement | null>(null);
 	let list_el = $state<HTMLDivElement | null>(null);
@@ -94,11 +98,16 @@
 	const can_cancel = $derived(
 		busy && capabilities?.cancel === true && mission?.agent_id !== undefined
 	);
-	const started_at = $derived.by(() => {
-		const last_operator = [...turns].reverse().find((turn) => turn.role === 'operator');
-		return Date.parse(last_operator?.created_at ?? mission?.updated_at ?? '') || now;
-	});
 	const is_loop = $derived(mission?.operation === 'loop');
+	// A loop's later operator turns are steer notes, not new runs: it has
+	// worked since its first one.
+	const started_at = $derived.by(() => {
+		const operator = turns.filter((turn) => turn.role === 'operator');
+		const start = is_loop ? operator[0] : operator.at(-1);
+		return Date.parse(start?.created_at ?? mission?.updated_at ?? '') || now;
+	});
+	const stop_requested = $derived(is_loop && mission?.loop?.stop_requested === true);
+	const can_wind_down = $derived(is_loop && can_cancel && capabilities?.loop === true);
 	// The relay names the mission; the server finds its sandbox. A mission that
 	// never started an agent has no terminal to open.
 	const show_terminal = $derived(
@@ -218,16 +227,46 @@
 		}
 		sending = true;
 		try {
-			const result = await api.followUpDispatch(project_id, request_id, { text: message });
+			if (is_loop) {
+				// A steer joins the running loop: the live stream keeps going.
+				const result = await api.steerDispatch(project_id, request_id, { text: message });
+				mission = result.request;
+				text = '';
+				onupdated?.(result.request);
+				toast.success('Steer note queued', {
+					description: 'The loop reads it at the start of its next iteration.'
+				});
+			} else {
+				const result = await api.followUpDispatch(project_id, request_id, { text: message });
+				mission = result.request;
+				text = '';
+				run_generation += 1;
+				onupdated?.(result.request);
+			}
+			await refresh();
+		} catch (error) {
+			toast.error(is_loop ? 'Could not steer the loop' : 'Could not send the message', {
+				description: errorMessage(error)
+			});
+		} finally {
+			sending = false;
+		}
+	}
+
+	async function windDown() {
+		if (!can_wind_down || stop_requested || winding_down) {
+			return;
+		}
+		winding_down = true;
+		try {
+			const result = await api.stopDispatchAfterIteration(project_id, request_id);
 			mission = result.request;
-			text = '';
-			run_generation += 1;
 			onupdated?.(result.request);
 			await refresh();
 		} catch (error) {
-			toast.error('Could not send the message', { description: errorMessage(error) });
+			toast.error('Could not stop the loop', { description: errorMessage(error) });
 		} finally {
-			sending = false;
+			winding_down = false;
 		}
 	}
 
@@ -319,6 +358,9 @@
 				>
 					<div class="chat-role">
 						<span>{turn.role === 'operator' ? 'You' : 'Agent'}</span>
+						{#if is_loop && turn.role === 'operator' && turn.run_id !== undefined}
+							<span class="st" {@attach tip('A note for the next iteration')}>steer</span>
+						{/if}
 						{#if turn.status && turn.status !== 'succeeded'}
 							<span class="st">{turn.status}</span>
 						{/if}
@@ -363,8 +405,9 @@
 	<ChatComposer
 		bind:value={text}
 		bind:textarea={composer_el}
-		label="Message the agent"
-		placeholder="Reply to the agent…"
+		label={is_loop ? 'Steer the loop' : 'Message the agent'}
+		placeholder={is_loop ? 'A note for the next iteration…' : 'Reply to the agent…'}
+		submit_label={is_loop ? 'Steer' : 'Send'}
 		rows={2}
 		disabled={!composer.can_send}
 		reason={composer.reason}
@@ -372,16 +415,36 @@
 		onsend={() => void send()}
 	>
 		{#snippet actions()}
+			{#if can_wind_down}
+				<button
+					class="btn btn-sm"
+					type="button"
+					disabled={stop_requested || winding_down || cancelling}
+					onclick={windDown}
+					{@attach tip(
+						stop_requested
+							? 'The loop stops when its current iteration ends'
+							: 'Let the current iteration finish, then stop'
+					)}
+				>
+					<SkipForwardIcon size={12} aria-hidden="true" />
+					{stop_requested
+						? 'Stopping after this iteration'
+						: winding_down
+							? 'Asking…'
+							: 'Stop after iteration'}
+				</button>
+			{/if}
 			{#if can_cancel}
 				<button
 					class="btn btn-sm btn-danger"
 					type="button"
 					disabled={cancelling}
 					onclick={cancel}
-					{@attach tip('Stop the run')}
+					{@attach tip(is_loop ? 'End the loop now, mid-iteration' : 'Stop the run')}
 				>
-					<SquareIcon size={12} />
-					{cancelling ? 'Stopping…' : 'Stop'}
+					<SquareIcon size={12} aria-hidden="true" />
+					{cancelling ? 'Stopping…' : is_loop ? 'Stop now' : 'Stop'}
 				</button>
 			{/if}
 		{/snippet}
