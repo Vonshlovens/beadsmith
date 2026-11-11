@@ -71,6 +71,11 @@ pub const TABLE_KEY: &str = "issues";
 /// The board's element key.
 pub const BOARD_KEY: &str = "board";
 
+/// The element key of the board column labelled `label`.
+pub fn lane_key(label: &str) -> String {
+    format!("lane-{label}")
+}
+
 /// How the issues that pass the filters are laid out. Both layouts draw the
 /// same rows (`State::visible`) in the same order, so the choice changes
 /// what is easy to see (the table compares issues, the board shows where
@@ -780,6 +785,28 @@ impl State {
         }
     }
 
+    /// Bring the selected issue into view in the list, unless the filters
+    /// hide it. On the board the card alone would come only just into view,
+    /// its column's edge and the board's padding cut off at the side, so the
+    /// board then moves to show the whole column: to its start or end for
+    /// the first or last column, so their padding shows too.
+    pub fn scroll_to_selected(&self, tx: &mut Tx) {
+        let Some(id) = self.issue.clone().filter(|_| self.selected_row().is_some()) else { return };
+        tx.scroll_into_view_in(self.list_key(), id);
+        if self.layout != Layout::Board {
+            return;
+        }
+        let Some((lane, _)) = self.selected_card() else { return };
+        if lane == 0 {
+            tx.scroll_to_x(BOARD_KEY, 0.0);
+        } else if lane + 1 == self.lanes.len() {
+            // Clamped to the board's end.
+            tx.scroll_to_x(BOARD_KEY, f32::MAX);
+        } else {
+            tx.scroll_into_view_in(BOARD_KEY, lane_key(self.lanes[lane].label));
+        }
+    }
+
     /// The sort in effect, in words: the board's stand-in for the arrow in
     /// the table's header.
     pub fn sort_label(&self) -> Option<String> {
@@ -1326,8 +1353,8 @@ impl State {
         if changed {
             tx.instant();
         }
-        if let Some(id) = self.take_reveal() {
-            tx.scroll_into_view_in(self.list_key(), id);
+        if self.take_reveal().is_some() {
+            self.scroll_to_selected(tx);
         }
         if let Some(wait) = self.next_tick() {
             tx.wake_after(std::time::Duration::from_secs_f64(wait));

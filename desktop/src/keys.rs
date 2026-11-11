@@ -232,16 +232,16 @@ pub fn run(s: &mut State, command: Command, tx: &mut Tx) -> bool {
     }
     match command {
         Command::Select(step) => {
-            if let Some(id) = s.move_selection(step) {
-                tx.scroll_into_view_in(s.list_key(), id);
+            if s.move_selection(step).is_some() {
+                s.scroll_to_selected(tx);
             }
         }
         Command::Lane(by) => {
             if s.layout != Layout::Board {
                 return false;
             }
-            if let Some(id) = s.move_lane(by) {
-                tx.scroll_into_view_in(s.list_key(), id);
+            if s.move_lane(by).is_some() {
+                s.scroll_to_selected(tx);
             }
         }
         Command::SwitchLayout => {
@@ -251,9 +251,7 @@ pub fn run(s: &mut State, command: Command, tx: &mut Tx) -> bool {
         Command::Status(n) => {
             s.set_status_filter(n);
             // The selection stays when the tab still shows it.
-            if let Some(id) = s.issue.clone() {
-                reveal(s, &id, tx);
-            }
+            s.scroll_to_selected(tx);
         }
         Command::Open => open(s, tx),
         Command::Back => {
@@ -290,8 +288,11 @@ pub fn run(s: &mut State, command: Command, tx: &mut Tx) -> bool {
         Command::Scroll(to) => scroll(DETAIL_ANCHOR, to, tx),
         Command::TrailBack | Command::TrailForward => {
             let moved = if command == Command::TrailBack { s.go_back() } else { s.go_forward() };
-            let Some(id) = moved else { return false };
-            reveal(s, &id, tx);
+            if moved.is_none() {
+                return false;
+            }
+            // The detail pane moved without the list; bring its row along.
+            s.scroll_to_selected(tx);
         }
         Command::CopyId | Command::CopyLink | Command::OpenWeb => return issue_action(s, command, tx),
         Command::CloseWindow => tx.close_window(),
@@ -338,25 +339,14 @@ fn issue_action(s: &mut State, command: Command, tx: &mut Tx) -> bool {
 /// Follow a dependency link in the issue being read (`State::follow_link`).
 pub fn follow_link(s: &mut State, id: &str, tx: &mut Tx) {
     s.follow_link(id);
-    reveal(s, id, tx);
-}
-
-/// Bring an issue's row into view after the detail pane moved to it without
-/// the list: by a link, or along the trail. The filters may hide the row,
-/// and then the list stays where it is.
-fn reveal(s: &State, id: &str, tx: &mut Tx) {
-    if s.selected_row().is_some() {
-        tx.scroll_into_view_in(s.list_key(), id.to_string());
-    }
+    s.scroll_to_selected(tx);
 }
 
 /// Show the issues as `layout` and bring the selected one into view there:
 /// the toggle changes how the list is drawn, not where the reader is in it.
 pub fn set_layout(s: &mut State, layout: Layout, tx: &mut Tx) {
     s.set_layout(layout);
-    if let Some(id) = s.issue.clone() {
-        reveal(s, &id, tx);
-    }
+    s.scroll_to_selected(tx);
 }
 
 /// `run` for a caller with no key to pass on: a menu item or a button.
@@ -369,8 +359,8 @@ pub fn perform(s: &mut State, command: Command, tx: &mut Tx) {
 /// window (and through it the detail pane) instead of the table.
 fn open(s: &mut State, tx: &mut Tx) {
     if s.issue.is_none() {
-        if let Some(id) = s.move_selection(Step::First) {
-            tx.scroll_into_view_in(s.list_key(), id);
+        if s.move_selection(Step::First).is_some() {
+            s.scroll_to_selected(tx);
         }
     } else if s.open_detail() {
         tx.blur();
@@ -381,10 +371,8 @@ fn open(s: &mut State, tx: &mut Tx) {
 /// unless the selected issue is still among the matches.
 pub fn submit_filter(s: &mut State, tx: &mut Tx) {
     tx.blur();
-    if s.selected_row().is_none()
-        && let Some(id) = s.move_selection(Step::First)
-    {
-        tx.scroll_into_view_in(s.list_key(), id);
+    if s.selected_row().is_none() && s.move_selection(Step::First).is_some() {
+        s.scroll_to_selected(tx);
     }
 }
 
@@ -401,8 +389,8 @@ pub fn filter_key(s: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
 /// Go to a row of quick open's list (`State::quick_choose`) and bring the
 /// issue's row into view when the table already has it.
 pub fn quick_choose(s: &mut State, row: usize, tx: &mut Tx) {
-    if let Some(id) = s.quick_choose(row) {
-        reveal(s, &id, tx);
+    if s.quick_choose(row).is_some() {
+        s.scroll_to_selected(tx);
     }
 }
 
@@ -687,5 +675,58 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// At the smallest window the board scrolls sideways. A card chosen by
+    /// key brings its whole column into view, not only the card: the first
+    /// and last columns with the board's padding beside them.
+    #[test]
+    fn a_column_moved_to_shows_whole_at_the_smallest_window() {
+        use std::sync::Arc;
+
+        use crate::app::BOARD_KEY;
+        use crate::app::Load;
+        use crate::model::Source;
+        use crate::sample::Sample;
+        use crate::settings::Backing;
+
+        let mut s = State::new(Arc::new(Sample), Backing::detached());
+        s.projects = Load::Ready(Sample.projects().unwrap());
+        s.project = Some("lighthouse".into());
+        s.issues = Load::Ready(Sample.issues("lighthouse").unwrap());
+        s.refilter();
+        s.set_layout(Layout::Board);
+        s.issue = Some("lh-1".into());
+        let mut rt = rune::Runtime::new(s, crate::view::view, (1100.0, 560.0), rune::Env::new(true, 1.0));
+        let rect = |rt: &rune::Runtime<State>, key: &str| {
+            rt.elements().into_iter().find(|e| e.key.as_deref() == Some(key)).unwrap_or_else(|| panic!("{key}")).rect
+        };
+        let mut step = |by: isize| {
+            rt.update(|s, tx| assert!(run(s, Command::Lane(by), tx)));
+            for _ in 0..60 {
+                rt.frame(1.0 / 60.0);
+            }
+            let id = rt.state.issue.clone().unwrap();
+            let lane = rt.state.selected_card().unwrap().0;
+            let label = rt.state.lanes[lane].label;
+            let (board, column) = (rect(&rt, BOARD_KEY), rect(&rt, &crate::app::lane_key(label)));
+            let (left, right) = (column[0] - board[0], board[0] + board[2] - (column[0] + column[2]));
+            (id, left, right)
+        };
+        let shown = |(id, left, right): (String, f32, f32)| (id, left >= 0.0 && right >= 0.0, left, right);
+        // Blocked, a middle column, then Closed, the last: its right padding shows.
+        let (id, whole, ..) = shown(step(1));
+        assert_eq!((id.as_str(), whole), ("lh-4", true));
+        let (id, whole, _, right) = shown(step(1));
+        assert_eq!((id.as_str(), whole), ("lh-8", true));
+        assert!(right >= 10.0, "the board's padding shows past the last column ({right})");
+        // Back to In progress, then Open, the first: its left padding shows.
+        let (id, whole, ..) = shown(step(-1));
+        assert_eq!((id.as_str(), whole), ("lh-4", true));
+        let (id, whole, ..) = shown(step(-1));
+        assert_eq!((id.as_str(), whole), ("lh-1", true));
+        let (id, whole, left, _) = shown(step(-1));
+        assert_eq!((id.as_str(), whole), ("lh-2", true));
+        assert!(left >= 10.0, "the board's padding shows before the first column ({left})");
     }
 }

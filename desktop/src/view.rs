@@ -1243,7 +1243,7 @@ fn lane(s: &State, n: usize, width: f32, th: &Rc<Theme>) -> El {
         1 => format!("{}, 1 issue", lane.label),
         count => format!("{}, {count} issues", lane.label),
     };
-    let frame = lane_frame(format!("lane-{}", lane.label), width, th).role("list").label(name).child(lane_heading(
+    let frame = lane_frame(crate::app::lane_key(lane.label), width, th).role("list").label(name).child(lane_heading(
         lane.label,
         lane.status,
         Some(count),
