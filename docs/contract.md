@@ -248,6 +248,21 @@ and does not fall back. File maps are distinct from Tackle maps.
 service-local SQLite, not Beads Dolt, and is not accepted from File/Tackle
 POST bodies. Unmapped Tackle still fails closed even when Tackle is allowed.
 
+`GET /api/console/model-pool` reads the Underclass model pool
+([ADR-0022](../specs/decisions/0022-underclass-model-gateway.md)). It takes
+no parameters: Beadsmith calls Underclass's `monitor`, `state`, `usage` and
+`stats` read routes with constant paths, so nothing in the request reaches
+Underclass. Without both `BDX_UNDERCLASS_URL` and
+`BDX_UNDERCLASS_UI_TOKEN_FILE` it answers `{configured: false}` (with a
+`config_error` when only one is set or the URL is unusable). Otherwise it
+returns the typed `ModelPoolSnapshot` in `src/lib/types.ts`: accounts (label,
+backend, plan, state, cooldown, quota windows, banked resets), in-flight
+requests, month and 24-hour totals and recent outcomes. Request ids, session
+keys and the catalog are dropped. Account labels are the subscriptions'
+emails, shown to admins and never logged. An upstream failure is a 503
+`unavailable` with one of the Dolt reader's four `failure_kind` classes and a
+fixed message.
+
 `/api/mate/chats/*` (admin-only, reads included, each chat visible only to
 its owner) lists, creates, reads, renames or re-scopes, and deletes First
 Mate chats; `POST .../:id/messages` `{text, message_id?}` (text capped at

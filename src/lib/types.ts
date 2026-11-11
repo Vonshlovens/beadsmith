@@ -247,6 +247,106 @@ export interface ConsoleSnapshot {
 	access: ConsoleAccess;
 }
 
+/** One quota window of a pooled account: Claude's 5h/7d windows or Codex's primary/secondary. */
+export interface ModelPoolWindow {
+	name: 'five_hour' | 'seven_day' | 'seven_day_fable' | 'primary' | 'secondary';
+	/** Share of the window used, 0 to 1 (can exceed 1 briefly); null when not reported. */
+	used_fraction: number | null;
+	resets_at: string | null;
+	window_seconds: number | null;
+}
+
+/** Request counters as Underclass keeps them; `unmeasured` succeeded without reported usage. */
+export interface ModelPoolCounters {
+	attempts: number;
+	unmeasured: number;
+	input_tokens: number;
+	output_tokens: number;
+}
+
+/** One pooled subscription. `label` is its email: admins only, never logged. */
+export interface ModelPoolAccount {
+	id: string;
+	label: string;
+	backend: 'claude' | 'codex' | 'copilot';
+	plan: string | null;
+	status: 'healthy' | 'cooling' | 'auth_error' | 'disabled';
+	/** Out of rotation until then; null unless cooling. */
+	cooling_until: string | null;
+	in_flight: number;
+	sticky_sessions: number;
+	month: ModelPoolCounters;
+	windows: ModelPoolWindow[];
+	/** Rate-limit reset credits the subscription has banked; null when not reported. */
+	banked_resets: number | null;
+	quota_observed_at: string | null;
+}
+
+/** One recent upstream attempt. */
+export interface ModelPoolRequest {
+	at: string;
+	model: string;
+	backend: string | null;
+	account_label: string | null;
+	status: number;
+	duration_ms: number;
+	/** How a streamed body ended (`completed`, `failed`, ...). */
+	outcome: string | null;
+	/** Sanitized upstream error code for a failed attempt. */
+	error_code: string | null;
+}
+
+/** Why the Underclass settings are unusable although one of them is set. */
+export type UnderclassConfigError = 'url_invalid' | 'token_file_missing' | 'url_missing';
+
+/** The console's view of the Underclass model pool (ADR-0022). */
+export interface ModelPoolSnapshot {
+	observed_at: string;
+	month_start: string;
+	accounts: ModelPoolAccount[];
+	in_flight: number;
+	month: ModelPoolCounters;
+	last_minute: ModelPoolCounters;
+	/** Requests per minute, oldest first, as Underclass's monitor reports them. */
+	minute_bins: number[];
+	month_by_model: {
+		model: string | null;
+		requests: number;
+		unmeasured: number;
+		input_tokens: number;
+		output_tokens: number;
+	}[];
+	/** The last 24 hours: totals, outcomes, upstream events and hourly buckets. */
+	day: {
+		from: string;
+		to: string;
+		requests: number;
+		attempts: number;
+		input_tokens: number;
+		output_tokens: number;
+		peak_concurrency: number;
+		outcomes: Record<string, number>;
+		events: Record<string, number>;
+		hours: {
+			start: string;
+			requests: number;
+			attempts: number;
+			input_tokens: number;
+			output_tokens: number;
+		}[];
+	};
+	recent: ModelPoolRequest[];
+}
+
+/**
+ * `GET /api/console/model-pool`. Off unless both Underclass settings are
+ * present; `config_error` names the problem when only one is, or the URL is
+ * unusable. Upstream failures are an error response with a `failure_kind`.
+ */
+export type ModelPoolResponse =
+	| { configured: false; config_error?: UnderclassConfigError }
+	| { configured: true; pool: ModelPoolSnapshot };
+
 export type ApiErrorCode =
 	| 'bad_request'
 	| 'unauthorized'

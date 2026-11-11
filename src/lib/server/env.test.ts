@@ -6,6 +6,7 @@ import {
 	isLoopbackHost,
 	normalizeServiceTokenId,
 	readEnv,
+	resolveUnderclass,
 	resolveStateDir
 } from './env.js';
 
@@ -395,5 +396,55 @@ describe('isLoopbackHost', () => {
 		expect(isLoopbackHost('127.0.0.1')).toBe(true);
 		expect(isLoopbackHost('::1')).toBe(true);
 		expect(isLoopbackHost('0.0.0.0')).toBe(false);
+	});
+});
+
+describe('Underclass settings', () => {
+	const token = { BDX_UNDERCLASS_UI_TOKEN_FILE: '/run/secrets/underclass-ui-token' };
+
+	it('is off when neither setting is present', () => {
+		const env = readEnv({ BEADS_DOLT_SERVER_HOST: 'dolt' });
+		expect(env.underclass).toBeUndefined();
+		expect(env.underclass_error).toBeUndefined();
+	});
+
+	it('takes an https origin and the token path', () => {
+		expect(
+			resolveUnderclass({ BDX_UNDERCLASS_URL: 'https://forge.example:8443/', ...token })
+		).toEqual({
+			underclass: {
+				origin: 'https://forge.example:8443',
+				ui_token_file: '/run/secrets/underclass-ui-token'
+			}
+		});
+	});
+
+	it('accepts plain http only on loopback', () => {
+		expect(
+			resolveUnderclass({ BDX_UNDERCLASS_URL: 'http://127.0.0.1:8080', ...token }).underclass
+				?.origin
+		).toBe('http://127.0.0.1:8080');
+		expect(resolveUnderclass({ BDX_UNDERCLASS_URL: 'http://forge.example', ...token })).toEqual({
+			error: 'url_invalid'
+		});
+	});
+
+	it('refuses a path, query or credentials in the URL', () => {
+		for (const url of [
+			'https://forge.example/admin',
+			'https://forge.example/?x=1',
+			'https://user:pw@forge.example'
+		]) {
+			expect(resolveUnderclass({ BDX_UNDERCLASS_URL: url, ...token })).toEqual({
+				error: 'url_invalid'
+			});
+		}
+	});
+
+	it('names the missing half', () => {
+		expect(resolveUnderclass({ BDX_UNDERCLASS_URL: 'https://forge.example' })).toEqual({
+			error: 'token_file_missing'
+		});
+		expect(resolveUnderclass(token)).toEqual({ error: 'url_missing' });
 	});
 });
