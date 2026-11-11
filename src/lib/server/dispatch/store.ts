@@ -93,6 +93,8 @@ export interface ListDispatchFilter {
 	issue_id?: string;
 	/** Missions a First Mate chat's crew tools launched (ADR-0020 rule 5). */
 	chat_id?: string;
+	/** Only rows in one of these states (the missions still worth following). */
+	statuses?: DispatchStatus[];
 	limit: number;
 }
 
@@ -379,6 +381,11 @@ export function createDispatchStore(client: Client): DispatchStore {
 			if (filter.chat_id !== undefined) {
 				clauses.push('chat_id = ?');
 				args.push(filter.chat_id);
+			}
+			if (filter.statuses !== undefined) {
+				if (filter.statuses.length === 0) return [];
+				clauses.push(`status IN (${filter.statuses.map(() => '?').join(', ')})`);
+				args.push(...filter.statuses);
 			}
 			args.push(filter.limit);
 			const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';

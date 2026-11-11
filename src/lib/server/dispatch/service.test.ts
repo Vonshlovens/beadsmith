@@ -29,6 +29,7 @@ import {
 	listLoopIterations,
 	listMissions,
 	restartDispatch,
+	resumeDispatchFollowers,
 	steerDispatch,
 	stopDispatchAfterIteration,
 	streamDispatchMissionEvents,
@@ -2580,5 +2581,88 @@ describe('model and effort per launch', () => {
 		).rejects.toMatchObject({ code: 'forbidden', message: MODELS_NOT_SUPPORTED_MESSAGE });
 		expect(launch).not.toHaveBeenCalled();
 		expect(await store.list({ limit: 10 })).toEqual([]);
+	});
+});
+
+describe('resumeDispatchFollowers', () => {
+	async function recordWith(
+		key: string,
+		status: 'launched' | 'running' | 'succeeded',
+		provider: 'webhook' | 'e2b'
+	): Promise<string> {
+		const { record } = await store.create({
+			idempotency_key: key,
+			project_id: PROJECT.id,
+			dolt_database: PROJECT.dolt_database,
+			operation: 'loop',
+			actor: 'web',
+			payload: {
+				operation: 'loop',
+				mode: 'build',
+				harness: 'claude',
+				max_iterations: 5,
+				iteration_timeout_minutes: 30
+			}
+		});
+		await store.updateStatus(record.id, {
+			status,
+			provider,
+			agent_id: `sbx-${key}`,
+			run_id: 'r1'
+		});
+		return record.id;
+	}
+
+	it('follows a running loop after a restart without any request', async () => {
+		// A fresh store and an empty follower set stand in for a restarted server.
+		const running = await recordWith('idem-resume-01', 'running', 'webhook');
+		const launched = await recordWith('idem-resume-02', 'launched', 'webhook');
+		const finished = await recordWith('idem-resume-03', 'succeeded', 'webhook');
+		const gone = await recordWith('idem-resume-04', 'running', 'e2b');
+		const provider: AgentProvider = {
+			...providerWithLaunch(vi.fn()),
+			getRun: vi.fn(async () => ({ status: 'succeeded' as const }))
+		};
+		const tasks: Promise<void>[] = [];
+
+		const scheduled = await resumeDispatchFollowers({
+			store,
+			provider,
+			sleep: async () => {},
+			schedule_background: (task) => {
+				tasks.push(task());
+			}
+		});
+		await Promise.all(tasks);
+
+		expect(scheduled).toBe(2);
+		expect(provider.getRun).toHaveBeenCalledWith(`sbx-idem-resume-01`, 'r1');
+		expect(provider.getRun).toHaveBeenCalledWith(`sbx-idem-resume-02`, 'r1');
+		expect(provider.getRun).toHaveBeenCalledTimes(2);
+		expect(await store.get(running)).toMatchObject({ status: 'succeeded' });
+		expect(await store.get(launched)).toMatchObject({ status: 'succeeded' });
+		expect(await store.get(finished)).toMatchObject({ status: 'succeeded' });
+		// Its provider is no longer configured, so nothing can read it.
+		expect(await store.get(gone)).toMatchObject({ status: 'running' });
+	});
+
+	it('does not start a second follower for a mission already followed', async () => {
+		await recordWith('idem-resume-05', 'running', 'webhook');
+		const provider = providerWithLaunch(vi.fn());
+		const pending: Array<() => Promise<void>> = [];
+		const deps = {
+			store,
+			provider,
+			schedule_background: (task: () => Promise<void>) => {
+				pending.push(task);
+			}
+		};
+
+		expect(await resumeDispatchFollowers(deps)).toBe(1);
+		expect(await resumeDispatchFollowers(deps)).toBe(0);
+		// Let the held follower end so it leaves the in-memory set.
+		provider.getRun = vi.fn(async () => ({ status: 'succeeded' as const }));
+		provider.streamRun = vi.fn(async () => 'disconnected' as const);
+		await Promise.all(pending.map((task) => task()));
 	});
 });

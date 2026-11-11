@@ -478,6 +478,34 @@ function scheduleFollower(
 	}
 }
 
+/** More running missions than one Beadsmith ever has; a bound, not a quota. */
+const RESUME_FOLLOWERS_LIMIT = 500;
+
+/**
+ * Follow every launched or running mission again, for the server's `init`
+ * hook. Followers live in memory, so after a restart nothing reads a running
+ * mission until someone opens it, and a Sand loop gets more sandbox time only
+ * when a read sees an iteration finish (`e2b-provider.ts`): without this, a
+ * loop whose iteration ends while nobody watches is cut off at the run limit.
+ * Missions whose provider is no longer configured are left as they are.
+ * Returns how many followers it scheduled.
+ */
+export async function resumeDispatchFollowers(deps: DispatchDeps = {}): Promise<number> {
+	const store = deps.store ?? (await getDispatchStore());
+	const records = await store.list({
+		statuses: ['launched', 'running'],
+		limit: RESUME_FOLLOWERS_LIMIT
+	});
+	let scheduled = 0;
+	for (const record of records) {
+		const provider = providerForRecord(record, deps);
+		if (provider === undefined || active_followers.has(record.id)) continue;
+		scheduleFollower(record, store, provider, deps);
+		scheduled += 1;
+	}
+	return scheduled;
+}
+
 function publicIssueId(record: DispatchRecord): string | undefined {
 	if (record.payload.operation === 'file') {
 		return undefined;

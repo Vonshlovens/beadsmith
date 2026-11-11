@@ -475,9 +475,10 @@ after the last one finished (or after the loop started) is destroyed with
 its sandbox and reported failed, and anything it had not pushed is lost.
 Keep ralph's iteration timeout below the run limit. E2B's own cap on
 continuous running (an hour on the free plan) still ends the sandbox,
-whatever Beadsmith asks for. If Beadsmith restarts mid-loop, nothing reads
-the loop until someone opens it, so an iteration that finishes meanwhile
-earns no extension.
+whatever Beadsmith asks for. The reads come from a follower Beadsmith keeps
+in memory; when Beadsmith starts it follows every mission still launched or
+running again, so a restart mid-loop costs at most the reads it missed while
+it was down.
 
 Loop sandboxes are destroyed, not paused, on timeout. Pausing would keep a
 stuck loop's disk, but a resumed sandbox has lost its tailnet node and the
