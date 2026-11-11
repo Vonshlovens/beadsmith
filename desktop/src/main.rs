@@ -261,6 +261,13 @@ fn ready_scene(s: &mut State) {
     s.detail = Load::Ready(Sample.issue("lighthouse", "lh-2").ok().flatten());
 }
 
+/// Sorted by the widest fixed heading: the column grows by the arrow's room,
+/// so the whole heading still shows at the minimum window.
+fn sorted_scene(s: &mut State) {
+    sample_scene(s);
+    s.sort("blockers", rune_kit::SortDir::Descending);
+}
+
 /// Two dependency links followed from `lh-1` and one step back: the trail
 /// bar offers both directions.
 fn trail_scene(s: &mut State) {
@@ -379,6 +386,7 @@ fn main() {
         scenes: &[
             ("sample", sample_scene),
             ("filtered", filtered_scene),
+            ("sorted", sorted_scene),
             ("board", board_scene),
             ("board-ready", board_ready_scene),
             ("board-filtered", board_filtered_scene),

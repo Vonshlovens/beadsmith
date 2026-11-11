@@ -448,7 +448,8 @@ cargo run -- --tree tree.json --scene filtered     # the element tree as JSON
 ```
 
 Scenes fill state directly, so they need no server. `--list-scenes` names
-them all: the data (`sample`, `filtered`, `ready`), the board (`board`,
+them all: the data (`sample`, `filtered`, `ready`, and `sorted` for the widest
+sorted heading), the board (`board`,
 `board-ready` under a status tab and a sort, `board-filtered`,
 `board-loading`), every pane while it loads
 (`loading`, `loading-issues`, `loading-issue`), the empty and failed states

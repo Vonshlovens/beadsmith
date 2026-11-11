@@ -33,6 +33,16 @@ const ROOMY_W: f32 = 1280.0;
 /// The table's Blockers column, shared with its skeleton: the narrowest that
 /// shows the whole heading, so titles keep what is left at the minimum window.
 const BLOCKERS_W: f32 = 84.0;
+/// What a sorted heading adds after its title: rune-kit's `header_row` puts
+/// a 14 pt chevron 2 pt after it. The fixed columns are sized to their
+/// unsorted headings, so the sorted one grows by this much rather than every
+/// column carrying room for an arrow it rarely shows; without it a sorted Pri
+/// heading read as an ellipsis. The title column gives the room up, down to
+/// a floor this much lower than usual: at the minimum window the title is
+/// already at its floor, and the table must not run past its edge.
+const SORT_ARROW_W: f32 = 16.0;
+/// The title column's floor: about twenty characters of a title.
+const TITLE_MIN_W: f32 = 160.0;
 /// The detail pane, in a roomy window and below `ROOMY_W`.
 const DETAIL_W: (f32, f32) = (380.0, 320.0);
 /// The narrowest a board column gets before the board scrolls sideways
@@ -1002,6 +1012,12 @@ fn issue_table(s: &State, th: &Theme, roomy: bool) -> El {
     let look = StatusLooks::new(th);
     let priority = [0, 1, 2, 3].map(|p| th.priority(p));
     let xs = th.ty.xs;
+    let sorted = s.table.sort().map(|(column, _)| column);
+    let title_min = if sorted.is_some_and(|c| c != "title") { TITLE_MIN_W - SORT_ARROW_W } else { TITLE_MIN_W };
+    let fixed = |id: &'static str, title: &'static str, w: f32, min: f32| {
+        let w = if sorted == Some(id) { w + SORT_ARROW_W } else { w };
+        TableColumn::new(id, title).width(w).min(min).sortable()
+    };
     let mut table = Table::new(
         |s: &State| &s.table,
         |s: &mut State| &mut s.table,
@@ -1011,20 +1027,18 @@ fn issue_table(s: &State, th: &Theme, roomy: bool) -> El {
     .name("Issues")
     .style(style)
     // Ids, priorities and dates are labels, not quantities: left-aligned.
-    .column(TableColumn::new("id", "ID").width(80.0).min(56.0).sortable())
-    .column(TableColumn::new("title", "Title").flex(3.0).min(160.0).sortable())
-    .column(TableColumn::new("status", "Status").width(108.0).min(96.0).sortable())
+    .column(fixed("id", "ID", 80.0, 56.0))
+    .column(TableColumn::new("title", "Title").flex(3.0).min(title_min).sortable())
+    .column(fixed("status", "Status", 108.0, 96.0))
     // Beside the status it qualifies: an open issue with a number here is
     // open but not ready.
-    .column(TableColumn::new("blockers", "Blockers").width(BLOCKERS_W).min(64.0).sortable())
-    .column(TableColumn::new("priority", "Pri").width(46.0).min(44.0).sortable());
+    .column(fixed("blockers", "Blockers", BLOCKERS_W, 64.0))
+    .column(fixed("priority", "Pri", 46.0, 44.0));
     if roomy {
-        table = table
-            .column(TableColumn::new("type", "Type").width(72.0).min(56.0).sortable())
-            .column(TableColumn::new("assignee", "Assignee").width(84.0).min(64.0).sortable());
+        table = table.column(fixed("type", "Type", 72.0, 56.0)).column(fixed("assignee", "Assignee", 84.0, 64.0));
     }
     table
-        .column(TableColumn::new("updated", "Updated").width(76.0).min(68.0).sortable())
+        .column(fixed("updated", "Updated", 76.0, 68.0))
         .cell(move |s: &State, i, column| {
             let Some(issue) = s.visible_issue(i) else { return Cell::text("") };
             match column {
