@@ -209,6 +209,13 @@ Planned, each in its own change:
   with `force` offers a second, forced confirmation;
 - forge's tailnet HTTPS route to Underclass for the Beadsmith host, the
   production secrets by name, and the operator check in
-  `docs/operations/host-forge.md`.
+  `docs/operations/host-forge.md`: shipped as
+  `underclass-tailnet-serve.service` in
+  [`runtime.nix`](../../fleet/hosts/forge/runtime.nix), Serve on tailnet
+  HTTPS port 10000 (8443 is already the guest filter's port on the host
+  link). The secrets are named in
+  [`fleet/secrets/README.md`](../../fleet/secrets/README.md); host beads
+  reads them in a later change, once the operator has added them;
+- host beads' `BDX_UNDERCLASS_URL` and token file from those secrets.
 
 The current architecture bullet is in [`specs/README.md`](../README.md).

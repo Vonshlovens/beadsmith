@@ -13,8 +13,9 @@ for why this lives in a public repository.
 
 | Key          | Private key lives                                                        | Decrypts                                         |
 | ------------ | ------------------------------------------------------------------------ | ------------------------------------------------ |
-| `admin`      | the operator's password manager and `~/.config/sops/age/keys.txt`        | `beads.yaml`, `fleet-addresses.yaml`, `beads-backup.yaml` |
+| `admin`      | the operator's password manager and `~/.config/sops/age/keys.txt`        | `beads.yaml`, `fleet-addresses.yaml`, `beads-backup.yaml`, `forge.yaml` |
 | `host_beads` | `/var/lib/sops-nix/key.txt` on host `beads` (placed at install), and the password manager | the same three files                             |
+| `host_forge` | `/var/lib/sops-nix/key.txt` on host `forge`, and the password manager    | `forge.yaml` only |
 | `vm_test`    | [`vm-test.agekey`](vm-test.agekey), committed on purpose                 | `vm-test.yaml` only                              |
 
 If a private key leaks, every value it can decrypt, in every past revision,
@@ -47,11 +48,32 @@ systemd credentials, never by reading `/run/secrets` itself.
 | `beads-web-e2b-tailscale-oauth-client-id`, `-secret` | Sand: Tailscale OAuth client that mints per-run keys | Revoke and recreate in Tailscale admin (Auth Keys: write, `tag:beads-sandbox`)            |
 | `beads-web-e2b-github-app-id`, `-key` | Sand: GitHub App for per-run, one-repository tokens                 | Generate a new private key on the App, then here; delete the old key                      |
 
+Planned, for the console's model pool
+([ADR-0022](../../specs/decisions/0022-underclass-model-gateway.md)); add
+them before host beads' configuration names them:
+
+| Key                             | What                                                                  | Rotate                                                        |
+| ------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `beads-web-underclass-url`      | `BDX_UNDERCLASS_URL`: forge's tailnet HTTPS origin for Underclass, port 10000 | Update when forge's tailnet name changes; restart Beadsmith  |
+| `beads-web-underclass-ui-token` | Underclass's UI token, the same value as `underclass-ui-token` in `forge.yaml` | Rotate on forge first, then here; restart both services      |
+
 The `beads_bd_writer` password is deliberately not here: it lives only on the
 operator's machines and in their password manager
 ([ADR-0013](../../specs/decisions/0013-owner-account-and-global-readers.md)).
 To rotate it, change it in Dolt as root, then in each machine's
 `~/.config/beads/credentials` and keychain.
+
+## `forge.yaml`
+
+Decrypted on host forge by its own age key at `/var/lib/sops-nix/key.txt`
+([`runtime.nix`](../hosts/forge/runtime.nix)); services get the values as
+systemd credentials. Operations: [host-forge.md](../../docs/operations/host-forge.md).
+
+| Key                    | What                                                                                     | Rotate                                                                      |
+| ---------------------- | ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `underclass-proxy-key` | Underclass's proxy key; only the guest's model filter sends it                           | New value, restart `underclass` and `mate-model-proxy`                      |
+| `underclass-ui-token`  | Underclass's UI and admin API token; Beadsmith's console holds a copy                    | New value, restart `underclass`; then update `beads-web-underclass-ui-token` |
+| `mate-runner-secret`   | Signs First Mate requests to the runner                                                  | Together with `beads-web-mate-runner-secret` in `beads.yaml`                |
 
 ## `fleet-addresses.yaml`
 
