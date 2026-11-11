@@ -9,6 +9,9 @@ in scoped sandboxes, a beads sandbox may ask for repository work through this
 dispatch API, and admins may see a sandbox agent's raw terminal. Amended by
 [0018](./0018-sand-e2b-sandboxes.md): several providers may be configured at
 once (`webhook` and `e2b`), and a launch may name one of them.
+Extended by [0019](./0019-ralph-loops-and-automations.md): a `loop`
+operation runs a ralph loop as a mission, and automations fire dispatches on
+a schedule through the same queue and policy.
 
 ## Context
 

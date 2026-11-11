@@ -11,7 +11,9 @@ the admin terminal relay (rule 5). Amends
 in an hc terminal instead of a headless stream-json process) and
 [0018](./0018-sand-e2b-sandboxes.md) (Sand missions and chats do the same,
 and "no Sand terminal relay" is lifted). Leaves
-[0020](./0020-first-mate-crew-tools.md)'s crew tools unchanged.
+[0020](./0020-first-mate-crew-tools.md)'s crew tools unchanged. [0019](./0019-ralph-loops-and-automations.md)
+runs ralph in a loop mission's terminal; rule 2's interactive CLI applies to
+one-shot missions and chats, not to the iterations ralph starts.
 
 ## Context
 

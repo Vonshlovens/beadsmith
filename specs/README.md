@@ -72,6 +72,15 @@ reality**. Search `src/` before treating a spec as implemented.
   may watch or take over the raw terminal through an audited console relay
   that stores no bytes. hc is pinned by version and SHA-256 in one file
   ([ADR-0021](decisions/0021-hc-terminal-runtime.md)).
+- Accepted, not yet implemented: **ralph loops are missions**. A `loop`
+  dispatch runs [ralph](https://github.com/Vonshlovens/von-ralph) in the
+  mission's hc terminal on Sand or forge (pinned by commit, never in the app
+  image); Beadsmith reads iterations and events, steers and stops it through
+  `ralph serve` on the sandbox's loopback over the channel it already holds,
+  under the usual arm, allow and repository map. **Automations** are
+  Beadsmith's: dispatch templates on a cron, fired by an in-process ticker
+  through dispatch as their creator; ralph's own schedules are not used
+  ([ADR-0019](decisions/0019-ralph-loops-and-automations.md)).
 - **Underclass is the model gateway** on forge: a subscription pool on host
   loopback that guests reach only through the host's key-injecting filter,
   so no guest holds the proxy key or can reach Underclass's UI or admin API.
@@ -163,6 +172,7 @@ Follow the `architecture` skill at
 | [0016-first-mate-worker-runtime.md](decisions/0016-first-mate-worker-runtime.md) | [`fleet/hosts/forge/runtime.nix`](../fleet/hosts/forge/runtime.nix) | Persistent guest Claude Code, host model proxy and signed runner |
 | [0017-native-desktop-client.md](decisions/0017-native-desktop-client.md) | [`desktop/`](../desktop/README.md) | Native Rune client reading Dolt directly with the web app's read contract; macOS bundle and release workflow |
 | [0018-sand-e2b-sandboxes.md](decisions/0018-sand-e2b-sandboxes.md) | [`src/lib/server/e2b/`](../src/lib/server/e2b/), [`src/lib/server/dispatch/e2b-provider.ts`](../src/lib/server/dispatch/e2b-provider.ts), [`src/lib/server/mate/e2b-runner.ts`](../src/lib/server/mate/e2b-runner.ts), [`sandbox/e2b/`](../sandbox/e2b/) | Sand: E2B sandboxes for missions and chats; several runners, picked in First Mate |
+| [0019-ralph-loops-and-automations.md](decisions/0019-ralph-loops-and-automations.md) | Planned: [`src/lib/server/dispatch/`](../src/lib/server/dispatch/), [`sandbox/e2b/`](../sandbox/e2b/) | Loop missions running ralph in an hc terminal; Beadsmith-owned automations |
 | [0020-first-mate-crew-tools.md](decisions/0020-first-mate-crew-tools.md) | [`src/lib/server/crew/`](../src/lib/server/crew/) | Crew tools: one transport-free MCP tool module for First Mate chats (read tools, todo writes and mission launches as the chat's owner), relayed into Sand chats by [`src/lib/server/mate/crew-bridge.ts`](../src/lib/server/mate/crew-bridge.ts) |
 | [0021-hc-terminal-runtime.md](decisions/0021-hc-terminal-runtime.md) | Partly: the hc client is in [`src/lib/hc/`](../src/lib/hc/); today [`sandbox/e2b/beadsmith-run`](../sandbox/e2b/beadsmith-run) and [`src/lib/mate-runner/`](../src/lib/mate-runner/) still run headless stream-json | hc terminal runtime for every agent: `hc connect` over the sandbox's own channel, transcript-derived MissionEvents, admin relay with audited attach and take-over |
 | [0022-underclass-model-gateway.md](decisions/0022-underclass-model-gateway.md) | [`fleet/hosts/forge/runtime.nix`](../fleet/hosts/forge/runtime.nix), [`fleet/hosts/forge/model-proxy.mjs`](../fleet/hosts/forge/model-proxy.mjs); the console client is planned | Underclass pool on forge behind the guest filter; admin console reads its API server-side |
