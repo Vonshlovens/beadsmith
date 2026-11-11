@@ -204,13 +204,10 @@ fn scroll(anchor: &str, to: Scroll, tx: &mut Tx) {
 
 /// The window's key handler (`AppSpec::on_key`).
 pub fn on_key(s: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
-    // The shortcuts list is taller than the smallest window: the keys that
-    // page an issue being read page it too, so every row is reachable
-    // without a pointer. Nothing else in it takes a key.
+    // With the dialog's close button focused (Tab), the list still pages by
+    // the keys Rune leaves the window (it presses the button on Space).
     if s.shortcuts && s.connection.is_none() {
-        let Some(to) = reading_key(key) else { return false };
-        scroll(SHORTCUTS_SCROLL, to, tx);
-        return true;
+        return shortcuts_key(s, key, tx);
     }
     // A dialog owns the keyboard; Rune closes it on Esc.
     if s.modal_open() {
@@ -374,6 +371,18 @@ pub fn submit_filter(s: &mut State, tx: &mut Tx) {
     if s.selected_row().is_none() && s.move_selection(Step::First).is_some() {
         s.scroll_to_selected(tx);
     }
+}
+
+/// The shortcuts list's keys. The list is taller than the smallest window,
+/// so the keys that page an issue being read page it too and every row is
+/// reachable without a pointer. The list takes focus when the dialog opens
+/// (`view::shortcuts_dialog`): were the dialog's close button first, as
+/// Rune's modal focus would have it, Space would press it and close the
+/// dialog instead of paging. Esc and Tab are left to the dialog.
+pub fn shortcuts_key(_: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
+    let Some(to) = reading_key(key) else { return false };
+    scroll(SHORTCUTS_SCROLL, to, tx);
+    true
 }
 
 /// The filter field's own keys: Down walks out of the field into the matches
@@ -728,5 +737,44 @@ mod tests {
         let (id, whole, left, _) = shown(step(-1));
         assert_eq!((id.as_str(), whole), ("lh-2", true));
         assert!(left >= 10.0, "the board's padding shows before the first column ({left})");
+    }
+
+    /// Space pages the shortcuts list at the smallest window rather than
+    /// pressing the dialog's close button, which Rune's modal would focus
+    /// first; Esc still closes it.
+    #[test]
+    fn space_pages_the_shortcuts_list_and_esc_closes_it() {
+        use std::sync::Arc;
+
+        use crate::app::Load;
+        use crate::model::Source;
+        use crate::sample::Sample;
+        use crate::settings::Backing;
+
+        let mut s = State::new(Arc::new(Sample), Backing::detached());
+        s.projects = Load::Ready(Sample.projects().unwrap());
+        s.shortcuts = true;
+        let mut rt = rune::Runtime::new(s, crate::view::view, (1100.0, 560.0), rune::Env::new(true, 1.0));
+        rt.on_key = Some(on_key);
+        let settle = |rt: &mut rune::Runtime<State>| {
+            for _ in 0..60 {
+                rt.frame(1.0 / 60.0);
+            }
+        };
+        let top = |rt: &rune::Runtime<State>| {
+            rt.elements().into_iter().find(|e| e.key.as_deref() == Some("shortcut-list")).expect("the list").rect[1]
+        };
+        settle(&mut rt);
+        let before = top(&rt);
+        rt.key(text(" "));
+        settle(&mut rt);
+        assert!(rt.state.shortcuts, "Space left the dialog open");
+        assert!(top(&rt) < before - 100.0, "Space paged the list ({before} -> {})", top(&rt));
+        rt.key(Key::Home.into());
+        settle(&mut rt);
+        assert_eq!(top(&rt), before);
+        rt.key(Key::Escape.into());
+        settle(&mut rt);
+        assert!(!rt.state.shortcuts, "Esc closed the dialog");
     }
 }

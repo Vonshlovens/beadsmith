@@ -574,7 +574,9 @@ const SHORTCUTS_CHROME_H: f32 = 2.0 * 16.0 + 48.0;
 /// columns. The list is about 815 points tall and the smallest window 560,
 /// so it scrolls inside the window's height (`window_h`) rather than run off
 /// its top and bottom; the page keys, Space and j/k page it
-/// (`keys::on_key`), as they page an issue being read.
+/// (`keys::shortcuts_key`), as they page an issue being read. The list is
+/// first in the dialog's tab order so it, not the close button, has focus
+/// when the dialog opens; it draws no ring, as a scroll view has none.
 fn shortcuts_dialog(th: &Theme, window_h: f32, layer: &mut Vec<El>) {
     let (k, t) = (&th.k, &th.t);
     let group = |(title, rows): &(&str, &[keys::Shortcut])| {
@@ -613,6 +615,12 @@ fn shortcuts_dialog(th: &Theme, window_h: f32, layer: &mut Vec<El>) {
         .child(half(vec![group(everywhere)]));
     let list = col()
         .key(keys::SHORTCUTS_SCROLL)
+        .role("group")
+        .label("Shortcuts")
+        .focusable(true)
+        .tab_index(1)
+        .no_focus_ring()
+        .on_key(keys::shortcuts_key)
         .w_full()
         .max_h((window_h - SHORTCUTS_CHROME_H).max(0.0))
         .scroll(ScrollSpec { stick_bottom: false })
