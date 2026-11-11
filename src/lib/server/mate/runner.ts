@@ -6,6 +6,8 @@
  *   GET    {base}/v1/mate/chats/{chat}/events?after={event_id}   long-lived SSE of MissionEvents
  *   POST   {base}/v1/mate/chats/{chat}/interrupt  -> 202
  *   DELETE {base}/v1/mate/chats/{chat}            -> 204
+ *   POST   {base}/v1/mate/chats/{chat}/terminal   { mode, cols, rows } -> SSE of the raw terminal
+ *   POST   {base}/v1/mate/chats/{chat}/terminal/{attach}   { data?, cols?, rows? } -> 204
  *   GET    {base}/v1/health                       -> { ok: true }
  *
  * Requests are signed exactly as the webhook dispatch contract signs them
@@ -18,7 +20,14 @@ import { parseMissionEventJson, type MissionEvent } from '#lib/mission-events.js
 import { getEnv, type ServerEnv } from '../env.js';
 import { readGithubPullUrl, stripTerminalNoise } from '../dispatch/sanitize.js';
 import { signWebhookRequest } from '../dispatch/webhook-provider.js';
-import type { TerminalAttachRequest, TerminalRelay } from '../terminal-relay/relay.js';
+import type { HcStreamEnd } from '#lib/hc/client.js';
+import {
+	RELAY_FINISHED_MESSAGE,
+	RELAY_UNAVAILABLE_MESSAGE,
+	TerminalRelayError,
+	type TerminalAttachRequest,
+	type TerminalRelay
+} from '../terminal-relay/relay.js';
 import type { MateRunnerId, MateRunnerInfo } from '#lib/mate.js';
 import { createE2bMateRunner } from './e2b-runner.js';
 
@@ -30,6 +39,10 @@ const REQUEST_TIMEOUT_MS = 15_000;
 /** The runner pings about every 15 s; a stream silent this long is dead. */
 export const STREAM_IDLE_TIMEOUT_MS = 45_000;
 const ERROR_TEXT_MAX = 300;
+/** Raw keystroke bytes per input request; base64 keeps it under the runner's 64 KiB body cap. */
+const TERMINAL_INPUT_MAX = 32 * 1024;
+const ATTACH_ID = /^ta_[a-f0-9]{32}$/;
+const END_REASON = /^[a-z_]{1,32}$/;
 
 export type MateRunnerErrorCode = 'unavailable' | 'not_found' | 'conflict' | 'bad_request';
 
@@ -319,7 +332,201 @@ export function createMateRunner(deps: MateRunnerDeps = {}): MateRunner | undefi
 		return new MateRunnerError(code, detail.length > 0 ? `${message}: ${detail}` : `${message}.`);
 	}
 
+	/** A relay refusal's message, as the runner gave it (bounded and redacted), for the admin. */
+	async function relayRefused(response: Response): Promise<TerminalRelayError> {
+		if (response.status !== 409) {
+			return new TerminalRelayError('unavailable', RELAY_UNAVAILABLE_MESSAGE);
+		}
+		let detail = '';
+		try {
+			const body = (await response.json()) as { error?: unknown };
+			if (typeof body?.error === 'string') {
+				detail = cleanText(body.error, secret()).replace(/\s+/g, ' ').trim();
+			}
+		} catch {
+			detail = '';
+		}
+		if (detail.length > ERROR_TEXT_MAX) detail = `${detail.slice(0, ERROR_TEXT_MAX - 1)}…`;
+		return new TerminalRelayError('conflict', detail.length > 0 ? detail : RELAY_FINISHED_MESSAGE);
+	}
+
+	/**
+	 * The admin relay over the runner (ADR-0021 rule 4): one SSE response
+	 * carries the terminal's output, and keystrokes go up as signed POSTs,
+	 * one at a time and in order. The runner attaches over its own hc
+	 * connection and keeps nothing; neither does this side.
+	 */
+	async function attachTerminal(
+		chat_id: string,
+		request: TerminalAttachRequest
+	): Promise<TerminalRelay> {
+		const ac = new AbortController();
+		let idle: ReturnType<typeof setTimeout> | undefined;
+		const touch = () => {
+			clearTimeout(idle);
+			idle = setTimeout(() => ac.abort(), idle_timeout_ms);
+		};
+		touch();
+		let response: Response;
+		try {
+			response = await call('POST', chatPath(chat_id, '/terminal'), {
+				body: { mode: request.mode, cols: request.cols, rows: request.rows },
+				accept: 'text/event-stream',
+				signal: ac.signal
+			});
+		} catch {
+			clearTimeout(idle);
+			throw new TerminalRelayError('unavailable', RELAY_UNAVAILABLE_MESSAGE);
+		}
+		if (!response.ok || response.body === null) {
+			clearTimeout(idle);
+			ac.abort();
+			throw await relayRefused(response);
+		}
+
+		let opened!: (open: { attach: string; cols: number; rows: number }) => void;
+		let failed!: () => void;
+		const open_frame = new Promise<{ attach: string; cols: number; rows: number }>(
+			(resolve, reject) => {
+				opened = resolve;
+				failed = () => reject(new TerminalRelayError('unavailable', RELAY_UNAVAILABLE_MESSAGE));
+			}
+		);
+		let is_open = false;
+		let closed = false;
+		let end: HcStreamEnd | undefined;
+		const size = (raw: unknown): { cols: number; rows: number } | undefined => {
+			const value = raw as { cols?: unknown; rows?: unknown } | null;
+			const ok = (n: unknown) => Number.isInteger(n) && (n as number) >= 1 && (n as number) <= 1000;
+			return value !== null && ok(value?.cols) && ok(value?.rows)
+				? { cols: value!.cols as number, rows: value!.rows as number }
+				: undefined;
+		};
+		const parse = (data: string): unknown => {
+			try {
+				return JSON.parse(data);
+			} catch {
+				return undefined;
+			}
+		};
+		const ended = readSseStream(
+			response.body,
+			async (frame) => {
+				if (frame.event === 'open' && !is_open) {
+					const value = parse(frame.data) as { attach?: unknown } | undefined;
+					const grid = size(value);
+					if (typeof value?.attach !== 'string' || !ATTACH_ID.test(value.attach) || !grid) {
+						throw new Error('bad open frame');
+					}
+					is_open = true;
+					opened({ attach: value.attach, ...grid });
+				} else if (!is_open) {
+					throw new Error('frame before open');
+				} else if (frame.event === 'output') {
+					await request.onData(new Uint8Array(Buffer.from(frame.data, 'base64')));
+				} else if (frame.event === 'resize') {
+					const grid = size(parse(frame.data));
+					if (grid !== undefined) request.onResize?.(grid);
+				} else if (frame.event === 'end') {
+					const reason = (parse(frame.data) as { reason?: unknown } | undefined)?.reason;
+					end = {
+						reason: typeof reason === 'string' && END_REASON.test(reason) ? reason : 'exited'
+					};
+				}
+			},
+			touch
+		)
+			.catch(() => undefined)
+			.then((): HcStreamEnd => {
+				clearTimeout(idle);
+				ac.abort();
+				failed();
+				closed = true;
+				return end ?? { reason: 'disconnected' };
+			});
+
+		let open: { attach: string; cols: number; rows: number };
+		try {
+			open = await open_frame;
+		} catch (error) {
+			ac.abort();
+			throw error;
+		}
+
+		const input_path = chatPath(chat_id, `/terminal/${open.attach}`);
+		type Input = { data?: Uint8Array; size?: { cols: number; rows: number } };
+		const pending: Input[] = [];
+		let sending = false;
+		const close = () => {
+			if (closed) return;
+			end ??= { reason: 'detached' };
+			closed = true;
+			ac.abort();
+		};
+		const pump = async () => {
+			if (sending) return;
+			sending = true;
+			try {
+				while (pending.length > 0 && !closed) {
+					const item = pending.shift()!;
+					const body: Record<string, unknown> = {};
+					if (item.data !== undefined) body.data = Buffer.from(item.data).toString('base64');
+					if (item.size !== undefined) Object.assign(body, item.size);
+					const sent = await call('POST', input_path, { body });
+					// Input that went missing would desynchronise the admin's terminal: end the relay.
+					if (!sent.ok) close();
+				}
+			} catch {
+				close();
+			} finally {
+				sending = false;
+			}
+		};
+		const enqueue = (item: Input) => {
+			if (closed) throw new TerminalRelayError('conflict', 'This terminal relay has closed.');
+			if (request.mode !== 'take_over') {
+				throw new TerminalRelayError('conflict', 'This relay is watching.');
+			}
+			const last = pending.at(-1);
+			if (item.data !== undefined) {
+				for (let at = 0; at < item.data.length; at += TERMINAL_INPUT_MAX) {
+					const chunk = item.data.subarray(at, at + TERMINAL_INPUT_MAX);
+					const tail = pending.at(-1);
+					if (
+						tail?.data !== undefined &&
+						tail.size === undefined &&
+						tail.data.length + chunk.length <= TERMINAL_INPUT_MAX
+					) {
+						const merged = new Uint8Array(tail.data.length + chunk.length);
+						merged.set(tail.data);
+						merged.set(chunk, tail.data.length);
+						tail.data = merged;
+					} else {
+						pending.push({ data: chunk });
+					}
+				}
+			} else if (last !== undefined && last.data === undefined) {
+				// Only the newest size matters.
+				last.size = item.size;
+			} else {
+				pending.push(item);
+			}
+			void pump();
+		};
+
+		return {
+			mode: request.mode,
+			size: { cols: open.cols, rows: open.rows },
+			ended,
+			write: (bytes) => enqueue({ data: bytes }),
+			resize: (cols, rows) => enqueue({ size: { cols, rows } }),
+			close
+		};
+	}
+
 	return {
+		attachTerminal,
+
 		async sendMessage(chat_id, input) {
 			const response = await call('POST', chatPath(chat_id, '/messages'), {
 				body: {
@@ -438,11 +645,12 @@ let override: MateRunner | null | undefined;
 let sand: { key: string; runner: MateRunner } | undefined;
 
 /**
- * Which runners implement `attachTerminal`. Sand's runner relays its hc
- * terminal; the remote runner's contract has no relay yet, so its chats
- * would only ever answer 409 and the browser offers no terminal for them.
+ * Which runners implement `attachTerminal`: both. Sand's relays its hc
+ * terminal over the sandbox's process channel; the remote runner serves the
+ * attach over its signed contract. The browser offers the terminal view only
+ * on runners listed here.
  */
-export const MATE_RUNNER_TERMINAL: Record<MateRunnerId, boolean> = { remote: false, e2b: true };
+export const MATE_RUNNER_TERMINAL: Record<MateRunnerId, boolean> = { remote: true, e2b: true };
 
 /** Configured chat runners with their labels, default first. */
 export function configuredMateRunners(env: ServerEnv = getEnv()): MateRunnerInfo[] {

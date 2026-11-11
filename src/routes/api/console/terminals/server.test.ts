@@ -1,7 +1,8 @@
 import { createClient } from '@libsql/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createDispatchStore, type DispatchStore } from '#lib/server/dispatch/store.js';
-import { setMateRunner, type MateRunner } from '#lib/server/mate/runner.js';
+import { readEnv } from '#lib/server/env.js';
+import { createMateRunner, setMateRunner, type MateRunner } from '#lib/server/mate/runner.js';
 import { createMateStore, type MateStore } from '#lib/server/mate/store.js';
 import {
 	initStateSchema,
@@ -21,6 +22,11 @@ import {
 import { NO_CHAT_RELAY_MESSAGE } from '#lib/server/terminal-relay/route.js';
 import { RELAY_WATCH_ONLY_MESSAGE } from '#lib/server/terminal-relay/service.js';
 import { FakeHcCore } from '#lib/test/fake-hc.js';
+import {
+	createFakeMateRunner,
+	FAKE_RUNNER_SECRET,
+	FAKE_RUNNER_URL
+} from '#lib/test/fake-mate-runner.js';
 import { fakeSandboxDriver } from '#lib/test/fake-sandbox-driver.js';
 import { POST as OPEN } from './+server.js';
 import { POST as INPUT } from './[relay]/+server.js';
@@ -193,6 +199,47 @@ describe('POST /api/console/terminals', () => {
 		expect(
 			await errorOf(await open({ chat: chat_id, mode: 'watch', cols: 80, rows: 24 }))
 		).toMatchObject({ status: 409, message: NO_CHAT_RELAY_MESSAGE });
+	});
+
+	it('opens a forge chat through the HTTP mate runner, and types through it', async () => {
+		const runner_fake = createFakeMateRunner();
+		const runner = createMateRunner({
+			server_env: readEnv({
+				BDX_MATE_RUNNER_URL: FAKE_RUNNER_URL,
+				BDX_MATE_RUNNER_SECRET: FAKE_RUNNER_SECRET
+			}),
+			fetch: runner_fake.fetch,
+			secret: FAKE_RUNNER_SECRET
+		});
+		setMateRunner(runner!);
+		const forge = await mate.createChat(ADMIN.id, {
+			title: 'Forge',
+			scope: null,
+			runner: 'remote'
+		});
+		const response = await open({ chat: forge.id, mode: 'take_over', cols: 100, rows: 30 });
+		expect(response.status).toBe(200);
+		const stream = frames(response);
+		const [first] = await stream.until((seen) => seen.length > 0);
+		const opened = JSON.parse(first.data) as { relay: string; mode: string };
+		expect(opened.mode).toBe('take_over');
+		const [attach] = runner_fake.attaches;
+		expect(attach).toMatchObject({ chat_id: forge.id, mode: 'take_over' });
+		expect((await audit.list('chat', forge.id, 10))[0]).toMatchObject({ mode: 'take_over' });
+
+		attach!.output('from forge');
+		await stream.until((seen) => output(seen).includes('from forge'));
+		const sent = await input(opened.relay, { data: Buffer.from('y').toString('base64') });
+		expect(sent.status).toBe(202);
+		await expect
+			.poll(() => attach!.inputs)
+			.toEqual([{ data: Buffer.from('y').toString('base64') }]);
+
+		await stream.cancel();
+		await expect.poll(() => attach!.closed).toBe(true);
+		await expect
+			.poll(async () => (await audit.list('chat', forge.id, 10))[0].end_reason)
+			.toBe('detached');
 	});
 
 	it('409s a finished terminal and a paused sandbox, without resuming it', async () => {

@@ -5,6 +5,7 @@ import { readEnv } from '../env.js';
 import {
 	createFakeMateRunner,
 	FAKE_RUNNER_SECRET,
+	FAKE_TERMINAL_SIZE,
 	FAKE_RUNNER_URL
 } from '#lib/test/fake-mate-runner.js';
 import {
@@ -347,12 +348,109 @@ describe('streamEvents', () => {
 });
 
 describe('MATE_RUNNER_TERMINAL', () => {
-	it('offers a terminal only for runners that implement attachTerminal', () => {
+	it('offers a terminal for both runners, which implement attachTerminal', () => {
 		// The Sand runner's attach is covered in e2b-runner.test.ts.
-		expect(runnerWith(fetch).attachTerminal).toBeUndefined();
-		expect(MATE_RUNNER_TERMINAL).toEqual({ remote: false, e2b: true });
+		expect(runnerWith(fetch).attachTerminal).toBeTypeOf('function');
+		expect(MATE_RUNNER_TERMINAL).toEqual({ remote: true, e2b: true });
 		expect(configuredMateRunners(env)).toEqual([
-			{ id: 'remote', label: expect.any(String), terminal: false }
+			{ id: 'remote', label: expect.any(String), terminal: true }
 		]);
+	});
+});
+
+describe('attachTerminal over the runner contract', () => {
+	const decoder = new TextDecoder();
+	function request(mode: 'watch' | 'take_over', received: string[], sizes: unknown[] = []) {
+		return {
+			mode,
+			cols: 80,
+			rows: 24,
+			onData: (bytes: Uint8Array) => void received.push(decoder.decode(bytes)),
+			onResize: (size: { cols: number; rows: number }) => void sizes.push(size)
+		};
+	}
+
+	it('watches: signed open, output and resize frames, the runner grid, and the end reason', async () => {
+		const fake = createFakeMateRunner();
+		const runner = runnerWith(fake.fetch);
+		const received: string[] = [];
+		const sizes: unknown[] = [];
+		const relay = await runner.attachTerminal!('mc_1', request('watch', received, sizes));
+		const open = fake.requests.find((r) => r.target === '/base/v1/mate/chats/mc_1/terminal')!;
+		expect(JSON.parse(open.body)).toEqual({ mode: 'watch', cols: 80, rows: 24 });
+		expect(open.headers.get('accept')).toBe('text/event-stream');
+		expect(relay.mode).toBe('watch');
+		expect(relay.size).toEqual(FAKE_TERMINAL_SIZE);
+		const [attach] = fake.attaches;
+		attach!.output('hello ');
+		attach!.resize(100, 30);
+		attach!.output('world');
+		await expect.poll(() => received.join('')).toBe('hello world');
+		expect(sizes).toEqual([{ cols: 100, rows: 30 }]);
+		expect(() => relay.write(new TextEncoder().encode('x'))).toThrow();
+		attach!.end('exited');
+		expect(await relay.ended).toEqual({ reason: 'exited' });
+	});
+
+	it('takes over: keystrokes and size go up in order, coalesced, on the attach it opened', async () => {
+		const fake = createFakeMateRunner();
+		const runner = runnerWith(fake.fetch);
+		const relay = await runner.attachTerminal!('mc_1', request('take_over', []));
+		const [attach] = fake.attaches;
+		const encode = (text: string) => new TextEncoder().encode(text);
+		relay.write(encode('y'));
+		relay.write(encode('e'));
+		relay.write(encode('s'));
+		relay.resize(90, 20);
+		relay.resize(100, 30);
+		relay.write(encode('\r'));
+		await expect.poll(() => attach!.inputs.length).toBe(4);
+		const typed = attach!.inputs.map((input) =>
+			input.data === undefined ? input : Buffer.from(input.data, 'base64').toString()
+		);
+		// The first write goes at once; what queues behind it merges.
+		expect(typed).toEqual(['y', 'es', { cols: 100, rows: 30 }, '\r']);
+		expect(fake.requests.at(-1)!.target).toBe(`/base/v1/mate/chats/mc_1/terminal/${attach!.id}`);
+		relay.close();
+		expect(await relay.ended).toEqual({ reason: 'detached' });
+		await expect.poll(() => attach!.closed).toBe(true);
+		expect(() => relay.write(encode('late'))).toThrow();
+	});
+
+	it("shows the runner's refusal, and fails closed when the runner is unreachable", async () => {
+		const fake = createFakeMateRunner();
+		const runner = runnerWith(fake.fetch);
+		fake.failNext('/terminal', 409, { error: "This agent's terminal has finished." });
+		await expect(runner.attachTerminal!('mc_1', request('watch', []))).rejects.toMatchObject({
+			code: 'conflict',
+			message: "This agent's terminal has finished."
+		});
+		fake.failNext('/terminal', 404, { error: 'Not found.' });
+		await expect(runner.attachTerminal!('mc_1', request('watch', []))).rejects.toMatchObject({
+			code: 'unavailable'
+		});
+		const down = runnerWith(async () => {
+			throw new Error('connection refused');
+		});
+		await expect(down.attachTerminal!('mc_1', request('watch', []))).rejects.toMatchObject({
+			code: 'unavailable'
+		});
+	});
+
+	it('ends the relay when an input request is refused', async () => {
+		const fake = createFakeMateRunner();
+		const runner = runnerWith(fake.fetch);
+		const relay = await runner.attachTerminal!('mc_1', request('take_over', []));
+		fake.failNext(`/terminal/${fake.attaches[0]!.id}`, 503, { error: 'gone' });
+		relay.write(new TextEncoder().encode('y'));
+		expect(await relay.ended).toEqual({ reason: 'detached' });
+	});
+
+	it('ends as disconnected when the stream goes silent', async () => {
+		const fake = createFakeMateRunner();
+		const runner = runnerWith(fake.fetch, { idle_timeout_ms: 30 });
+		const relay = await runner.attachTerminal!('mc_1', request('watch', []));
+		expect(await relay.ended).toEqual({ reason: 'disconnected' });
+		expect(fake.attaches[0]!.closed).toBe(true);
 	});
 });

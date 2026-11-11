@@ -17,7 +17,7 @@
 	 * Crew notices (Beadsmith telling the agent a mission it started has
 	 * finished) are quiet system rows, labelled, so they never read as yours.
 	 * Stop interrupts the agent's current turn; the session keeps running.
-	 * On a runner that relays its terminal (Sand), the agent's live terminal
+	 * On a runner that relays its terminal (Sand and forge), the agent's live terminal
 	 * sits under the header (ADR-0021); First Mate is admin-only already.
 	 */
 	import { tip } from '#lib/client/tooltip.js';

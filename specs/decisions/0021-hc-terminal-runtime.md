@@ -290,7 +290,7 @@ Shipped:
   stream instead of growing a buffer.
 - The terminal view (`src/lib/components/terminal-view.svelte`, xterm.js
   loaded on first open) in mission threads and First Mate chats, for admins
-  on runners whose `terminal` capability is set (Sand; the provider and
+  on runners whose `terminal` capability is set (Sand, and forge chats; the provider and
   chat-runner tables say which implement `attachTerminal`). Closed until
   asked; Watch follows the agent's grid; Take over is behind a confirm and
   hands back by re-attaching as a watcher. While taken over every key goes
@@ -315,11 +315,19 @@ Shipped:
   is `fleet/hosts/forge/guest-lifecycle.test.mjs`
   ([host-forge.md](../../docs/operations/host-forge.md#guest-lifecycle-smoke-test)).
 
-Planned, in its own change:
-
-- the relay on forge: the mate runner's signed contract gains an attach
-  endpoint the host runner serves over its SSH `hc connect` (forge chats
-  answer 409 until then).
+- The relay on forge (rule 4's last point): mate runner contract v1 gains
+  a terminal attach (`POST /v1/mate/chats/{chat}/terminal`, an SSE stream
+  of `open`, `output`, `resize` and `end`, and
+  `POST …/terminal/{attach}` for a take-over's keystrokes and size;
+  [first-mate.md](../../docs/first-mate.md#terminal-attach)). The host
+  runner opens a new `hc connect` over its SSH for each attach and finds
+  the chat's terminal by its session label, through the same
+  `attachHcTerminal` the Sand relay uses
+  (`src/lib/server/terminal-relay/relay.ts`). It keeps nothing; Beadsmith
+  authorizes and audits as for Sand, and the HTTP `MateRunner` implements
+  `attachTerminal` against it, so forge chats show the terminal view. The
+  contract stays version 1: the routes are additive, and an older runner's
+  404 reads as unreachable.
 
 The current architecture bullet is in [`specs/README.md`](../README.md); the
 contract's rules are in

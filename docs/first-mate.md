@@ -293,6 +293,54 @@ means stop); if nothing was running yet, one `cancelled` result closes them.
 `DELETE /v1/mate/chats/{chat_id}` → `204`. Stops the session and forgets the
 chat. `404` (never knew it) is fine too.
 
+### Terminal attach
+
+Beadsmith's admin terminal relay (ADR-0021 rule 4) for one chat's agent
+terminal. The runner attaches over a new `hc connect` of its own (on forge,
+the same pinned SSH it runs chats over), so a relay never shares the chat's
+channel; it adds no authority, and it keeps and logs none of the bytes.
+Beadsmith authorizes and audits each relay before it calls this.
+
+`POST /v1/mate/chats/{chat_id}/terminal` with
+`{ "mode": "watch" | "take_over", "cols": 80, "rows": 24 }` (cells, 1 to 1000) and `accept: text/event-stream` → `200`, a Server-Sent Events stream:
+
+```text
+event: open
+data: {"attach":"ta_<32 hex>","mode":"watch","cols":120,"rows":40}
+
+event: output
+data: <base64 bytes>
+
+event: resize
+data: {"cols":100,"rows":30}
+
+event: end
+data: {"reason":"exited"}
+```
+
+- The terminal is the chat's live one labelled `beadsmith-session=<the
+chat's session_id>`. `watch` attaches with hc's `observe` (no typing, no
+  resizing; `resize` frames follow the agent's grid); `take_over` attaches
+  as the active viewer at the grid given.
+- `open` comes first and carries the terminal's grid at attach. Output is
+  written only as fast as Beadsmith reads it, so a slow viewer slows hc's
+  stream instead of growing a buffer. `: ping` comments keep it alive, as
+  on the events stream; Beadsmith treats 45 seconds of silence as gone.
+- `end` carries hc's reason (`exited`, `killed`, …) when the program or
+  attach ends; then the stream closes. Beadsmith closing the request
+  detaches and drops the runner's hc connection.
+- `409 { "error" }`: the chat has no agent yet, or its terminal has
+  finished; Beadsmith shows the text to the admin. `503`: the guest could
+  not be reached. `404`: an unknown route (a runner older than this
+  endpoint), shown as unreachable.
+
+`POST /v1/mate/chats/{chat_id}/terminal/{attach}` with `{ "data"?: base64,
+"cols"?, "rows"? }` (`cols` and `rows` together) → `204`: keystrokes and a
+new size for a `take_over` attach, size first. `409` while watching, `404`
+when that chat has no such open attach. Beadsmith sends these one at a
+time, in order, merging keystrokes that queue behind a request; a refused
+one ends the relay rather than letting the admin's terminal drift.
+
 ### Health
 
 `GET /v1/health` → `{ "ok": true }`. Beadsmith caches the answer for 15
@@ -324,10 +372,11 @@ terminal, driven by the session core
 - A message sent during a turn waits in the runner and goes in when the
   turn ends. A CLI waiting for a decision (hc reports `blocked`) is never
   typed into: the message fails with an error saying so. Stop (interrupt)
-  is one way out; on Sand an admin can also take over the chat's terminal
-  through the relay (the **Terminal** strip under the chat's header;
-  `POST /api/console/terminals`, docs/contract.md) and answer it by hand.
-  Forge chats have no relay yet, so they show no strip.
+  is one way out; an admin can also take over the chat's terminal through
+  the relay (the **Terminal** strip under the chat's header;
+  `POST /api/console/terminals`, docs/contract.md) and answer it by hand,
+  on Sand over the sandbox's process channel and on forge through the
+  runner's [terminal attach](#terminal-attach).
 - The chat holds no channel while it has no agent. After a runner
   restart, an idle chat being evicted (`MATE_RUNNER_MAX_SESSIONS`), the
   CLI exiting or the channel dropping, the next message connects again:
@@ -365,9 +414,34 @@ Restart `mate-runner.service` and send again: a new terminal runs
 `claude --resume` and the answer shows the agent remembers the
 conversation.
 
+Operator check for the terminal relay on forge (not yet run; unit tests
+cover the runner's attach against a fake hc core in
+[`server.test.ts`](../src/lib/mate-runner/server.test.ts), Beadsmith's
+client against a fake runner in
+[`runner.test.ts`](../src/lib/server/mate/runner.test.ts), and the console
+route with a forge chat in
+[`server.test.ts`](../src/routes/api/console/terminals/server.test.ts)):
+
+1. As an admin, open a forge chat that has answered a message. The
+   **Terminal** strip shows under the header; **Watch** shows Claude
+   Code's screen. In the guest, `hc ls` still lists one live terminal for
+   the chat, and the runner host has one more `ssh … hc connect` while
+   the view is open, gone a few seconds after closing it.
+2. **Take over…**, type `/help` and Enter: Claude Code shows its help in
+   the view. **Hand back** returns to watching. Send a chat message
+   afterwards: the agent answers as before.
+3. Watch a chat that has never had a message: the strip says the chat has
+   no agent yet. Stop the guest and watch again: the strip says the
+   terminal could not be reached.
+4. `SELECT * FROM terminal_relay_sessions ORDER BY started_at DESC` in
+   `state.db` lists each attach with your email, `chat`, its mode and an
+   end time; `journalctl -u mate-runner` shows no terminal bytes.
+
 ## Code
 
 - Runner client: [`src/lib/server/mate/runner.ts`](../src/lib/server/mate/runner.ts)
+  (its `attachTerminal` speaks the terminal attach above; the runner side
+  is in [`src/lib/mate-runner/server.ts`](../src/lib/mate-runner/server.ts))
 - Crew tools: [`src/lib/server/crew/`](../src/lib/server/crew/) (the tool
   module, launch limit and crew notices); the Sand relay:
   [`src/lib/server/mate/crew-bridge.ts`](../src/lib/server/mate/crew-bridge.ts)

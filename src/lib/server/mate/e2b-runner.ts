@@ -41,6 +41,7 @@ import { connectSandboxHc } from '../e2b/hc-transport.js';
 import {
 	attachSandboxTerminal,
 	RELAY_GONE_MESSAGE,
+	RELAY_NOT_STARTED_MESSAGE,
 	RELAY_UNAVAILABLE_MESSAGE,
 	TerminalRelayError
 } from '../terminal-relay/relay.js';
@@ -62,7 +63,6 @@ import {
 const SESSION_KEY = 'beadsmith_mate_session';
 /** Extend the sandbox's idle timeout at most this often while the agent is active. */
 const KEEPALIVE_EVERY_MS = 60_000;
-const CHAT_NOT_STARTED = 'This chat has no agent yet. Send it a message first.';
 
 export interface E2bMateDeps {
 	settings: E2bMateSettings;
@@ -329,7 +329,8 @@ export function createE2bMateRunner(deps: E2bMateDeps): MateRunner & { close(): 
 			} catch {
 				throw new TerminalRelayError('unavailable', RELAY_UNAVAILABLE_MESSAGE);
 			}
-			if (session_id === undefined) throw new TerminalRelayError('conflict', CHAT_NOT_STARTED);
+			if (session_id === undefined)
+				throw new TerminalRelayError('conflict', RELAY_NOT_STARTED_MESSAGE);
 			let found;
 			try {
 				[found] = await driver.find({ [SESSION_KEY]: session_id });

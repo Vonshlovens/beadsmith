@@ -144,7 +144,8 @@ hc (herdr-core) terminal inside its sandbox or guest
 ([ADR-0021](../specs/decisions/0021-hc-terminal-runtime.md)). Sand missions
 and First Mate chats do so today; Beadsmith and the forge runner reach each
 hc core only over the sandbox's process channel or SSH. Admins can watch or
-take over a Sand mission's or chat's terminal; the forge relay follows.
+take over a Sand mission's or chat's terminal, and a forge chat's through
+the forge runner, which attaches over its own SSH and keeps nothing.
 
 A machine that runs agents is classified by what it holds, not by where it
 runs:
