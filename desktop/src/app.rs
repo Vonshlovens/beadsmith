@@ -66,6 +66,90 @@ const FOCUS_REFRESH_AFTER: f64 = 5.0;
 
 /// The issue table's element key.
 pub const TABLE_KEY: &str = "issues";
+/// The board's element key.
+pub const BOARD_KEY: &str = "board";
+
+/// How the issues that pass the filters are laid out. Both layouts draw the
+/// same rows (`State::visible`) in the same order, so the choice changes
+/// what is easy to see (the table compares issues, the board shows where
+/// work stands) and never which issues are shown.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Layout {
+    #[default]
+    Table,
+    Board,
+}
+
+impl Layout {
+    pub const ALL: [Layout; 2] = [Layout::Table, Layout::Board];
+
+    /// The name the settings file keeps (`settings::Session`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Layout::Table => "table",
+            Layout::Board => "board",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Layout::Table => "Table",
+            Layout::Board => "Board",
+        }
+    }
+
+    fn from_name(name: Option<&str>) -> Layout {
+        Layout::ALL.into_iter().find(|l| Some(l.name()) == name).unwrap_or_default()
+    }
+}
+
+/// The board's columns: the lifecycle statuses, in the order work moves
+/// through them, each with its heading.
+pub const LANES: [(&str, &str); 4] =
+    [("open", "Open"), ("in_progress", "In progress"), ("blocked", "Blocked"), ("closed", "Closed")];
+/// The heading of the column for any status `LANES` does not name (deferred,
+/// pinned, hooked, or one a newer Beads adds). It is drawn only when it holds
+/// an issue, so the usual board is the four columns and no issue the table
+/// would show is missing from the board.
+pub const OTHER_LANE: &str = "Other";
+
+/// One column of the board.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Lane {
+    /// The status it holds, as stored; empty for `OTHER_LANE`.
+    pub status: &'static str,
+    pub label: &'static str,
+    /// Indices into the loaded issues, in the order `State::visible` has them.
+    pub rows: Vec<usize>,
+}
+
+/// Sort the visible rows into the board's columns. A status tab shows only
+/// the column it names, as the web board does under a status filter: three
+/// columns that the filter guarantees are empty would say nothing.
+fn lanes(issues: &[IssueSummary], visible: &[usize], filter: Filter) -> Vec<Lane> {
+    let shown = |status: &str| match filter {
+        Filter::All => true,
+        Filter::Ready => status == "open",
+        Filter::Status(only) => status == only,
+    };
+    let mut lanes: Vec<Lane> = LANES
+        .iter()
+        .filter(|(status, _)| shown(status))
+        .map(|&(status, label)| Lane { status, label, rows: Vec::new() })
+        .collect();
+    let mut other = Lane { status: "", label: OTHER_LANE, rows: Vec::new() };
+    for &n in visible {
+        let Some(issue) = issues.get(n) else { continue };
+        match lanes.iter_mut().find(|lane| lane.status == issue.status) {
+            Some(lane) => lane.rows.push(n),
+            None => other.rows.push(n),
+        }
+    }
+    if !other.rows.is_empty() {
+        lanes.push(other);
+    }
+    lanes
+}
 
 /// What one tab of the filter above the issue table lets through.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -149,6 +233,19 @@ pub enum Step {
     First,
     Last,
 }
+
+/// The columns a sort can name, with the words the board says them in (it
+/// has no header row to carry the arrow).
+pub const SORT_NAMES: [(&str, &str); 8] = [
+    ("id", "id"),
+    ("title", "title"),
+    ("status", "status"),
+    ("blockers", "blockers"),
+    ("priority", "priority"),
+    ("type", "type"),
+    ("assignee", "assignee"),
+    ("updated", "last update"),
+];
 
 /// What "Test connection" last found for the values now in the form.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -243,6 +340,11 @@ pub struct State {
     pub issues: Load<Vec<IssueSummary>>,
     /// Indices into the loaded issues that pass the filters, in table order.
     pub visible: Vec<usize>,
+    /// `visible` again, by status: the board's columns (`lanes`). Kept beside
+    /// `visible` and rebuilt with it, so the two layouts cannot disagree.
+    pub lanes: Vec<Lane>,
+    /// The table or the board.
+    pub layout: Layout,
     pub search: TextEdit,
     pub status_filter: usize,
     /// The theme preference; the view resolves it against the system's.
@@ -344,6 +446,8 @@ impl State {
             project: None,
             issues: Load::Idle,
             visible: Vec::new(),
+            lanes: Vec::new(),
+            layout: Layout::from_name(session.layout.as_deref()),
             search: TextEdit::new(""),
             status_filter,
             appearance: Appearance::from_name(session.theme.as_deref()),
@@ -431,6 +535,7 @@ impl State {
             self.project = Some(name.to_string());
             self.issues = Load::Loading;
             self.visible.clear();
+            self.lanes.clear();
             self.table.clear_selection();
             self.issue = None;
             self.trail.clear();
@@ -532,18 +637,95 @@ impl State {
     /// at the ends as the table's own arrows do. With no row selected (or the
     /// selected one filtered out) Next starts at the top and Previous at the
     /// bottom. Returns the issue now selected, for the caller to scroll to.
+    ///
+    /// On the board the same steps walk the selected card's column, and
+    /// `move_lane` crosses to the next one.
     pub fn move_selection(&mut self, step: Step) -> Option<String> {
-        let last = self.visible.len().checked_sub(1)?;
-        let row = match (step, self.selected_row()) {
+        let ends = |last: usize, at: Option<usize>| match (step, at) {
             (Step::First, _) | (Step::Next, None) => 0,
             (Step::Last, _) | (Step::Previous, None) => last,
             (Step::Next, Some(row)) => (row + 1).min(last),
             (Step::Previous, Some(row)) => row.saturating_sub(1),
         };
-        let id = self.visible_issue(row)?.id.clone();
+        let id = match self.layout {
+            Layout::Table => {
+                let last = self.visible.len().checked_sub(1)?;
+                self.visible_issue(ends(last, self.selected_row()))?.id.clone()
+            }
+            Layout::Board => {
+                let at = self.selected_card();
+                // With no card selected, the first column that has one.
+                let lane =
+                    at.map_or_else(|| self.lanes.iter().position(|l| !l.rows.is_empty()), |(lane, _)| Some(lane))?;
+                let last = self.lanes[lane].rows.len().checked_sub(1)?;
+                self.lane_issue(lane, ends(last, at.map(|(_, row)| row)))?.id.clone()
+            }
+        };
         self.pane = Pane::List;
         self.select_issue(&id);
         Some(id)
+    }
+
+    /// The selected issue's place on the board: its column and its row in
+    /// it. `None` when nothing is selected or the filters hide it.
+    pub fn selected_card(&self) -> Option<(usize, usize)> {
+        let id = self.issue.as_deref()?;
+        let issues = self.issues.ready()?;
+        self.lanes.iter().enumerate().find_map(|(lane, l)| {
+            let row = l.rows.iter().position(|&n| issues.get(n).is_some_and(|i| i.id == id))?;
+            Some((lane, row))
+        })
+    }
+
+    /// On the board, move the selection `by` columns (-1 or 1) to the card at
+    /// the same height, or that column's last. Empty columns are stepped
+    /// over, and the ends stop as the rows' do. With no card selected it
+    /// starts at the first column that has one (or the last, going left).
+    /// Returns the issue now selected, for the caller to scroll to; `None`
+    /// in the table, which has no columns to cross.
+    pub fn move_lane(&mut self, by: isize) -> Option<String> {
+        if self.layout != Layout::Board {
+            return None;
+        }
+        let filled = |lane: &usize| !self.lanes[*lane].rows.is_empty();
+        let (lane, row) = match self.selected_card() {
+            Some((lane, row)) if by < 0 => ((0..lane).rev().find(filled)?, row),
+            Some((lane, row)) => ((lane + 1..self.lanes.len()).find(filled)?, row),
+            None if by < 0 => ((0..self.lanes.len()).rev().find(filled)?, 0),
+            None => ((0..self.lanes.len()).find(filled)?, 0),
+        };
+        let row = row.min(self.lanes[lane].rows.len() - 1);
+        let id = self.lane_issue(lane, row)?.id.clone();
+        self.pane = Pane::List;
+        self.select_issue(&id);
+        Some(id)
+    }
+
+    /// Show the issues as a table or as a board, and remember which. The
+    /// selection, the filters and the sort are the state's, not the
+    /// layout's, so all three carry over.
+    pub fn set_layout(&mut self, layout: Layout) {
+        if self.layout != layout {
+            self.layout = layout;
+            self.pane = Pane::List;
+            self.remember();
+        }
+    }
+
+    /// The element the issues are drawn in, for scrolling one into view.
+    pub fn list_key(&self) -> &'static str {
+        match self.layout {
+            Layout::Table => TABLE_KEY,
+            Layout::Board => BOARD_KEY,
+        }
+    }
+
+    /// The sort in effect, in words: the board's stand-in for the arrow in
+    /// the table's header.
+    pub fn sort_label(&self) -> Option<String> {
+        let (column, dir) = self.table.sort()?;
+        let name = SORT_NAMES.iter().find(|(key, _)| *key == column)?.1;
+        Some(format!("Sorted by {name} {}", if dir == SortDir::Descending { "↓" } else { "↑" }))
     }
 
     /// Give the keyboard to the selected issue's pane. False when no issue is
@@ -974,6 +1156,7 @@ impl State {
         self.project = None;
         self.issues = Load::Idle;
         self.visible.clear();
+        self.lanes.clear();
         self.table.clear_selection();
         self.issue = None;
         self.trail.clear();
@@ -1007,7 +1190,7 @@ impl State {
             tx.instant();
         }
         if let Some(id) = self.take_reveal() {
-            tx.scroll_into_view_in(TABLE_KEY, id);
+            tx.scroll_into_view_in(self.list_key(), id);
         }
         if let Some(wait) = self.next_tick() {
             tx.wake_after(std::time::Duration::from_secs_f64(wait));
@@ -1117,6 +1300,7 @@ impl State {
         let filter = STATUS_FILTERS.get(self.status_filter).map_or(Filter::All, |(_, f)| *f);
         let Some(issues) = self.issues.ready() else {
             self.visible.clear();
+            self.lanes.clear();
             return;
         };
         self.visible = issues
@@ -1132,6 +1316,7 @@ impl State {
             })
             .map(|(n, _)| n)
             .collect();
+        self.lanes = lanes(issues, &self.visible, filter);
     }
 
     pub fn clear_filters(&mut self) {
@@ -1173,6 +1358,7 @@ impl State {
                 .filter(|_| self.status_filter != 0)
                 .map(|(label, _)| (*label).to_string()),
             sort: self.table.sort().map(|(column, dir)| (column.to_string(), dir == SortDir::Descending)),
+            layout: (self.layout != Layout::default()).then(|| self.layout.name().to_string()),
             theme: (self.appearance != Appearance::System).then(|| self.appearance.name().to_string()),
         };
         let _ = session.save(&mut self.prefs);
@@ -1206,6 +1392,11 @@ impl State {
 
     pub fn visible_issue(&self, row: usize) -> Option<&IssueSummary> {
         self.issues.ready()?.get(*self.visible.get(row)?)
+    }
+
+    /// The issue at `row` of the board's column `lane`.
+    pub fn lane_issue(&self, lane: usize, row: usize) -> Option<&IssueSummary> {
+        self.issues.ready()?.get(*self.lanes.get(lane)?.rows.get(row)?)
     }
 
     pub fn current_project(&self) -> Option<&Project> {
@@ -2203,6 +2394,138 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         panic!("the search never answered");
+    }
+
+    fn lane_ids(s: &State) -> Vec<(&'static str, Vec<String>)> {
+        let ids = |lane: usize| -> Vec<String> {
+            (0..s.lanes[lane].rows.len()).map(|r| s.lane_issue(lane, r).unwrap().id.clone()).collect()
+        };
+        (0..s.lanes.len()).map(|lane| (s.lanes[lane].label, ids(lane))).collect()
+    }
+
+    #[test]
+    fn the_board_holds_the_tables_rows_by_status_in_the_tables_order() {
+        let mut s = loaded();
+        s.sort("priority", SortDir::Ascending);
+        let labels: Vec<_> = s.lanes.iter().map(|l| l.label).collect();
+        assert_eq!(labels, ["Open", "In progress", "Blocked", "Closed"]);
+        // Every visible row is on the board once, each column in the table's order.
+        let table = ids(&s);
+        let mut on_board: Vec<String> = lane_ids(&s).into_iter().flat_map(|(_, ids)| ids).collect();
+        assert_eq!(on_board.len(), table.len());
+        for (lane, (_, cards)) in lane_ids(&s).iter().enumerate() {
+            let in_table: Vec<_> = table
+                .iter()
+                .filter(|id| s.issues.ready().unwrap().iter().any(|i| &i.id == *id && i.status == s.lanes[lane].status))
+                .cloned()
+                .collect();
+            assert_eq!(cards, &in_table);
+        }
+        on_board.sort();
+        let mut sorted = table.clone();
+        sorted.sort();
+        assert_eq!(on_board, sorted);
+
+        // The text filter empties columns without removing them.
+        s.search.replace_text("gasket");
+        s.refilter();
+        let counts: Vec<_> = s.lanes.iter().map(|l| l.rows.len()).collect();
+        assert_eq!(counts, [1, 0, 1, 0]);
+        // A status tab leaves the one column it names; Ready is part of Open.
+        s.search.replace_text("");
+        s.set_status_filter(4); // Blocked
+        assert_eq!(lane_ids(&s), [("Blocked", vec!["lh-4".to_string()])]);
+        s.set_status_filter(1); // Ready
+        assert_eq!((s.lanes.len(), s.lanes[0].label, s.lanes[0].rows.len()), (1, "Open", 4));
+
+        // A status the board has no column for is not dropped from it.
+        s.set_status_filter(0);
+        let Load::Ready(issues) = &mut s.issues else { panic!("loaded") };
+        issues[0].status = "deferred".into();
+        let deferred = issues[0].id.clone();
+        s.refilter();
+        assert_eq!(lane_ids(&s).last().unwrap(), &(OTHER_LANE, vec![deferred]));
+        assert_eq!(s.lanes.iter().map(|l| l.rows.len()).sum::<usize>(), s.visible.len());
+
+        s.select_project("pantry");
+        assert!(s.lanes.is_empty(), "another project's columns wait for its issues");
+    }
+
+    #[test]
+    fn the_selection_survives_the_switch_to_the_board_and_back() {
+        let mut s = loaded();
+        s.set_status_filter(2); // Open
+        s.search.replace_text("lh-");
+        s.sort("id", SortDir::Ascending);
+        s.select_issue("lh-5");
+        let before = (ids(&s), s.detail.clone());
+        s.set_layout(Layout::Board);
+        assert_eq!((s.issue.as_deref(), s.selected_card()), (Some("lh-5"), Some((0, 2))));
+        assert!(s.table.is_selected("lh-5"));
+        assert_eq!(
+            (s.status_filter, s.search.text.as_str(), s.sort_label().as_deref()),
+            (2, "lh-", Some("Sorted by id ↑"))
+        );
+        assert_eq!((ids(&s), s.detail.clone(), s.list_key()), (before.0.clone(), before.1.clone(), BOARD_KEY));
+        s.set_layout(Layout::Table);
+        assert_eq!((s.issue.as_deref(), s.selected_row(), s.list_key()), (Some("lh-5"), Some(2), TABLE_KEY));
+        assert_eq!((ids(&s), s.detail.clone()), before);
+    }
+
+    #[test]
+    fn the_selection_moves_down_a_column_and_across_columns() {
+        let mut s = loaded();
+        assert_eq!(s.move_lane(1), None, "the table has no columns to cross");
+        s.set_layout(Layout::Board);
+        let lanes = lane_ids(&s);
+        let open = &lanes[0].1;
+        assert_eq!(s.move_selection(Step::Next).as_ref(), Some(&open[0]), "nothing selected: the first card");
+        assert_eq!(s.move_selection(Step::Next).as_ref(), Some(&open[1]));
+        assert_eq!(s.move_selection(Step::Last).as_ref(), open.last());
+        assert_eq!(s.move_selection(Step::Next).as_ref(), open.last(), "a column stops at its end");
+        // Across: the same height, or the column's last card.
+        assert_eq!(s.move_lane(1).as_deref(), Some("lh-1"));
+        assert_eq!(s.move_selection(Step::Previous).as_deref(), Some("lh-1"), "a column of one");
+        assert_eq!(s.move_lane(1).as_deref(), Some("lh-4"));
+        assert_eq!(s.move_lane(1).as_ref(), Some(&lanes[3].1[0]));
+        assert_eq!(s.move_lane(1), None, "the last column");
+        assert_eq!(s.move_selection(Step::Next).as_ref(), Some(&lanes[3].1[1]));
+        assert_eq!(s.pane, Pane::List);
+
+        // Empty columns are stepped over.
+        s.search.replace_text("gasket");
+        s.refilter();
+        s.select_issue("lh-5");
+        assert_eq!(s.move_lane(1).as_deref(), Some("lh-4"));
+        assert_eq!(s.move_lane(-1).as_deref(), Some("lh-5"));
+        assert_eq!(s.move_lane(-1), None, "the first column");
+        // The selected issue filtered off the board: start from an end.
+        s.select_issue("lh-1");
+        assert_eq!(s.selected_card(), None);
+        assert_eq!(s.move_lane(-1).as_deref(), Some("lh-4"));
+        s.select_issue("lh-1");
+        assert_eq!(s.move_selection(Step::Previous).as_deref(), Some("lh-5"));
+        s.search.replace_text("no such issue");
+        s.refilter();
+        assert_eq!((s.move_selection(Step::Next), s.move_lane(1)), (None, None));
+    }
+
+    #[test]
+    fn the_layout_is_remembered_and_an_unknown_one_is_the_table() {
+        let file = session_file("layout");
+        let mut s = launch_from(&file);
+        assert_eq!(s.layout, Layout::Table);
+        s.set_layout(Layout::Board);
+        drop(s);
+        let mut s = launch_from(&file);
+        assert_eq!(s.layout, Layout::Board);
+        assert!(!s.lanes.is_empty(), "the columns are filled on the first load");
+        s.set_layout(Layout::Table);
+        assert_eq!(Session::load(&s.prefs).layout, None, "the default leaves the file");
+        drop(s);
+        std::fs::write(&file, r#"{"view.layout":"gantt"}"#).unwrap();
+        assert_eq!(launch_from(&file).layout, Layout::Table);
+        let _ = std::fs::remove_dir_all(file.parent().unwrap());
     }
 
     #[test]

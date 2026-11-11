@@ -66,6 +66,7 @@ const PROJECT_KEY: &str = "view.project";
 const STATUS_KEY: &str = "view.status";
 const SORT_KEY: &str = "view.sort";
 const SORT_DESCENDING_KEY: &str = "view.sort_descending";
+const LAYOUT_KEY: &str = "view.layout";
 /// The web app's name for the same preference (`THEME_SETTING_KEY` in
 /// `src/lib/client/theme.ts`), with the same three values.
 const THEME_KEY: &str = "ui.theme";
@@ -90,7 +91,8 @@ pub fn save_window(prefs: &mut Prefs, size: (f32, f32)) -> Result<(), PrefsError
 }
 
 /// What the window was showing, so the next launch opens on the same view:
-/// the project, the status tab, the sort and the theme preference. The
+/// the project, the status tab, the sort, the table-or-board layout and the
+/// theme preference. The
 /// values are kept as the names the app uses (a project's database, a tab's
 /// label, a column's key) and are not checked here: the app drops a name it
 /// no longer has, so a file from another version, or edited by hand, costs
@@ -104,6 +106,8 @@ pub struct Session {
     pub status: Option<String>,
     /// The sorted column and whether it runs descending.
     pub sort: Option<(String, bool)>,
+    /// How the issues are laid out (`app::Layout::name`); absent for the table.
+    pub layout: Option<String>,
     /// `system`, `light` or `dark` (`theme::Appearance::name`).
     pub theme: Option<String>,
 }
@@ -115,6 +119,7 @@ impl Session {
             project: text(PROJECT_KEY),
             status: text(STATUS_KEY),
             sort: text(SORT_KEY).map(|column| (column, prefs.get::<bool>(SORT_DESCENDING_KEY).unwrap_or(false))),
+            layout: text(LAYOUT_KEY),
             theme: text(THEME_KEY),
         }
     }
@@ -132,6 +137,7 @@ impl Session {
         put(PROJECT_KEY, old.project.as_ref(), self.project.as_ref())?;
         put(STATUS_KEY, old.status.as_ref(), self.status.as_ref())?;
         put(THEME_KEY, old.theme.as_ref(), self.theme.as_ref())?;
+        put(LAYOUT_KEY, old.layout.as_ref(), self.layout.as_ref())?;
         put(SORT_KEY, old.sort.as_ref().map(|s| &s.0), self.sort.as_ref().map(|s| &s.0))?;
         match (old.sort.map(|s| s.1), self.sort.as_ref().map(|s| s.1)) {
             (was, now) if was == now => Ok(()),
@@ -497,6 +503,7 @@ mod tests {
             project: Some("lighthouse".into()),
             status: Some("Ready".into()),
             sort: Some(("priority".into(), true)),
+            layout: Some("board".into()),
             theme: Some("dark".into()),
         }
     }

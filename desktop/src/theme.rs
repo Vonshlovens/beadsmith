@@ -71,6 +71,7 @@ pub struct Scale {
     pub caps: TextStyle,
 }
 
+#[derive(Clone)]
 pub struct Theme {
     /// For rune-kit components.
     pub k: Kit,

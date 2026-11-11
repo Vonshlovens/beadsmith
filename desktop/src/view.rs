@@ -1,22 +1,23 @@
-//! The window: a title bar, projects on the left, the issue table in the
-//! middle, the selected issue on the right. Layout follows the web app's
+//! The window: a title bar, projects on the left, the issues in the middle
+//! (as a table or as a board), the selected issue on the right. Layout follows the web app's
 //! project page (`src/routes/p/[id]/+page.svelte`) and its tokens
 //! (`src/app.css`, restated in `theme.rs`), drawn with Rune's components.
 
 use std::borrow::Cow;
+use std::rc::Rc;
 
 use rune::TextEdit;
-use rune::{Color, Cx, El, LoopSpec, ScrollSpec, Tx, col, el, row, text};
+use rune::{Color, Cx, El, GrowthSpec, LoopSpec, ScrollSpec, Tx, col, el, row, text};
 use rune_kit::{
-    Button, ButtonVariant, Cell, Dialog, Field, Keybind, Kit, Markdown, Select, Table, TableColumn, TableStyle,
-    TextInput,
+    Button, ButtonVariant, Cell, Dialog, Field, Keybind, Kit, Markdown, SegmentedControl, Select, Table, TableColumn,
+    TableStyle, TextInput,
 };
 
-use crate::app::{Check, Connection, Load, Pane, Quick, STATUS_FILTERS, State, TABLE_KEY};
+use crate::app::{BOARD_KEY, Check, Connection, Layout, Load, Pane, Quick, STATUS_FILTERS, State, TABLE_KEY};
 use crate::keys::{self, Command};
-use crate::model::{Failure, IssueDetail, IssueRef, Project};
+use crate::model::{Failure, IssueDetail, IssueRef, IssueSummary, Project};
 use crate::quick::{self, Target};
-use crate::settings::REFRESH_CHOICES;
+use crate::settings::{DEFAULT_WINDOW, REFRESH_CHOICES};
 use crate::theme::{StatusLook, Theme};
 
 /// The web app's `--rail-w`.
@@ -32,18 +33,36 @@ const ROOMY_W: f32 = 1280.0;
 /// The table's Blockers column, shared with its skeleton: the narrowest that
 /// shows the whole heading, so titles keep what is left at the minimum window.
 const BLOCKERS_W: f32 = 84.0;
+/// The detail pane, in a roomy window and below `ROOMY_W`.
+const DETAIL_W: (f32, f32) = (380.0, 320.0);
+/// The narrowest a board column gets before the board scrolls sideways
+/// instead: four of them fit the default window, and a card's title still
+/// has about twenty characters a line.
+const LANE_MIN_W: f32 = 190.0;
+/// The widest: a status tab leaves one column, which should stay a column
+/// and not stretch into a second table.
+const LANE_MAX_W: f32 = 380.0;
+const LANE_GAP: f32 = 8.0;
+/// The room the board keeps from the pane's edges.
+const BOARD_PAD: f32 = 12.0;
 
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let th = Theme::new(s.appearance.dark(cx.system_dark()));
     // Unknown until the first layout; the window opens wider than `ROOMY_W`.
-    let roomy = cx.layout_size("shell").is_none_or(|size| size[0] >= ROOMY_W);
+    let shell_w = cx.layout_size("shell").map_or(DEFAULT_WINDOW.0, |size| size[0]);
+    let roomy = shell_w >= ROOMY_W;
+    // What the sidebar, the detail pane and the two rules between them leave.
+    let main_w = shell_w - SIDEBAR_W - if roomy { DETAIL_W.0 } else { DETAIL_W.1 } - 2.0;
     let panes = row().key("panes").w_full().grow(1.0).min_h(0.0).child(sidebar(s, &th)).child(rule_v(&th));
     // With no project list there is no table or issue to frame, so the
     // reason takes the room of both panes instead of repeating in each.
     let mut layer = Vec::new();
     let panes = match server_state(s, &th) {
         Some(state) => panes.child(state),
-        None => panes.child(main_pane(s, &th, roomy, &mut layer)).child(rule_v(&th)).child(detail_pane(s, &th, roomy)),
+        None => panes
+            .child(main_pane(s, &th, roomy, main_w, &mut layer))
+            .child(rule_v(&th))
+            .child(detail_pane(s, &th, roomy)),
     };
     // On macOS a window without its buttons is in full screen: the display's
     // size, which is not one to reopen a window at.
@@ -782,7 +801,7 @@ fn freshness(s: &State, th: &Theme, roomy: bool, layer: &mut Vec<El>) -> El {
     row().gap(4.0).center_y().child(age).child(interval)
 }
 
-fn main_pane(s: &State, th: &Theme, roomy: bool, layer: &mut Vec<El>) -> El {
+fn main_pane(s: &State, th: &Theme, roomy: bool, main_w: f32, layer: &mut Vec<El>) -> El {
     let (k, t) = (&th.k, &th.t);
     let title = match s.current_project() {
         Some(p) => p.name.clone(),
@@ -831,18 +850,23 @@ fn main_pane(s: &State, th: &Theme, roomy: bool, layer: &mut Vec<El>) -> El {
                 .child(freshness(s, th, roomy, layer))
                 .child(refresh),
         )
-        .child(search.w_full());
+        // The layout is chosen beside the filter: both say how the same
+        // issues are shown, and this row has room at every window width.
+        .child(row().w_full().gap(10.0).center_y().child(search.grow(1.0).min_w(0.0)).child(layout_toggle(s, th)));
 
+    let board = s.layout == Layout::Board;
+    let skeleton = || if board { board_skeleton(th, main_w) } else { table_skeleton(th, roomy) };
     let content = match &s.issues {
         Load::Ready(all) if all.is_empty() => {
             state(th, false, "No issues yet", &format!("Issues filed in {title} with bd appear here."), Vec::new())
         }
         Load::Ready(_) if s.visible.is_empty() => no_matches(s, th),
+        Load::Ready(_) if board => issue_board(s, th, main_w),
         Load::Ready(_) => issue_table(s, th, roomy),
         Load::Failed(f) => failure_state(*f, busy(s), th),
-        Load::Loading => table_skeleton(th, roomy),
-        // The project list is still on its way: the table it will fill.
-        Load::Idle if s.projects.ready().is_none() => table_skeleton(th, roomy),
+        Load::Loading => skeleton(),
+        // The project list is still on its way: the layout it will fill.
+        Load::Idle if s.projects.ready().is_none() => skeleton(),
         Load::Idle => note(th, "Choose a project."),
     };
 
@@ -852,17 +876,39 @@ fn main_pane(s: &State, th: &Theme, roomy: bool, layer: &mut Vec<El>) -> El {
         .min_w(0.0)
         .h_full()
         .child(toolbar)
-        .child(status_tabs(s, th))
+        .child(status_tabs(s, th, roomy))
         .child(rule_h(th))
         // The table's cells pad themselves by 10, so this lines its text up
-        // with the toolbar's 20.
-        .child(col().key("table-frame").w_full().grow(1.0).min_h(0.0).px(10.0).child(content))
+        // with the toolbar's 20. The board pads itself (`BOARD_PAD`), inside
+        // its viewport, so its columns scroll to the pane's edge.
+        .child(col().key("table-frame").w_full().grow(1.0).min_h(0.0).px(if board { 0.0 } else { 10.0 }).child(content))
+}
+
+/// Table or Board, as a two-segment control (the web project page's view
+/// tabs). `v` is its key.
+fn layout_toggle(s: &State, th: &Theme) -> El {
+    let labels = Layout::ALL.map(Layout::label);
+    SegmentedControl::new(&labels, Layout::ALL.iter().position(|l| *l == s.layout))
+        .label("Show issues as")
+        .fit()
+        .on_pick(|s: &mut State, n, tx: &mut Tx| {
+            if let Some(layout) = Layout::ALL.get(n) {
+                keys::set_layout(s, *layout, tx);
+            }
+        })
+        .build(&th.k)
+        .key("layout")
+        .help(format!("Switch between the table and the board ({})", keys::key_label("v")))
 }
 
 /// The status filter as a row of tabs, each with how many of the project's
 /// issues it holds, so the filter also answers "how much is blocked?". The
 /// selected tab takes the mark as an underline that sits on the rule below.
-fn status_tabs(s: &State, th: &Theme) -> El {
+///
+/// On the board the row also says the sort, when it has the room: cards
+/// follow the same sort as the table's rows, and a board has no header to
+/// show it in.
+fn status_tabs(s: &State, th: &Theme, roomy: bool) -> El {
     let t = &th.t;
     let issues = s.issues.ready();
     let mut tabs = row().key("status-filter").role("radiogroup").label("Status").focus_group().w_full().px(10.0);
@@ -892,6 +938,11 @@ fn status_tabs(s: &State, th: &Theme) -> El {
                 .on_press(move |s: &mut State| s.set_status_filter(i))
                 .child(words)
                 .child(el().w_full().h(2.0).fill(if on { t.em_500 } else { Color::TRANSPARENT })),
+        );
+    }
+    if let Some(sorted) = s.sort_label().filter(|_| roomy && s.layout == Layout::Board) {
+        tabs = tabs.child(el().grow(1.0)).child(
+            row().key("board-sort").h(30.0).px(10.0).center_y().child(text(sorted).font(th.ty.xs).color(t.tx_dim)),
         );
     }
     tabs
@@ -1004,6 +1055,206 @@ fn issue_table(s: &State, th: &Theme, roomy: bool) -> El {
         .min_h(0.0)
 }
 
+// ---------------------------------------------------------------------------------------------
+// Board
+
+/// How wide each of `lanes` columns is in a pane `main_w` wide: an equal
+/// share of it, within the bounds that keep a column a column. Narrower
+/// than `LANE_MIN_W` each and the board scrolls sideways instead.
+fn lane_width(main_w: f32, lanes: usize) -> f32 {
+    let lanes = lanes.max(1) as f32;
+    ((main_w - 2.0 * BOARD_PAD - LANE_GAP * (lanes - 1.0)) / lanes).clamp(LANE_MIN_W, LANE_MAX_W)
+}
+
+/// The issues by status: one column each for open, in progress, blocked and
+/// closed (`State::lanes`), read left to right as work moves. It draws the
+/// rows the table would, under the same filters and in the same order, and
+/// shares the table's selection. Each column scrolls by itself and builds
+/// only the cards in view (`El::virtual_rows`), so a project with thousands
+/// of closed issues costs what its visible cards do.
+///
+/// Like the table it is one stop for the keyboard: the window's keys move
+/// the selection (`keys::command`), and assistive technology follows the
+/// selected card as the board's active descendant.
+fn issue_board(s: &State, th: &Theme, main_w: f32) -> El {
+    let width = lane_width(main_w, s.lanes.len());
+    let th = Rc::new(th.clone());
+    let mut lanes = row().key("lanes").h_full().px(BOARD_PAD).pt(10.0).pb(BOARD_PAD).gap(LANE_GAP);
+    for n in 0..s.lanes.len() {
+        lanes = lanes.child(lane(s, n, width, &th));
+    }
+    let mut board = row()
+        .key(BOARD_KEY)
+        .role("group")
+        .label("Board")
+        .focusable(true)
+        .w_full()
+        .grow(1.0)
+        .min_h(0.0)
+        .scroll_x()
+        .child(lanes);
+    if let Some(id) = s.issue.as_deref().filter(|_| s.selected_card().is_some()) {
+        board = board.active_descendant(id.to_string());
+    }
+    board
+}
+
+/// A column's heading: the status as the table writes it (bead and word)
+/// and how many cards it holds.
+fn lane_heading(label: &str, status: &str, count: Option<usize>, th: &Theme) -> El {
+    let mut heading = row().w_full().h(32.0).px(10.0).gap(8.0).center_y().a11y_hidden();
+    // The column for every other status has no one bead to wear.
+    if !status.is_empty() {
+        heading = heading.child(bead(th.status(status)));
+    }
+    heading = heading.child(text(label.to_string()).font(th.ty.sm_strong).color(th.t.tx_hi).truncate().min_w(0.0));
+    match count {
+        Some(n) => heading.child(text(n.to_string()).font(th.ty.xs).color(th.t.tx_dim)),
+        None => heading,
+    }
+}
+
+fn lane_frame(key: String, width: f32, th: &Theme) -> El {
+    col().key(key).w(width).h_full().radius(th.k.radius.sm).fill(th.t.s2)
+}
+
+fn lane(s: &State, n: usize, width: f32, th: &Rc<Theme>) -> El {
+    let lane = &s.lanes[n];
+    let count = lane.rows.len();
+    let name = match count {
+        1 => format!("{}, 1 issue", lane.label),
+        count => format!("{}, {count} issues", lane.label),
+    };
+    let frame = lane_frame(format!("lane-{}", lane.label), width, th).role("list").label(name).child(lane_heading(
+        lane.label,
+        lane.status,
+        Some(count),
+        th,
+    ));
+    if count == 0 {
+        // The column stays, so the board keeps its shape as work moves.
+        return frame.child(text("None").font(th.ty.xs).color(th.t.tx_dim).px(10.0).pt(2.0));
+    }
+    let look = th.clone();
+    let cards = col().key("cards").w_full().px(6.0).growth(GrowthSpec::default()).virtual_rows(
+        count,
+        CARD_H,
+        move |s: &State, i| Cow::Borrowed(s.lane_issue(n, i).map_or("", |issue| issue.id.as_str())),
+        move |s: &State, i| match s.lane_issue(n, i) {
+            Some(issue) => card(issue, s.issue.as_deref() == Some(issue.id.as_str()), &look),
+            None => el(),
+        },
+    );
+    frame.child(col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).child(cards))
+}
+
+/// A card's height before it is measured: two lines of title.
+const CARD_H: f32 = 96.0;
+
+/// One issue on the board, after the web app's `board-card.svelte`: the id
+/// and when it last changed, the title, then what sorts it (priority, type,
+/// labels) and what holds it up. It says nothing about its status: the
+/// column does. A press selects it, as a click on a table row does, and a
+/// double press reads it.
+fn card(issue: &IssueSummary, selected: bool, th: &Theme) -> El {
+    let t = &th.t;
+    let closed = issue.status == "closed";
+    let (id, open_id) = (issue.id.clone(), issue.id.clone());
+    let top = row()
+        .w_full()
+        .gap(8.0)
+        .center_y()
+        .child(text(issue.id.clone()).font(th.ty.xs).color(t.tx_dim).truncate().grow(1.0).min_w(0.0))
+        .child(
+            text(short_date(issue.updated_at.get(..10).unwrap_or(&issue.updated_at))).font(th.ty.xs).color(t.tx_dim),
+        );
+    let mut chips = row()
+        .w_full()
+        .gap(6.0)
+        .center_y()
+        .flex_wrap()
+        .child(text(format!("P{}", issue.priority)).font(th.ty.xs_strong).color(th.priority(issue.priority)))
+        .child(text(issue.issue_type.clone()).font(th.ty.xs).color(if issue.issue_type == "epic" {
+            t.violet_tx
+        } else {
+            t.tx_dim
+        }));
+    // Two labels, then how many more: a card is for scanning, and the
+    // issue's pane lists them all.
+    for label in issue.labels.iter().take(2) {
+        chips = chips.child(tag(label, th));
+    }
+    if issue.labels.len() > 2 {
+        chips = chips.child(text(format!("+{}", issue.labels.len() - 2)).font(th.ty.xs).color(t.tx_dim));
+    }
+    let mut body = col()
+        .w_full()
+        .padding(10.0)
+        .gap(6.0)
+        .a11y_hidden()
+        .child(top)
+        .child(
+            text(issue.title.clone())
+                .font(th.ty.sm)
+                // Closed work recedes but stays readable and openable.
+                .color(if closed { t.tx_dim } else { t.tx_hi })
+                .max_lines(3),
+        )
+        .child(chips);
+    // The last line appears only when there is something to say on it.
+    let blocked = (issue.blocker_count > 0 && !closed).then(|| match issue.blocker_count {
+        1 => "1 blocker".to_string(),
+        n => format!("{n} blockers"),
+    });
+    if blocked.is_some() || issue.assignee.is_some() {
+        let mut meta = row().w_full().gap(8.0).center_y();
+        if let Some(blocked) = &blocked {
+            meta = meta.child(text(blocked.clone()).font(th.ty.xs).color(t.amber_tx));
+        }
+        meta = meta.child(el().grow(1.0));
+        if let Some(assignee) = &issue.assignee {
+            meta = meta.child(text(assignee.clone()).font(th.ty.xs).color(t.tx_mid).truncate().min_w(0.0));
+        }
+        body = body.child(meta);
+    }
+    let mut label = format!("{}, P{}, {}: {}", issue.id, issue.priority, issue.issue_type, issue.title);
+    if let Some(blocked) = blocked {
+        label.push_str(&format!(", {blocked}"));
+    }
+    // The gap between cards is the row's own padding: virtual rows are
+    // measured one by one, so a gap on their parent would not be counted.
+    col().w_full().pb(6.0).child(
+        col()
+            .key(format!("card-{}", issue.id))
+            .role("listitem")
+            .label(label)
+            .w_full()
+            .radius(th.k.radius.sm)
+            .fill(t.bg)
+            .hover(th.k.c.hover)
+            .on_press(move |s: &mut State| {
+                s.pane = Pane::List;
+                s.select_issue(&id);
+            })
+            .on_double_press_tx(move |s: &mut State, tx: &mut Tx| {
+                s.select_issue(&open_id);
+                keys::run(s, Command::Open, tx);
+            })
+            // `.tbl tr.is-selected`: the mark as a wash, and here as the
+            // card's edge too, since cards are told apart by their edges.
+            .child(
+                el().absolute(0.0, 0.0)
+                    .w_full()
+                    .h_full()
+                    .radius(th.k.radius.sm)
+                    .fill(if selected { t.em_wash_2 } else { Color::TRANSPARENT })
+                    .border(1.0, if selected { t.em_500 } else { t.line_2 })
+                    .a11y_hidden(),
+            )
+            .child(body),
+    )
+}
+
 /// The status looks a table cell can need, resolved once per view rather
 /// than once per cell.
 #[derive(Clone, Copy)]
@@ -1040,7 +1291,7 @@ fn detail_pane(s: &State, th: &Theme, roomy: bool) -> El {
         (Some(_), Load::Failed(f)) => failure_state(*f, busy(s), th),
         (Some(_), _) => detail_skeleton(th),
     };
-    let mut pane = col().key("detail").w(if roomy { 380.0 } else { 320.0 }).h_full();
+    let mut pane = col().key("detail").w(if roomy { DETAIL_W.0 } else { DETAIL_W.1 }).h_full();
     // Above every state of the pane, so an issue that failed to load or has
     // left the server still shows the way back to the one that linked to it.
     if let Some(bar) = trail_bar(s, th) {
@@ -1448,6 +1699,34 @@ fn table_skeleton(th: &Theme, roomy: bool) -> El {
         table = table.child(line(n + 1, 32.0, [40.0, 64.0, 0.0, 18.0, 40.0, 44.0], title, 10.0));
     }
     table
+}
+
+/// The board's four columns with a few cards outlined in each.
+fn board_skeleton(th: &Theme, main_w: f32) -> El {
+    let width = lane_width(main_w, crate::app::LANES.len());
+    let card = |n: usize, title: f32| {
+        col()
+            .key(format!("card-{n}"))
+            .w_full()
+            .padding(10.0)
+            .gap(10.0)
+            .radius(th.k.radius.sm)
+            .fill(th.t.bg)
+            .child(bar(th, 40.0, 8.0))
+            .child(row().w_full().child(flex_bar(th, title, 10.0)))
+            .child(row().gap(6.0).child(bar(th, 18.0, 8.0)).child(bar(th, 40.0, 8.0)))
+    };
+    let mut lanes = row().w_full().h_full().px(BOARD_PAD).pt(10.0).pb(BOARD_PAD).gap(LANE_GAP);
+    // Open work is usually the longest column and work in hand the shortest.
+    for (n, cards) in [3, 1, 2, 3].into_iter().enumerate() {
+        let mut list = col().w_full().px(6.0).gap(6.0);
+        for c in 0..cards {
+            list = list.child(card(c, RAGGED[(n * 3 + c) % RAGGED.len()]));
+        }
+        let heading = row().w_full().h(32.0).px(10.0).center_y().child(bar(th, 64.0, 8.0));
+        lanes = lanes.child(lane_frame(format!("lane-{n}"), width, th).a11y_hidden().child(heading).child(list));
+    }
+    pending("issues-loading", "Loading issues").child(lanes)
 }
 
 /// The detail pane: id, title, chips, facts, then a section of prose.

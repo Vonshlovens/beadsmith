@@ -82,6 +82,32 @@ fn filtered_scene(s: &mut State) {
     s.refilter();
 }
 
+/// The same issues as `sample`, by status: the board, with the selection
+/// the table had.
+fn board_scene(s: &mut State) {
+    sample_scene(s);
+    s.layout = app::Layout::Board;
+}
+
+/// A status tab leaves the one column it names, and a sort is said in words
+/// beside the tabs.
+fn board_ready_scene(s: &mut State) {
+    ready_scene(s);
+    s.layout = app::Layout::Board;
+}
+
+/// A text filter on the board: columns it empties keep their place.
+fn board_filtered_scene(s: &mut State) {
+    filtered_scene(s);
+    s.layout = app::Layout::Board;
+}
+
+/// A project just chosen while the board is the layout.
+fn board_loading_scene(s: &mut State) {
+    loading_issues_scene(s);
+    s.layout = app::Layout::Board;
+}
+
 /// A server that is never contacted: scenes set the outcome themselves.
 fn example_server() -> Arc<dyn Source> {
     let config = Config { host: "dolt.example".into(), port: 3306, user: "reader".into() };
@@ -344,6 +370,10 @@ fn main() {
         scenes: &[
             ("sample", sample_scene),
             ("filtered", filtered_scene),
+            ("board", board_scene),
+            ("board-ready", board_ready_scene),
+            ("board-filtered", board_filtered_scene),
+            ("board-loading", board_loading_scene),
             ("unconfigured", unconfigured_scene),
             ("unreachable", unreachable_scene),
             ("auth-rejected", auth_rejected_scene),

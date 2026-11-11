@@ -17,6 +17,9 @@ The decision record is
   and last-activity summaries.
 - Shows a project's issues in a sortable, virtualised table, filtered by
   status and by text (title, id, label or assignee).
+- Shows the same issues as a board: a column for each of open, in progress,
+  blocked and closed, under the same filters, sort and selection as the
+  table. See [The board](#the-board).
 - Answers "what can be picked up now?": the Ready filter keeps the open
   issues nothing blocks, by the rule of the web app's Ready deck, and the
   Blockers column says how many unfinished issues each of the others waits
@@ -43,15 +46,15 @@ The decision record is
   and each connection failure with Retry and Connection settings.
 - Follows the system's light or dark theme, or the one chosen in the title
   bar (`[auto]`, `[light]`, `[dark]`, as in the web app).
-- Opens where it was left: the same project, status tab, sort, theme choice
-  and window size. See [What a relaunch remembers](#what-a-relaunch-remembers).
+- Opens where it was left: the same project, status tab, sort, table or
+  board, theme choice and window size. See [What a relaunch remembers](#what-a-relaunch-remembers).
 - Keeps its connection: host, port and user in a settings file, the password
   in the macOS Keychain, set from a connection screen that can test them
   first.
 
-It reads only. Dispatch, accounts, the console, backups, the board, the
-Ready deck across projects, todos and the command palette's actions are
-web-only.
+It reads only. Dispatch (the web board's drag to an agent included),
+accounts, the console, backups, the Ready deck across projects, todos and
+the command palette's actions are web-only.
 
 ## Ready and blockers
 
@@ -75,6 +78,44 @@ link issues without blocking; the issue pane names the type beside them.
 Following a dependency link leaves a trail, shown as back and forward
 arrows above the issue. Choosing an issue in the list starts a new one: the
 trail is for a chain of blockers, not for every row passed on the way.
+
+## The board
+
+Table and Board, beside the filter field (or `v`), are two layouts of one
+list. The board sorts the rows the table would show into a column per
+status, left to right as work moves: open, in progress, blocked, closed. It
+answers a different question from the table ("where does the work stand?"
+rather than "how do these issues compare?"), not a different set of issues:
+
+- The text filter and the status tabs apply as they do to the table. A
+  status tab leaves the one column it names, as the web board does under a
+  status filter (Ready is a part of Open); a text filter keeps every column
+  and may empty some.
+- Cards follow the table's sort inside each column, and the server's order
+  (latest change first) when nothing is sorted. The board has no header row
+  to carry the sort arrow, so a wide window says the sort in words beside
+  the tabs.
+- The selection is shared. Switching layouts keeps the issue open on the
+  right and scrolls to its card or row.
+- A status the board has no column for (deferred, pinned, hooked) goes in
+  an Other column, drawn only when it holds an issue, so nothing the table
+  shows is missing from the board.
+
+A card carries what the web app's does: id, date of the last change, title
+(three lines at most), priority, type, two labels and a count of the rest,
+then the unfinished blockers and the assignee when there are any. A click
+selects it and a double click reads it; `j` and `k` walk a column, `h` and
+`l` (or the arrows) cross to the next column that has a card.
+
+Each column scrolls by itself and builds only the cards in view, like the
+table, so a long Closed column costs what its visible cards do. Columns
+share the pane's width down to 190 points each; narrower than that and the
+board scrolls sideways instead. Cards cannot be dragged: on the web a drag
+asks an agent to do the work, and this client only reads.
+
+The grouping is `lanes` in [`src/app.rs`](src/app.rs), rebuilt with the
+filtered list it is derived from, and the layout is saved as `view.layout`
+([What a relaunch remembers](#what-a-relaunch-remembers)).
 
 ## Automatic refresh
 
@@ -138,6 +179,9 @@ is Ctrl off macOS. Plain keys never fire while you type in a field.
 | `s`                  | Sort by the next column                                                        |
 | `⇧S`                 | Reverse the sort                                                               |
 | `/` / `⌘F`           | Filter issues                                                                  |
+| `v`                  | Show the table or the board                                                    |
+| `h` / `←`            | Board: previous column                                                         |
+| `l` / `→`            | Board: next column                                                             |
 | `j` / `↓` / `Space`  | Page down                                                                      |
 | `k` / `↑` / `⇧Space` | Page up                                                                        |
 | `Home` / `End`       | Top or bottom                                                                  |
@@ -349,6 +393,7 @@ window's size is written when the window closes.
 | `view.project`                      | The project last open                                     |
 | `view.status`                       | The status tab, by its label; absent for All              |
 | `view.sort`, `view.sort_descending` | The sorted column and its direction; absent when unsorted |
+| `view.layout`                       | `board`; absent for the table                             |
 | `ui.theme`                          | `light` or `dark`; absent to follow the system            |
 | `window.size`                       | The window's content size in points, `[width, height]`    |
 
@@ -403,7 +448,9 @@ cargo run -- --tree tree.json --scene filtered     # the element tree as JSON
 ```
 
 Scenes fill state directly, so they need no server. `--list-scenes` names
-them all: the data (`sample`, `filtered`, `ready`), every pane while it loads
+them all: the data (`sample`, `filtered`, `ready`), the board (`board`,
+`board-ready` under a status tab and a sort, `board-filtered`,
+`board-loading`), every pane while it loads
 (`loading`, `loading-issues`, `loading-issue`), the empty and failed states
 (`no-projects`, `empty-project`, `no-matches`, `issue-gone`, `unconfigured`,
 `unreachable`, `auth-rejected`, `credential-unavailable`, `issues-failed`,
@@ -486,17 +533,17 @@ and the palette says the issues are missing.
 
 ## Layout
 
-| File                                 | Role                                              |
-| ------------------------------------ | ------------------------------------------------- |
-| [`src/main.rs`](src/main.rs)         | Entry point: picks the data source, scenes, keys  |
-| [`src/app.rs`](src/app.rs)           | State, requests on workers, filtering and sorting |
-| [`src/view.rs`](src/view.rs)         | The window: projects, issue table, issue detail   |
-| [`src/keys.rs`](src/keys.rs)         | Keys to commands, the menu bar, the shortcut list |
-| [`src/quick.rs`](src/quick.rs)       | Quick open's matching and ranking                 |
-| [`src/dolt.rs`](src/dolt.rs)         | The Dolt read plane                               |
-| [`src/settings.rs`](src/settings.rs) | Environment, settings file and keychain           |
-| [`src/model.rs`](src/model.rs)       | Read-model types and the failure classes          |
-| [`src/sample.rs`](src/sample.rs)     | Built-in sample data                              |
+| File                                 | Role                                               |
+| ------------------------------------ | -------------------------------------------------- |
+| [`src/main.rs`](src/main.rs)         | Entry point: picks the data source, scenes, keys   |
+| [`src/app.rs`](src/app.rs)           | State, requests on workers, filters, sort, lanes   |
+| [`src/view.rs`](src/view.rs)         | The window: projects, table or board, issue detail |
+| [`src/keys.rs`](src/keys.rs)         | Keys to commands, the menu bar, the shortcut list  |
+| [`src/quick.rs`](src/quick.rs)       | Quick open's matching and ranking                  |
+| [`src/dolt.rs`](src/dolt.rs)         | The Dolt read plane                                |
+| [`src/settings.rs`](src/settings.rs) | Environment, settings file and keychain            |
+| [`src/model.rs`](src/model.rs)       | Read-model types and the failure classes           |
+| [`src/sample.rs`](src/sample.rs)     | Built-in sample data                               |
 
 Rune is pre-release and asks apps to pin a revision of its `dev` branch; the
 pin is in [`Cargo.toml`](Cargo.toml).
@@ -510,5 +557,5 @@ pin is in [`Cargo.toml`](Cargo.toml).
   accounts and the project gate (see the ADR's alternatives).
 - Developer ID signing and notarization of the macOS download. Bundles for
   Linux and Windows.
-- The board, the Ready deck across projects, the activity feed, full-text
+- The Ready deck across projects, the activity feed, full-text
   search of issue bodies and comments, and any writes.

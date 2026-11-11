@@ -14,7 +14,7 @@
 
 use rune::{Key, KeyEvent, MenuItem, Tx};
 
-use crate::app::{Pane, State, Step, TABLE_KEY};
+use crate::app::{Layout, Pane, State, Step};
 
 /// An element inside the detail pane's scroll view, by which `Scroll` names
 /// that view. The view itself is keyed per issue so each issue opens at its top.
@@ -36,8 +36,12 @@ pub enum Scroll {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
-    /// Move the selection through the issue list.
+    /// Move the selection through the issue list, or down a board column.
     Select(Step),
+    /// On the board, move the selection this many columns (-1 or 1).
+    Lane(isize),
+    /// Switch between the table and the board.
+    SwitchLayout,
     /// Give the keyboard to the selected issue (or select the first one).
     Open,
     /// Esc: step back out of whatever is innermost.
@@ -69,7 +73,7 @@ impl Command {
     /// Whether holding the key down should repeat the command. Moving and
     /// scrolling do; a held `r` must not queue a refresh per repeat.
     pub fn repeats(self) -> bool {
-        matches!(self, Command::Select(_) | Command::Scroll(_))
+        matches!(self, Command::Select(_) | Command::Lane(_) | Command::Scroll(_))
     }
 }
 
@@ -113,6 +117,10 @@ pub fn command(key: &KeyEvent, pane: Pane, typing: bool) -> Option<Command> {
     match &key.key {
         Key::Down => either(Command::Select(Step::Next), Scroll::PageDown),
         Key::Up => either(Command::Select(Step::Previous), Scroll::PageUp),
+        // The web board's keys. In the table they find nothing to move
+        // (`run` says so) and the key goes on to whatever else wants it.
+        Key::Left if !reading => Some(Command::Lane(-1)),
+        Key::Right if !reading => Some(Command::Lane(1)),
         Key::Home => either(Command::Select(Step::First), Scroll::Top),
         Key::End => either(Command::Select(Step::Last), Scroll::Bottom),
         // In the list Rune's own paging of the table is left alone.
@@ -123,6 +131,9 @@ pub fn command(key: &KeyEvent, pane: Pane, typing: bool) -> Option<Command> {
             "j" => either(Command::Select(Step::Next), Scroll::PageDown),
             "k" => either(Command::Select(Step::Previous), Scroll::PageUp),
             " " if reading => Some(Command::Scroll(if m.shift { Scroll::PageUp } else { Scroll::PageDown })),
+            "h" if !reading => Some(Command::Lane(-1)),
+            "l" if !reading => Some(Command::Lane(1)),
+            "v" => Some(Command::SwitchLayout),
             "o" => Some(Command::Open),
             "/" => Some(Command::Filter),
             "r" => Some(Command::Refresh),
@@ -159,8 +170,20 @@ pub fn run(s: &mut State, command: Command, tx: &mut Tx) -> bool {
     match command {
         Command::Select(step) => {
             if let Some(id) = s.move_selection(step) {
-                tx.scroll_into_view_in(TABLE_KEY, id);
+                tx.scroll_into_view_in(s.list_key(), id);
             }
+        }
+        Command::Lane(by) => {
+            if s.layout != Layout::Board {
+                return false;
+            }
+            if let Some(id) = s.move_lane(by) {
+                tx.scroll_into_view_in(s.list_key(), id);
+            }
+        }
+        Command::SwitchLayout => {
+            let next = if s.layout == Layout::Table { Layout::Board } else { Layout::Table };
+            set_layout(s, next, tx);
         }
         Command::Open => open(s, tx),
         Command::Back => {
@@ -220,7 +243,16 @@ pub fn follow_link(s: &mut State, id: &str, tx: &mut Tx) {
 /// and then the list stays where it is.
 fn reveal(s: &State, id: &str, tx: &mut Tx) {
     if s.selected_row().is_some() {
-        tx.scroll_into_view_in(TABLE_KEY, id.to_string());
+        tx.scroll_into_view_in(s.list_key(), id.to_string());
+    }
+}
+
+/// Show the issues as `layout` and bring the selected one into view there:
+/// the toggle changes how the list is drawn, not where the reader is in it.
+pub fn set_layout(s: &mut State, layout: Layout, tx: &mut Tx) {
+    s.set_layout(layout);
+    if let Some(id) = s.issue.clone() {
+        reveal(s, &id, tx);
     }
 }
 
@@ -235,7 +267,7 @@ pub fn perform(s: &mut State, command: Command, tx: &mut Tx) {
 fn open(s: &mut State, tx: &mut Tx) {
     if s.issue.is_none() {
         if let Some(id) = s.move_selection(Step::First) {
-            tx.scroll_into_view_in(TABLE_KEY, id);
+            tx.scroll_into_view_in(s.list_key(), id);
         }
     } else if s.open_detail() {
         tx.blur();
@@ -249,7 +281,7 @@ pub fn submit_filter(s: &mut State, tx: &mut Tx) {
     if s.selected_row().is_none()
         && let Some(id) = s.move_selection(Step::First)
     {
-        tx.scroll_into_view_in(TABLE_KEY, id);
+        tx.scroll_into_view_in(s.list_key(), id);
     }
 }
 
@@ -332,6 +364,7 @@ pub fn menu() -> Vec<MenuItem<State>> {
         keyed("Filter Issues", |s, tx| perform(s, Command::Filter, tx), "cmd+f").menu("View"),
         keyed("Refresh", |s, tx| perform(s, Command::Refresh, tx), "cmd+r").menu("View"),
         MenuItem::separator().menu("View"),
+        MenuItem::new("Switch Between Table and Board", |s, tx| perform(s, Command::SwitchLayout, tx)).menu("View"),
         MenuItem::new("Sort by Next Column", |s, tx| perform(s, Command::SortNext, tx)).menu("View"),
         MenuItem::new("Reverse Sort Order", |s, tx| perform(s, Command::SortReverse, tx)).menu("View"),
         MenuItem::separator().menu("View"),
@@ -365,6 +398,9 @@ pub const SHORTCUTS: &[(&str, &[Shortcut])] = &[
             (&["s"], "Sort by the next column"),
             (&["⇧S"], "Reverse the sort"),
             (&["/", "⌘F"], "Filter issues"),
+            (&["v"], "Show the table or the board"),
+            (&["h", "←"], "Board: previous column"),
+            (&["l", "→"], "Board: next column"),
         ],
     ),
     (
@@ -430,6 +466,11 @@ mod tests {
         assert_eq!(list(text("S")), Some(Command::SortReverse));
         assert_eq!(list(Key::Escape.into()), Some(Command::Back));
         assert_eq!(list(Key::PageDown.into()), None, "the table pages itself");
+        assert_eq!(list(text("v")), Some(Command::SwitchLayout));
+        assert_eq!(list(text("h")), Some(Command::Lane(-1)));
+        assert_eq!(list(Key::Left.into()), Some(Command::Lane(-1)));
+        assert_eq!(list(text("l")), Some(Command::Lane(1)));
+        assert_eq!(list(Key::Right.into()), Some(Command::Lane(1)));
         assert_eq!(list(text("x")), None);
     }
 
@@ -444,6 +485,9 @@ mod tests {
         let shift_space = KeyEvent { key: Key::Text(" ".into()), mods: Mods { shift: true, ..Mods::default() } };
         assert_eq!(detail(shift_space), Some(Command::Scroll(Scroll::PageUp)));
         assert_eq!(detail(Key::Escape.into()), Some(Command::Back));
+        for key in [text("h"), text("l"), Key::Left.into(), Key::Right.into()] {
+            assert_eq!(detail(key), None, "an issue being read has no columns to cross");
+        }
     }
 
     #[test]
@@ -459,7 +503,9 @@ mod tests {
         assert_eq!(typing(cmd('[')), Some(Command::TrailBack));
         assert_eq!(typing(cmd(']')), Some(Command::TrailForward));
         assert_eq!(typing(Key::Escape.into()), Some(Command::Back));
-        for key in [text("j"), text("r"), text("/"), text("?"), Key::Down.into(), Key::Enter.into()] {
+        for key in
+            [text("j"), text("r"), text("/"), text("?"), text("v"), text("h"), Key::Down.into(), Key::Enter.into()]
+        {
             assert_eq!(typing(key), None);
         }
         let shifted = KeyEvent { key: Key::Command('r'), mods: Mods { cmd: true, shift: true, ..Mods::default() } };
@@ -471,6 +517,7 @@ mod tests {
     #[test]
     fn only_moving_and_scrolling_repeat_while_held() {
         assert!(Command::Select(Step::Next).repeats() && Command::Scroll(Scroll::PageDown).repeats());
+        assert!(Command::Lane(1).repeats() && !Command::SwitchLayout.repeats());
         assert!(!Command::Refresh.repeats() && !Command::Open.repeats() && !Command::Back.repeats());
         assert!(!Command::TrailBack.repeats() && !Command::TrailForward.repeats());
         assert!(!Command::QuickOpen.repeats());
