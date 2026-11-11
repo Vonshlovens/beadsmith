@@ -60,8 +60,11 @@ status and text filters, and the issue detail.
   has to land in both until one of them goes.
 - No TLS yet: the prototype connects in the clear, so it belongs on loopback,
   a tunnel or a private network.
-- Not shipped: no packaging, no CI job, no release. The web app is
-  unchanged.
+- Not shipped: no packaging and no release. The web app is unchanged. The
+  crate has its own workflow, `.github/workflows/desktop.yml` (format,
+  Clippy, tests and a headless render of every scene on macOS and Linux),
+  kept out of `ci.yml` so the web app's jobs and its image publish neither
+  wait for a Rust build nor fail on one.
 
 ## Alternatives considered
 

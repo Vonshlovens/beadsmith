@@ -100,14 +100,31 @@ directly, so they need no server. The screenshots above are
 `--snap docs/sample-dark.png --scene sample` and the same with
 `--theme light`.
 
+To render every scene in both themes at once, as CI does:
+
+```sh
+scripts/snap-scenes.sh            # target/scenes/<scene>-<theme>.png
+```
+
+Snapshots render on the GPU path. A Linux machine without a GPU needs a
+software Vulkan driver (`mesa-vulkan-drivers` on Debian/Ubuntu, with
+`VK_ICD_FILENAMES` pointing at its `lvp_icd*.json`).
+
 ## Tests
 
 ```sh
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
 cargo test                       # unit tests, no server
-cargo clippy --all-targets
 BEADS_DOLT_SERVER_HOST=127.0.0.1 BEADS_DOLT_SERVER_USER=beadsmith \
 BEADS_DOLT_PASSWORD=… cargo test -- --ignored   # against a live server
 ```
+
+CI runs the first three and `scripts/snap-scenes.sh` on macOS and Linux for
+every pull request and push to `main` that touches `desktop/`
+([`.github/workflows/desktop.yml`](../.github/workflows/desktop.yml)), and
+uploads the scene images as an artifact. It is a separate workflow from the
+web app's, so neither waits on the other.
 
 ## Layout
 
@@ -128,6 +145,6 @@ pin is in [`Cargo.toml`](Cargo.toml).
 - TLS to the Dolt server, and storing credentials in the OS keychain.
 - Talking to a Beadsmith server's API instead of Dolt, which would bring
   accounts and the project gate (see the ADR's alternatives).
-- Packaging (app bundles, installers) and a CI job for this crate.
+- Packaging (app bundles, installers).
 - The board, Ready, the activity feed, search across projects, and any
   writes.
