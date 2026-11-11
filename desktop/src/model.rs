@@ -195,6 +195,9 @@ pub enum Failure {
     TlsRejected,
     /// TLS is on and the server does not offer it.
     TlsUnsupported,
+    /// TLS is off and the server refuses plain connections
+    /// (`Dolt::refused` asks again over TLS to tell).
+    TlsRequired,
     Unknown,
 }
 
@@ -208,6 +211,7 @@ impl Failure {
             Failure::Unreachable => "Server unreachable",
             Failure::TlsRejected => "Certificate not trusted",
             Failure::TlsUnsupported => "Server has no TLS",
+            Failure::TlsRequired => "Server requires TLS",
             Failure::Unknown => "Connection failed",
         }
     }
@@ -233,6 +237,9 @@ impl Failure {
             }
             Failure::TlsUnsupported => {
                 "The Dolt server does not offer TLS. Turn on TLS on the server, or turn it off in connection settings."
+            }
+            Failure::TlsRequired => {
+                "The Dolt server accepts only encrypted connections. Turn on TLS in connection settings."
             }
             Failure::Unknown => "The Dolt connection failed.",
         }

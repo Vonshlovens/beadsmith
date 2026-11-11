@@ -252,6 +252,13 @@ fn tls_rejected_scene(s: &mut State) {
     s.projects = Load::Failed(Failure::TlsRejected);
 }
 
+/// A server that refuses plain connections while TLS is off: the pane
+/// points at connection settings first.
+fn tls_required_scene(s: &mut State) {
+    s.source = example_server();
+    s.projects = Load::Failed(Failure::TlsRequired);
+}
+
 /// A server across the network without TLS: the sidebar says so beside its
 /// name, on every screen.
 fn unencrypted_scene(s: &mut State) {
@@ -443,6 +450,7 @@ fn main() {
             ("unreachable", unreachable_scene),
             ("auth-rejected", auth_rejected_scene),
             ("tls-rejected", tls_rejected_scene),
+            ("tls-required", tls_required_scene),
             ("unencrypted", unencrypted_scene),
             ("credential-unavailable", credential_unavailable_scene),
             ("loading", loading_scene),

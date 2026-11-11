@@ -493,8 +493,12 @@ On the server, Dolt takes a certificate and key in its config file's
 then refuses plain connections. A failure is one of two fixed messages,
 with no detail from the TLS library: **Certificate not trusted** (any failed
 handshake, nearly always an untrusted CA or a certificate for another name)
-or **Server has no TLS**. A server that requires TLS while the app has it
-off reports a generic error, which reads as **Connection failed**.
+or **Server has no TLS**. With TLS off, a server that requires it reads as
+**Server requires TLS**: Dolt refuses the plain connection with its generic
+error 1105 before reading the credentials, so after that one error the app
+asks once more over verified TLS and, if the server offers a certificate,
+says to turn TLS on. The password goes out on that second attempt only after
+the certificate checks out.
 
 ## Check it headlessly
 
@@ -513,6 +517,7 @@ and a sort, `board-filtered`, `board-loading`), every pane while it loads
 (`loading`, `loading-issues`, `loading-issue`), the empty and failed states
 (`no-projects`, `empty-project`, `no-matches`, `issue-gone`, `unconfigured`,
 `unreachable`, `auth-rejected`, `credential-unavailable`, `tls-rejected`,
+`tls-required`,
 `issues-failed`, `issue-failed`), a server read without TLS across a network
 (`unencrypted`), a failed refresh over loaded data (`stale`), the window
 re-reading by itself (`refreshing`) and its interval being chosen
@@ -565,7 +570,11 @@ and relaunch from it. The TLS test needs, besides that server (which must
 not offer TLS), a second Dolt on the same host with a certificate for that
 host from a throwaway CA and `require_secure_transport: true` (see
 [TLS](#tls)); it checks that the app's own connection refuses the
-untrusted CA, and that the same connection trusting the CA reads:
+untrusted CA, that the same connection trusting the CA reads, and that
+with TLS off the second server reads as **Server requires TLS**. macOS
+accepts the server certificate only with `extendedKeyUsage=serverAuth` and a
+`subjectAltName` for the host; publish the TLS server on both `127.0.0.1`
+and `[::1]` so the `localhost` check reaches it:
 
 ```sh
 BEADS_DOLT_SERVER_HOST=127.0.0.1 BEADS_DOLT_SERVER_PORT=<plain> … \

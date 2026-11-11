@@ -185,7 +185,9 @@ fn options(config: &Config, password: String) -> OptsBuilder {
 pub struct Dolt {
     config: Config,
     credential: Credential,
-    pool: OnceLock<Pool>,
+    /// The pool and the options it was built from, kept for
+    /// [`Dolt::refused`]'s second attempt over TLS.
+    pool: OnceLock<(Pool, Opts)>,
 }
 
 impl Dolt {
@@ -210,7 +212,7 @@ impl Dolt {
         Ok(names)
     }
 
-    fn pool(&self) -> Result<&Pool, Failure> {
+    fn pool(&self) -> Result<&(Pool, Opts), Failure> {
         if let Some(pool) = self.pool.get() {
             return Ok(pool);
         }
@@ -220,13 +222,41 @@ impl Dolt {
                 settings::resolve_password(lookup, |p| std::fs::read_to_string(p), store.as_ref(), &self.config)?
             }
         };
-        let pool = Pool::new(Opts::from(options(&self.config, password))).map_err(|e| classify(&e))?;
-        Ok(self.pool.get_or_init(|| pool))
+        let opts = Opts::from(options(&self.config, password));
+        let pool = Pool::new(opts.clone()).map_err(|e| classify(&e))?;
+        Ok(self.pool.get_or_init(|| (pool, opts)))
+    }
+
+    /// Classify a failure to connect, telling a server that refuses plain
+    /// connections from any other generic error.
+    ///
+    /// Dolt with `require_secure_transport` answers a plain connection with
+    /// error 1105 (`ER_UNKNOWN_ERROR`) before it reads the credentials, the
+    /// same code it gives for many other faults, and its message is driver
+    /// text this client never reads. So when TLS is off and the server
+    /// answers 1105, ask once more over TLS, verified exactly as the
+    /// "Use TLS" setting would be. If that handshake completes (it reads,
+    /// or only the sign-in is refused) or the server at least offers a
+    /// certificate, the server wants TLS and the settings can say so.
+    /// Nothing is sent in the clear that the first attempt did not send, and
+    /// the password goes out only after the certificate is verified.
+    fn refused(&self, error: &mysql::Error, opts: &Opts) -> Failure {
+        let failure = classify(error);
+        let generic = matches!(error, mysql::Error::MySqlError(e) if e.code == 1105);
+        if self.config.tls || !generic {
+            return failure;
+        }
+        let secure = OptsBuilder::from_opts(opts.clone()).ssl_opts(Some(SslOpts::default()));
+        match mysql::Conn::new(secure).map_err(|e| classify(&e)) {
+            Ok(_) | Err(Failure::AuthenticationRejected | Failure::TlsRejected) => Failure::TlsRequired,
+            Err(_) => failure,
+        }
     }
 
     /// Run one statement in a read-only session.
     fn select(&self, sql: &str, params: Vec<Value>) -> Result<Vec<Row>, Failure> {
-        let mut conn = self.pool()?.get_conn().map_err(|e| classify(&e))?;
+        let (pool, opts) = self.pool()?;
+        let mut conn = pool.get_conn().map_err(|e| self.refused(&e, opts))?;
         // The pool resets sessions between uses, so ask on every checkout.
         // Older servers may refuse; reads still work, as in the web client.
         let _ = conn.query_drop("SET SESSION TRANSACTION READ ONLY");
@@ -509,6 +539,29 @@ mod tests {
         // reaches it through a real handshake.
     }
 
+    /// Only a plain connection the server answered with its generic 1105
+    /// is asked again over TLS; when that second attempt cannot reach a TLS
+    /// server, the failure stays generic. Port 1 on this machine refuses, so
+    /// nothing leaves it. The ignored live test
+    /// `tls_is_verified_and_failures_are_fixed_classes` sees `TlsRequired`.
+    #[test]
+    fn only_a_generic_refusal_is_asked_again_over_tls() {
+        let generic = mysql::Error::MySqlError(mysql::MySqlError {
+            state: "HY000".into(),
+            message: "unknown error".into(),
+            code: 1105,
+        });
+        let denied =
+            mysql::Error::MySqlError(mysql::MySqlError { state: "28000".into(), message: String::new(), code: 1045 });
+        for tls in [false, true] {
+            let config = Config { host: "127.0.0.1".into(), port: 1, user: "reader".into(), tls };
+            let opts = Opts::from(options(&config, String::new()));
+            let dolt = Dolt::new(config, Credential::Given(String::new()));
+            assert_eq!(dolt.refused(&generic, &opts), Failure::Unknown, "no TLS server answers: tls {tls}");
+            assert_eq!(dolt.refused(&denied, &opts), Failure::AuthenticationRejected);
+        }
+    }
+
     #[test]
     fn only_this_machine_counts_as_loopback() {
         for host in ["localhost", "LOCALHOST", "db.localhost", "localhost.", "127.0.0.1", "127.8.0.1", "::1", "[::1]"] {
@@ -701,7 +754,14 @@ mod live {
         // Dolt reports no `Ssl_*` status, so the proof the read above was
         // encrypted is that the server refuses one that is not.
         let plain = from_env(|c| c.port = port);
-        assert!(plain.probe().is_err(), "the TLS server requires secure transport, with the right password");
+        assert_eq!(plain.probe(), Err(Failure::TlsRequired), "the TLS server refuses plain transport");
+        // Dolt refuses before it reads the credentials, so a wrong password
+        // reads the same, and settings point at TLS first.
+        let stranger = from_env(|c| {
+            c.port = port;
+            c.user = "no_such_user_for_beadsmith".into();
+        });
+        assert_eq!(stranger.probe(), Err(Failure::TlsRequired));
 
         // The same server by another name: the certificate names only the
         // address the environment gave, so this must be refused.
