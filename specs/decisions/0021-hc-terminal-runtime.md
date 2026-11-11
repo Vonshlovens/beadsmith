@@ -200,10 +200,21 @@ makes a rebuild reproducible and a changed release visible in review.
 
 ## Implementation notes
 
+Shipped:
+
+- The hc client, `src/lib/hc/` (`connectHc`), speaks framed mode over any
+  `HcTransport` (`childProcessTransport` wraps `ssh … hc connect`). It
+  offers no `line`, `on` or `force` and always runs with `no_parent`,
+  `no_notify` and no `keep`; it checks every argument before sending. Attach
+  streams return credit as their consumer finishes, so a slow relay slows the
+  stream instead of buffering it. `src/lib/test/fake-hc.ts` is an in-memory
+  core speaking the same bytes for unit tests. Framed mode is binary: the E2B
+  SDK hands stdout to callbacks as decoded strings, so the Sand side needs a
+  byte-safe carrier for `hc connect` (for example an encoding wrapper in the
+  sandbox) rather than the raw command output.
+
 Planned, each in its own change:
 
-- an hc client that speaks the protocol over any byte channel, with a fake
-  core for tests;
 - one interactive session core used by chats and missions, replacing the two
   stream-json mappings;
 - hc and the first-run settings in the E2B template and `beadsmith-run`, then
