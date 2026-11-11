@@ -148,11 +148,22 @@ sign() {
   codesign --verify --strict --verbose=2 "$app"
 }
 
+# The licenses travel with the binary. A downloaded zip is often all someone
+# has of Beadsmith, so the app itself carries the MIT license it is under and
+# the notices for the crates compiled into it, where Finder's Show Package
+# Contents (or the shell) can read them. They go in before signing, so the
+# signature covers them.
+copy_notices() {
+  cp -f ../LICENSE "$app/Contents/Resources/LICENSE"
+  cp -f THIRD_PARTY_NOTICES.md "$app/Contents/Resources/THIRD_PARTY_NOTICES.md"
+}
+
 build() {
   rm -rf "$app"
   mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
   build_binary
   build_icon
+  copy_notices
   write_plist
   sign
   echo "bundle-macos: built $app ($version)"
@@ -198,6 +209,11 @@ package() {
   ditto -x -k "$out/$zip" "$check"
   codesign --verify --strict "$check/$name.app" ||
     die "the app in $zip does not pass codesign --verify"
+  local notice
+  for notice in LICENSE THIRD_PARTY_NOTICES.md; do
+    [ -s "$check/$name.app/Contents/Resources/$notice" ] ||
+      die "the app in $zip has no Contents/Resources/$notice"
+  done
   rm -rf "$check"
   echo "bundle-macos: packaged $out/$zip ($archs)"
 }

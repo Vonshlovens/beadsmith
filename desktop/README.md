@@ -562,11 +562,13 @@ host from a throwaway CA and `require_secure_transport: true` (see
 [TLS](#tls)); it checks that the app's own connection refuses the
 untrusted CA, and that the same connection trusting the CA reads:
 
-````sh
+```sh
 BEADS_DOLT_SERVER_HOST=127.0.0.1 BEADS_DOLT_SERVER_PORT=<plain> … \
 BEADS_DOLT_TLS_PORT=<tls> BEADS_DOLT_TLS_CA=ca.pem cargo test -- --ignored tls
-``` The Keychain test writes one item under a test-only
-service name and deletes it.
+```
+
+The Keychain test writes one item under a test-only service name and
+deletes it.
 
 CI runs the first three, the notices check (see
 [Third-party licenses](#third-party-licenses)) and `scripts/snap-scenes.sh` on macOS and Linux for
@@ -625,10 +627,14 @@ generated from `Cargo.lock`, so after any dependency change run:
 ```sh
 scripts/third-party-notices.py          # rewrite the file
 scripts/third-party-notices.py --check  # what CI runs: fail if it is stale
-````
+```
 
 It needs `python3` and `cargo` and lists the dependencies of the two macOS
 targets, whatever machine runs it, so it is the same file on Linux CI.
+
+`scripts/bundle-macos.sh` copies the file and the repository's `LICENSE`
+into `Beadsmith.app/Contents/Resources`, so a downloaded app carries its own
+licenses; `package` fails if the unpacked zip is missing either.
 
 ## Not done yet
 

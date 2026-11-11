@@ -170,7 +170,9 @@ window: it still needs a running server and gains nothing native.
   (release build, `Info.plist` with the crate's version, icon from
   [`desktop/assets/icon.svg`](../../desktop/assets/icon.svg), ad-hoc
   `codesign`, install and uninstall, and `package` for the zip and
-  checksum).
+  checksum). The app carries `LICENSE` and
+  [`desktop/THIRD_PARTY_NOTICES.md`](../../desktop/THIRD_PARTY_NOTICES.md)
+  in `Contents/Resources`, inside the signature.
 - Release: [`.github/workflows/desktop-release.yml`](../../.github/workflows/desktop-release.yml)
   on `desktop-v<version>` tags; the tag must match `desktop/Cargo.toml`. A
   manual run from a branch builds the archive as a workflow artifact and
