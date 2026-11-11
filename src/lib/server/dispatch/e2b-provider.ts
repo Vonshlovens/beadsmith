@@ -664,6 +664,11 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		return parseRunFiles(stdout);
 	}
 
+	async function isCancelled(sandbox: SandboxRef, run_id: string): Promise<boolean> {
+		const { exit_code } = await sandbox.exec(`[ -f '${RUNS_DIR}/${run_id}/cancelled' ]`);
+		return exit_code === 0;
+	}
+
 	async function writeResult(sandbox: SandboxRef, run_id: string, result: StoredResult) {
 		await sandbox.writeFile(`${RUNS_DIR}/${run_id}/result.json`, JSON.stringify(result));
 	}
@@ -673,6 +678,12 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 	 * attach the session core (it follows the live CLI or launches one),
 	 * send the prompt, record the turn's mark. A start that fails records a
 	 * failed result instead.
+	 *
+	 * A cancel can land while this runs (the launch alone may take the CLI's
+	 * whole startup limit) and find no terminal to end yet; the cancelled mark
+	 * is all it leaves. So the mark is read again once the CLI is attached,
+	 * before the prompt goes, and once more after: whichever check sees it
+	 * ends the CLI, and the run reads cancelled from the mark.
 	 */
 	async function startTurn(
 		sandbox: SandboxRef,
@@ -690,8 +701,13 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			client = await connectHc(sandbox);
 			session = newSession(info, redact, () => {});
 			await session.attach(client);
+			if (await isCancelled(sandbox, run_id)) {
+				await session.cancel();
+				return;
+			}
 			const mark = await session.send(prompt);
 			await sandbox.writeFile(`${dir}/turn.json`, JSON.stringify(mark));
+			if (await isCancelled(sandbox, run_id)) await session.cancel();
 		} catch (error) {
 			log(`Sand mission ${sandbox.id}/${run_id}: the agent could not start: ${String(error)}`);
 			const message =

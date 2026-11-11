@@ -159,6 +159,10 @@ class FakeSandbox implements SandboxRef {
 			run.claimed_s = 1000;
 			return { exit_code: 0, stdout: '' };
 		}
+		if (command.startsWith("[ -f '") && command.endsWith("/cancelled' ]")) {
+			const run = run_of(/runs\/(r[0-9]+)\/cancelled/);
+			return { exit_code: run?.cancelled ? 0 : 1, stdout: '' };
+		}
 		if (command.startsWith("cat '")) {
 			const path = /^cat '([^']+)'/.exec(command)![1];
 			return { exit_code: 0, stdout: this.files.get(path) ?? '' };
@@ -650,6 +654,38 @@ describe('E2B provider', () => {
 		second.runs.get('r1')!.ready = true;
 		expect(await provider.getRun('sbx2', 'r1')).toEqual({ status: 'cancelled' });
 		expect(claude.runs()).toHaveLength(1);
+	});
+
+	it('sends no prompt when a cancel lands while the CLI is still launching', async () => {
+		const { provider, claude, sandboxes } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		const run = sandboxes.get('sbx1')!.runs.get('r1')!;
+		const launch = claude.core.onRun!;
+		claude.core.onRun = (t) => {
+			// The cancel finds no terminal yet and leaves only its mark.
+			run.cancelled = true;
+			launch(t);
+		};
+		expect(await provider.getRun('sbx1', 'r1')).toEqual({ status: 'cancelled' });
+		expect(claude.runs()).toHaveLength(1);
+		expect(claude.sends()).toEqual([]);
+		expect(claude.core.terminal('t1').state).toBe('finished');
+	});
+
+	it('ends the CLI when a cancel lands while the prompt is being sent', async () => {
+		const { provider, claude, sandboxes } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		const run = sandboxes.get('sbx1')!.runs.get('r1')!;
+		const send = claude.core.onSend!;
+		claude.core.onSend = (t, text) => {
+			run.cancelled = true;
+			send(t, text);
+		};
+		expect(await provider.getRun('sbx1', 'r1')).toEqual({ status: 'cancelled' });
+		expect(claude.sends()).toEqual(['Tackle bw-1']);
+		expect(claude.core.terminal('t1').state).toBe('finished');
 	});
 
 	it('streams the transcript as mission events and resumes after the last id', async () => {
