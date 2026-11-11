@@ -81,6 +81,44 @@ sidebar.
 
 ![The connection screen after a successful test](docs/connection-dark.png)
 
+## Install it on macOS
+
+`cargo run` gives a bare binary: no Dock icon, no place in `/Applications`.
+[`scripts/bundle-macos.sh`](scripts/bundle-macos.sh) wraps the release binary
+in `Beadsmith.app`, using only tools macOS ships:
+
+```sh
+scripts/bundle-macos.sh              # target/bundle/Beadsmith.app
+scripts/bundle-macos.sh install      # build, then copy to /Applications
+scripts/bundle-macos.sh uninstall    # remove /Applications/Beadsmith.app
+```
+
+`BEADSMITH_INSTALL_DIR` installs somewhere else, such as `~/Applications`.
+Try a build without installing it, on the sample data:
+
+```sh
+open target/bundle/Beadsmith.app --args --sample
+```
+
+The bundle's version is the crate's, read from [`Cargo.toml`](Cargo.toml).
+Its icon is rendered from [`assets/icon.svg`](assets/icon.svg), the Beadsmith
+mark redrawn as vectors because the web app's copies are too small for a
+1024 px icon; the rendered sizes are left in `target/bundle/Beadsmith.iconset`.
+
+The app is signed ad hoc, which has two consequences:
+
+- It runs on the Mac that built it. Another Mac's Gatekeeper refuses it:
+  that needs a Developer ID signature and notarization, which need Apple
+  credentials this repository does not have. `BEADSMITH_SIGN_IDENTITY` signs
+  with an identity from your keychain instead.
+- An ad-hoc signature identifies one exact build, so after installing a new
+  build macOS asks once more whether Beadsmith may read its `Beadsmith Dolt`
+  Keychain item. Choose **Always Allow**.
+
+Uninstalling removes the app only. The settings file and the Keychain item
+stay; [Where the connection is kept](#where-the-connection-is-kept) says how
+to remove them.
+
 ## Where the connection is kept
 
 | What                | Where                                                                                                                                                             |
@@ -196,6 +234,7 @@ pin is in [`Cargo.toml`](Cargo.toml).
   Manager).
 - Talking to a Beadsmith server's API instead of Dolt, which would bring
   accounts and the project gate (see the ADR's alternatives).
-- Packaging (app bundles, installers).
+- A release: downloadable builds, Developer ID signing and notarization.
+  Bundles for Linux and Windows.
 - The board, Ready, the activity feed, search across projects, and any
   writes.

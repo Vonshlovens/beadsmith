@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The Beadsmith app icon: the mark from src/lib/assets (anvil, three beads on
+  a rod, hammer) redrawn as vectors on the cream tile of
+  beadsmith-touch-icon.png. The web assets are 64-256 px rasters, too small
+  to scale to the 1024 px a macOS icon needs, so this file is the icon's
+  source. scripts/bundle-macos.sh renders it (with sips) into the app's .icns.
+
+  The tile is the macOS icon grid: an 824 px rounded square centred in a
+  1024 px canvas, leaving the margin the Dock expects. The mark is drawn in
+  the 256 px coordinates of site/src/lib/assets/mark-light.png and scaled.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#ebe4d8"/>
+  <!-- A hairline edge, so the cream tile keeps its shape on a light Dock or Finder. -->
+  <rect x="102" y="102" width="820" height="820" rx="183" fill="none" stroke="#1f1a15" stroke-opacity="0.14" stroke-width="4"/>
+  <g transform="translate(231 212) scale(2.35)">
+    <!-- Hammer -->
+    <g transform="translate(170 51) rotate(39.5)" fill="#1f1a15">
+      <rect x="-18" y="-38" width="36" height="76" rx="5"/>
+      <rect x="0" y="-7" width="82" height="18" rx="6"/>
+    </g>
+    <!-- Anvil -->
+    <path fill="#1f1a15" d="M10 141H232Q237 141 237 146V166Q237 171 232 171L196 172C180 173 172 178 170 188V200C171 212 180 218 190 222Q198 226 198 232V238Q198 242 193 242H80Q75 242 75 238V232Q75 226 84 221C96 215 109 210 110 200V188C108 178 96 173 66 171C40 167 18 158 5 150Q1 145 10 141Z"/>
+    <!-- Beads, with a cream halo that notches the anvil's face -->
+    <g stroke="#ebe4d8" stroke-width="6">
+      <circle cx="76" cy="120" r="24" fill="#ebe4d8"/>
+      <circle cx="126" cy="120" r="24" fill="#ebe4d8"/>
+      <circle cx="175" cy="120" r="24" fill="#ebe4d8"/>
+    </g>
+    <circle cx="76" cy="120" r="21.5" fill="#1f1a15"/>
+    <circle cx="126" cy="120" r="21.5" fill="#1f1a15"/>
+    <circle cx="126" cy="120" r="18.5" fill="#b81a2f"/>
+    <circle cx="175" cy="120" r="21.5" fill="#1f1a15"/>
+    <!-- Rod -->
+    <rect x="33" y="115.5" width="186" height="10" rx="5" fill="#1f1a15"/>
+    <g fill="#1f1a15">
+      <circle cx="76" cy="120.5" r="7.5"/>
+      <circle cx="126" cy="120.5" r="7.5"/>
+      <circle cx="175" cy="120.5" r="7.5"/>
+    </g>
+    <rect x="36" y="118.5" width="180" height="4" rx="2" fill="#ebe4d8"/>
+    <g fill="#ebe4d8">
+      <circle cx="76" cy="120.5" r="4.5"/>
+      <circle cx="126" cy="120.5" r="4.5"/>
+      <circle cx="175" cy="120.5" r="4.5"/>
+    </g>
+  </g>
+</svg>

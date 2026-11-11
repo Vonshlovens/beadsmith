@@ -91,7 +91,8 @@ reality**. Search `src/` before treating a spec as implemented.
   contract and a SELECT-only account. It bypasses accounts and the project
   gate, so it is for the server's owner; it never scans workspaces or runs
   `bd`. It keeps its own connection settings, with the Dolt password in the
-  macOS Keychain and never in a file
+  macOS Keychain and never in a file. A script bundles it as an ad-hoc
+  signed `Beadsmith.app` for the machine that builds it; nothing is released
   ([ADR-0017](decisions/0017-native-desktop-prototype.md)).
 - **One Google IdP** when Cloudflare Access is used. Per-project
   catalog/membership is still the gate before projects are shared selectively;

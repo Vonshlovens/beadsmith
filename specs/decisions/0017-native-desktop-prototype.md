@@ -74,7 +74,13 @@ status and text filters, and the issue detail.
   has to land in both until one of them goes.
 - No TLS yet: the prototype connects in the clear, so it belongs on loopback,
   a tunnel or a private network.
-- Not shipped: no packaging and no release. The web app is unchanged. The
+- Not shipped: there is no release. A script builds a macOS app bundle on
+  the user's own machine and can copy it to `/Applications`. Its signature is
+  ad hoc, so the bundle runs where it was built and nowhere else: Developer
+  ID signing and notarization need Apple credentials the repository does not
+  hold. An ad-hoc signature also names one exact build, so the Keychain asks
+  again for access to the saved password after each rebuild. The web app is
+  unchanged. The
   crate has its own workflow, `.github/workflows/desktop.yml` (format,
   Clippy, tests and a headless render of every scene on macOS and Linux),
   kept out of `ci.yml` so the web app's jobs and its image publish neither
@@ -105,6 +111,10 @@ window: it still needs a running server and gains nothing native.
 - Tests: `cargo test` in `desktop/` (unit: no server, no keychain);
   `cargo test -- --ignored` against a live server and the real Keychain.
   Headless scenes: `cargo run -- --snap out.png --scene sample`.
+- macOS bundle: [`desktop/scripts/bundle-macos.sh`](../../desktop/scripts/bundle-macos.sh)
+  (release build, `Info.plist` with the crate's version, icon from
+  [`desktop/assets/icon.svg`](../../desktop/assets/icon.svg), ad-hoc
+  `codesign`, install and uninstall).
 - The Rune revision is pinned in `desktop/Cargo.toml`; its toolchain in
   `desktop/rust-toolchain.toml`.
 - Row in [`specs/README.md`](../README.md).
