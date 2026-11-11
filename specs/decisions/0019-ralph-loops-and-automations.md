@@ -237,5 +237,21 @@ Nothing ships with this record. Planned, each in its own change:
 - automations: tables, the ticker beside `src/lib/server/backup/runtime.ts`,
   and an automations page. ADR-0004's list of what `state.db` holds and
   `docs/contract.md`'s dispatch section are updated when these ship.
+  The tables and ticker shipped in `src/lib/server/automations/`
+  (`cron.ts`, `store.ts`, `scheduler.ts`, `runtime.ts`); the page and its
+  API are still to come. Cron is a small five-field parser in the repository
+  rather than a dependency; like ralph's, it refuses an expression that
+  restricts both day of month and day of week. Each automation keeps a
+  cursor (`last_slot`), starting at creation and reset when it is
+  re-enabled, so neither fires a slot from before. A tick claims only the
+  latest due slot (the run row's primary key is the once-only guard), then
+  fires it with the idempotency key `automation:<id>:<slot>`; a slot a crash
+  left claimed is finished on the next tick, and finds its mission by that
+  key if it had already launched. The `queue` overlap policy holds at most
+  one slot behind a running mission and skips any later one. The mission
+  actor is `automation:<id> for <creator email>`, and the creator's account
+  is read on every fire: a missing, banned or non-admin creator pauses the
+  automation. Run now (`fireAutomationSlot` with a `manual` slot) neither
+  waits nor skips for a running mission and does not move the cursor.
 
 The architecture bullet is in [`specs/README.md`](../README.md).

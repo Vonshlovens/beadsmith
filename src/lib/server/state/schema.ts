@@ -117,6 +117,44 @@ export const dispatchLoopIterations = sqliteTable(
 	(table) => [primaryKey({ columns: [table.requestId, table.runId, table.iteration] })]
 );
 
+/**
+ * Automations (ADR-0019 rule 7): a dispatch template with a cron schedule.
+ * `last_slot` is the cursor; only later slots fire. Keep in step with
+ * `AUTOMATION_SCHEMA_SQL` in `automations/store.ts`.
+ */
+export const automations = sqliteTable('automations', {
+	id: text('id').primaryKey(),
+	projectId: text('project_id').notNull(),
+	name: text('name').notNull(),
+	cron: text('cron').notNull(),
+	timeZone: text('time_zone').notNull(),
+	provider: text('provider'),
+	payloadJson: text('payload_json').notNull(),
+	overlap: text('overlap').notNull(),
+	enabled: integer('enabled', { mode: 'boolean' }).notNull(),
+	pausedReason: text('paused_reason'),
+	createdBy: text('created_by').notNull(),
+	lastSlot: text('last_slot').notNull(),
+	createdAt: text('created_at').notNull(),
+	updatedAt: text('updated_at').notNull()
+});
+
+/** Each automation slot claimed, and what came of it. */
+export const automationRuns = sqliteTable(
+	'automation_runs',
+	{
+		automationId: text('automation_id').notNull(),
+		slot: text('slot').notNull(),
+		trigger: text('trigger').notNull(),
+		outcome: text('outcome').notNull(),
+		missionId: text('mission_id'),
+		message: text('message'),
+		createdAt: text('created_at').notNull(),
+		updatedAt: text('updated_at').notNull()
+	},
+	(table) => [primaryKey({ columns: [table.automationId, table.slot] })]
+);
+
 /** One scheduled or manual backup run (ADR-0010). No credentials. */
 export const backupRuns = sqliteTable('backup_runs', {
 	id: text('id').primaryKey(),

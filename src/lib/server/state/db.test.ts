@@ -27,6 +27,8 @@ describe('initStateSchema', () => {
 			'auth_session',
 			'auth_user',
 			'auth_verification',
+			'automation_runs',
+			'automations',
 			'backup_runs',
 			'dispatch_loop_iterations',
 			'dispatch_project_allows',
@@ -45,8 +47,8 @@ describe('initStateSchema', () => {
 		]);
 	});
 
-	it('declares the application, todo, account and relay audit tables and indexes', () => {
-		expect(STATE_SCHEMA_SQL).toHaveLength(25);
+	it('declares the application, todo, account, relay audit and automation tables and indexes', () => {
+		expect(STATE_SCHEMA_SQL).toHaveLength(28);
 	});
 
 	it('adds run result columns to an existing table', async () => {

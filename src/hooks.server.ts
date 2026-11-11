@@ -1,4 +1,5 @@
 import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit/hooks';
+import { startAutomationScheduler } from '#lib/server/automations/runtime.js';
 import { startBackupScheduler } from '#lib/server/backup/runtime.js';
 import {
 	checkConfig,
@@ -278,6 +279,7 @@ function applySecurityHeaders(response: Response, is_api: boolean): Response {
 /** Runs once at server start (not in unit tests, which never call it). */
 export const init: ServerInit = () => {
 	startBackupScheduler();
+	startAutomationScheduler();
 	// Generate the auth secret and, on a fresh install, write the first-admin
 	// setup token now so the operator sees where it is.
 	void getAuthService()

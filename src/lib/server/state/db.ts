@@ -20,12 +20,17 @@ import {
 	TERMINAL_RELAY_SCHEMA_SQL,
 	type TerminalRelayAuditStore
 } from '../terminal-relay/audit.js';
+import {
+	AUTOMATION_SCHEMA_SQL,
+	createAutomationStore,
+	type AutomationStore
+} from '../automations/store.js';
 import { getSecretBox } from '../secret-box.js';
 
 /**
  * Service-local UI, dispatch, backup, and account state. It stores
- * preferences, File/Tackle request records, backup settings and runs, and
- * Beadsmith accounts. The only credentials are backup keys sealed by the
+ * preferences, File/Tackle request records, automations and their fired
+ * slots, backup settings and runs, and Beadsmith accounts. The only credentials are backup keys sealed by the
  * secret box (ADR-0010) and one-way account password hashes (ADR-0011); never
  * Dolt passwords, workspaces, discovery roots, or Beads issue data.
  *
@@ -79,7 +84,8 @@ export const STATE_SCHEMA_SQL: string[] = [
 	...TODO_SCHEMA_SQL,
 	...MATE_SCHEMA_SQL,
 	...AUTH_SCHEMA_SQL,
-	...TERMINAL_RELAY_SCHEMA_SQL
+	...TERMINAL_RELAY_SCHEMA_SQL,
+	...AUTOMATION_SCHEMA_SQL
 ];
 
 const DISPATCH_COLUMN_MIGRATIONS = [
@@ -185,6 +191,7 @@ let backup_promise: Promise<BackupStore> | undefined;
 let todo_promise: Promise<TodoStore> | undefined;
 let mate_promise: Promise<MateStore> | undefined;
 let relay_audit_promise: Promise<TerminalRelayAuditStore> | undefined;
+let automation_promise: Promise<AutomationStore> | undefined;
 let state_ok = false;
 
 async function openStateClient(): Promise<Client> {
@@ -207,6 +214,8 @@ async function openStateClient(): Promise<Client> {
 			backup_promise = undefined;
 			todo_promise = undefined;
 			mate_promise = undefined;
+			relay_audit_promise = undefined;
+			automation_promise = undefined;
 			throw error;
 		});
 	}
@@ -290,6 +299,14 @@ export async function getTerminalRelayAuditStore(): Promise<TerminalRelayAuditSt
 	return relay_audit_promise;
 }
 
+/** Open (once) the automation store on the same database (ADR-0019 rule 7). */
+export async function getAutomationStore(): Promise<AutomationStore> {
+	if (automation_promise === undefined) {
+		automation_promise = openStateClient().then((client) => createAutomationStore(client));
+	}
+	return automation_promise;
+}
+
 /** Whether the preference database opened successfully at least once. */
 export function stateDbHealthy(): boolean {
 	return state_ok;
@@ -308,6 +325,7 @@ export function setStateStore(store: StateStore | undefined): void {
 		todo_promise = undefined;
 		mate_promise = undefined;
 		relay_audit_promise = undefined;
+		automation_promise = undefined;
 		state_ok = false;
 	} else {
 		state_ok = true;
@@ -352,4 +370,9 @@ export function setMateStore(store: MateStore | undefined): void {
 /** Replace the cached terminal relay audit store (tests only). */
 export function setTerminalRelayAuditStore(store: TerminalRelayAuditStore | undefined): void {
 	relay_audit_promise = store === undefined ? undefined : Promise.resolve(store);
+}
+
+/** Replace the cached automation store (tests only). */
+export function setAutomationStore(store: AutomationStore | undefined): void {
+	automation_promise = store === undefined ? undefined : Promise.resolve(store);
 }

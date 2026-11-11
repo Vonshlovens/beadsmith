@@ -2,9 +2,11 @@
  * Account tables in `state.db` (ADR-0011) and the small queries Beadsmith runs
  * on them itself. Better Auth owns every row write through its Drizzle
  * adapter; this module only creates the tables, counts accounts for the
- * first-run bootstrap and last-admin guard, and stores the sign-up switch.
+ * first-run bootstrap and last-admin guard, reads one account's standing,
+ * and stores the sign-up switch.
  */
 import type { Client } from '@libsql/client';
+import { accountRole, type AccountRole } from './roles.js';
 
 /** `settings` key: `open` lets anyone with the URL create a member account. */
 export const SIGNUP_SETTING_KEY = 'auth.signup';
@@ -75,6 +77,14 @@ export interface AccountStore {
 	/** Whether self-service sign-up creates member accounts. Default closed. */
 	getSignupOpen(): Promise<boolean>;
 	setSignupOpen(open: boolean): Promise<void>;
+	/**
+	 * One account's email and effective role, for work that acts on its
+	 * behalf later (an automation's creator, ADR-0019 rule 7). A banned
+	 * account reports `banned`, whatever its role.
+	 */
+	getStanding(
+		id: string
+	): Promise<{ email: string; role: AccountRole; banned: boolean } | undefined>;
 }
 
 /** Read a `COUNT(*)` result, whatever integer type the driver returns. */
@@ -109,6 +119,20 @@ export function createAccountStore(client: Client): AccountStore {
 			});
 			const row = result.rows[0] as Record<string, unknown> | undefined;
 			return row?.value === 'open';
+		},
+
+		async getStanding(id: string) {
+			const result = await client.execute({
+				sql: 'SELECT email, role, banned FROM auth_user WHERE id = ?',
+				args: [id]
+			});
+			const row = result.rows[0] as Record<string, unknown> | undefined;
+			if (row === undefined) return undefined;
+			return {
+				email: String(row.email),
+				role: accountRole(row.role as string | null),
+				banned: Number(row.banned ?? 0) !== 0
+			};
 		},
 
 		async setSignupOpen(open: boolean): Promise<void> {

@@ -102,6 +102,16 @@ environment. The one place Beadsmith may carry an agent's raw input and
 output is the terminal relay to a scoped sandbox, described in the HTTP
 boundary below.
 
+**Automations** ([ADR-0019](../specs/decisions/0019-ralph-loops-and-automations.md)
+rule 7) are dispatch templates on a cron schedule that an admin saves. The
+web process's minute ticker fires each due slot through the same dispatch
+path, as the automation on behalf of the admin who created it, with an
+idempotency key per slot, so a slot launches at most one mission. Disarming
+dispatch or disallowing the project refuses fired slots like any launch, and
+an automation whose creator is no longer an admin pauses itself. The
+template is the same validated payload a mission stores; no credential is
+saved with it.
+
 ### First Mate
 
 First Mate is a chat with one long-lived orchestrator agent that runs on a
