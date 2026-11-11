@@ -12,9 +12,10 @@ use rune_kit::{
     TextInput,
 };
 
-use crate::app::{Check, Connection, Load, Pane, STATUS_FILTERS, State, TABLE_KEY};
+use crate::app::{Check, Connection, Load, Pane, Quick, STATUS_FILTERS, State, TABLE_KEY};
 use crate::keys::{self, Command};
 use crate::model::{Failure, IssueDetail, IssueRef, Project};
+use crate::quick::{self, Target};
 use crate::settings::REFRESH_CHOICES;
 use crate::theme::{StatusLook, Theme};
 
@@ -67,6 +68,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         connection_dialog(s, form, &th.k, &mut layer);
     } else if s.shortcuts {
         shortcuts_dialog(&th, &mut layer);
+    } else if let Some(quick) = &s.quick {
+        quick_dialog(s, quick, &th, &mut layer);
     }
     rune_kit::root(body, layer)
 }
@@ -529,6 +532,193 @@ fn shortcuts_dialog(th: &Theme, layer: &mut Vec<El>) {
         .on_close(|s: &mut State| s.shortcuts = false)
         .child(body)
         .build(k, layer);
+}
+
+/// A row of quick open's list, and how many of them show before it scrolls.
+const QUICK_ROW_H: f32 = 32.0;
+const QUICK_ROWS: f32 = 10.0;
+
+/// Quick open (Cmd-K): a field over the projects and issues that match it.
+/// It sits toward the top of the window, where a command palette is looked
+/// for, and stays put as the list under it grows and shrinks. The caret
+/// never leaves the field: the arrows move a highlight through the list
+/// (`keys::quick_key`), which assistive technology follows as the field's
+/// active descendant.
+fn quick_dialog(s: &State, quick: &Quick, th: &Theme, layer: &mut Vec<El>) {
+    let (k, t) = (&th.k, &th.t);
+    let field = TextInput::new(&quick.query)
+        .plain()
+        .leading_icon(k.glyph.search)
+        .height(44.0)
+        .width(None)
+        .placeholder("Jump to a project, or to an issue by id or title")
+        .label("Quick open")
+        .active_descendant(quick.active_target().map(|_| keys::quick_row_key(quick.active)))
+        .on_edit(|s: &mut State| s.quick_field())
+        .on_change(|s: &mut State, tx: &mut Tx| {
+            s.quick_edited();
+            // An edit starts again from the best match, at the top.
+            tx.scroll_into_view(keys::quick_row_key(0));
+        })
+        .on_key(keys::quick_key)
+        .build(k)
+        .key("quick-field");
+
+    let total = quick.results.len();
+    let mut rows = col().key("quick-rows").w_full().padding(4.0);
+    for (n, target) in quick.results.iter().enumerate() {
+        rows = rows.child(quick_row(s, n, total, target, n == quick.active, th));
+    }
+    let list = col()
+        .key("quick-list")
+        .role("listbox")
+        .label("Projects and issues")
+        .w_full()
+        .h((total as f32).min(QUICK_ROWS) * QUICK_ROW_H + if total > 0 { 8.0 } else { 0.0 })
+        .scroll(ScrollSpec { stick_bottom: false })
+        // A press on a row must not take the caret out of the field.
+        .preserve_focus_on_press(true)
+        .child(rows);
+
+    // What the list is not showing, and why: still searching, a search that
+    // failed (the projects above still match), or nothing to show.
+    let typed = !quick::needle(&quick.query.text).is_empty();
+    let status = match (quick.failed, quick.searching, total) {
+        (Some(failure), ..) => format!("Issues could not be searched. {}", failure.message()),
+        (None, true, _) => "Searching issues".to_string(),
+        (None, false, 0) if typed => format!("No project or issue matches “{}”.", quick.query.text.trim()),
+        (None, false, 0) => "No projects.".to_string(),
+        (None, false, 1) => "1 result".to_string(),
+        (None, false, n) if n >= quick::MAX_RESULTS => format!("First {n} results. Type more to narrow them."),
+        (None, false, n) if typed => format!("{n} results"),
+        (None, false, n) => format!("{n} projects. Type to find an issue."),
+    };
+    let hint = |caps: &[&str], does: &str| {
+        let caps: Vec<String> = caps.iter().map(|c| keys::key_label(c)).collect();
+        row()
+            .gap(6.0)
+            .center_y()
+            .child(Keybind::new(&caps).build(k))
+            .child(text(does.to_string()).font(th.ty.xs).color(t.tx_dim))
+    };
+    let footer = row()
+        .key("quick-footer")
+        .w_full()
+        .min_h(36.0)
+        .px(14.0)
+        .py(8.0)
+        .gap(14.0)
+        .center_y()
+        .child(
+            text(status)
+                .key("quick-status")
+                .role("status")
+                .font(th.ty.xs)
+                .color(if quick.failed.is_some() { t.tx } else { t.tx_dim })
+                .wrap()
+                .grow(1.0)
+                .min_w(0.0),
+        )
+        .child(hint(&["↑", "↓"], "Move").a11y_hidden())
+        .child(hint(&["Enter"], "Open").a11y_hidden())
+        .child(hint(&["Esc"], "Close").a11y_hidden());
+
+    let panel = col()
+        .key("quick-open")
+        .role("dialog")
+        .label("Quick open")
+        .w_full()
+        .max_w(600.0)
+        .child(row().key("quick-header").w_full().px(6.0).child(field))
+        .child(rule_h(th))
+        .child(list)
+        .child(rule_h(th).opacity(if total > 0 { 1.0 } else { 0.0 }))
+        .child(footer);
+    let panel = rune_kit::popover::raised(k, panel, k.radius.md)
+        .modal(true, |s: &mut State| s.close_quick())
+        .token_motion(k.motion.overlay);
+    layer.push(el().key("quick-scrim").absolute(0.0, 0.0).w_full().h_full().fill(k.c.scrim).a11y_hidden());
+    layer.push(
+        col()
+            .key("quick-layer")
+            .absolute(0.0, 0.0)
+            .w_full()
+            .h_full()
+            .px(16.0)
+            .pt(TITLE_BAR_H + 44.0)
+            .pb(16.0)
+            .items_center()
+            .child(panel),
+    );
+}
+
+/// One result: an issue as the table shows one (status bead, id, title) with
+/// the project it lives in, or a project as the sidebar does (its name and
+/// how much is active). A square marks a project, so the two kinds are told
+/// apart by shape as well as by the word at the row's end.
+fn quick_row(s: &State, n: usize, total: usize, target: &Target, active: bool, th: &Theme) -> El {
+    let t = &th.t;
+    let base = row()
+        .key(keys::quick_row_key(n))
+        .role("option")
+        .position_in_set(n + 1, total)
+        .focus_selected(active)
+        .w_full()
+        .h(QUICK_ROW_H)
+        .px(10.0)
+        .gap(10.0)
+        .center_y()
+        .radius(th.k.radius.sm)
+        .fill(if active { t.em_wash_2 } else { Color::TRANSPARENT })
+        .on_hover(move |s: &mut State| s.quick_hover(n))
+        .on_press_tx(move |s: &mut State, tx: &mut Tx| keys::quick_choose(s, n, tx));
+    let aside = |words: String| text(words).font(th.ty.xs).color(t.tx_dim).a11y_hidden();
+    match target {
+        Target::Project(name) => {
+            let project = s.projects.ready().and_then(|all| all.iter().find(|p| &p.name == name));
+            let active_count = project.and_then(|p| p.counts.as_ref()).map(|c| c.active());
+            let current = s.project.as_deref() == Some(name.as_str());
+            let label = match active_count {
+                Some(n) => format!("Project {name}, {n} active"),
+                None => format!("Project {name}"),
+            };
+            let words = match (active_count, current) {
+                (Some(n), true) => format!("{n} active · current project"),
+                (Some(n), false) => format!("{n} active · project"),
+                (None, true) => "current project".to_string(),
+                (None, false) => "project".to_string(),
+            };
+            base.label(label)
+                .child(el().size(7.0, 7.0).radius(1.5).fill(if current { t.em_500 } else { t.tx_mid }).a11y_hidden())
+                .child(
+                    text(name.clone())
+                        .font(th.ty.sm_strong)
+                        .color(t.tx_hi)
+                        .truncate()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .a11y_hidden(),
+                )
+                .child(aside(words))
+        }
+        Target::Issue(hit) => {
+            let look = th.status(&hit.status);
+            let status = hit.status.replace('_', " ");
+            base.label(format!("{}, {status}: {}, in {}", hit.id, hit.title, hit.project))
+                .child(bead(look).a11y_hidden())
+                .child(text(hit.id.clone()).font(th.ty.xs).color(t.tx_dim).a11y_hidden())
+                .child(
+                    text(hit.title.clone())
+                        .font(th.ty.sm)
+                        .color(if hit.status == "closed" { t.tx_dim } else { t.tx_hi })
+                        .truncate()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .a11y_hidden(),
+                )
+                .child(aside(hit.project.clone()))
+        }
+    }
 }
 
 /// What the last test or save attempt found, in plain words. The line keeps

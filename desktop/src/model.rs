@@ -104,6 +104,16 @@ pub struct IssueDetail {
     pub comments: Vec<Comment>,
 }
 
+/// An issue quick open found, in whichever project holds it: enough to list
+/// it and to go to it. The rest is read when it is opened.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Hit {
+    pub project: String,
+    pub id: String,
+    pub title: String,
+    pub status: String,
+}
+
 /// Why a read failed. The same four sanitized classes as the web app
 /// (ADR-0003, `DoltFailureKind`), plus "not configured". A failure never
 /// carries a driver message: those can include hosts, user names or other
@@ -156,6 +166,11 @@ pub trait Source: Send + Sync {
     fn projects(&self) -> Result<Vec<Project>, Failure>;
     fn issues(&self, database: &str) -> Result<Vec<IssueSummary>, Failure>;
     fn issue(&self, database: &str, id: &str) -> Result<Option<IssueDetail>, Failure>;
+    /// Quick open's candidates: the issues in `databases` whose id or title
+    /// holds the characters of `needle` (from `quick::needle`: lower-cased,
+    /// not empty) in order, at most `quick::MAX_RESULTS` per database. The
+    /// order is the source's; `quick::rank` decides what is shown first.
+    fn search(&self, databases: &[String], needle: &str) -> Result<Vec<Hit>, Failure>;
     /// A short label for the status bar, never a secret.
     fn label(&self) -> String;
 }
@@ -172,6 +187,9 @@ impl Source for Unconfigured {
         Err(Failure::NotConfigured)
     }
     fn issue(&self, _: &str, _: &str) -> Result<Option<IssueDetail>, Failure> {
+        Err(Failure::NotConfigured)
+    }
+    fn search(&self, _: &[String], _: &str) -> Result<Vec<Hit>, Failure> {
         Err(Failure::NotConfigured)
     }
     fn label(&self) -> String {

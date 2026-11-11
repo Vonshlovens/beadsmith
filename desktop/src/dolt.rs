@@ -11,7 +11,8 @@ use std::sync::{Arc, OnceLock};
 use mysql::prelude::Queryable;
 use mysql::{Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts, Row, Value};
 
-use crate::model::{Comment, Counts, Failure, IssueDetail, IssueRef, IssueSummary, Project, Source};
+use crate::model::{Comment, Counts, Failure, Hit, IssueDetail, IssueRef, IssueSummary, Project, Source};
+use crate::quick;
 use crate::settings::{self, Lookup, SecretStore};
 
 const SYSTEM_DATABASES: [&str; 4] = ["information_schema", "mysql", "performance_schema", "sys"];
@@ -44,6 +45,42 @@ fn count_columns(db: &str) -> String {
 /// The values for the placeholders in [`count_columns`].
 fn blocker_params() -> Vec<Value> {
     vec![Value::from("blocks"), Value::from("closed")]
+}
+
+/// How much of a `LIKE` pattern's text must sit together.
+#[derive(Clone, Copy)]
+enum Like {
+    /// The text starts with the query.
+    Prefix,
+    /// The text holds the query in one piece.
+    Contains,
+    /// The text holds the query's characters in order, anything between them:
+    /// the loose test `quick::score` applies to what comes back.
+    InOrder,
+}
+
+/// A `LIKE` pattern for `needle`, always bound as a parameter. The query's
+/// own `%`, `_` and `\` are escaped (backslash is `LIKE`'s default escape
+/// character), so they match themselves and typing them cannot widen the
+/// search.
+fn like(needle: &str, shape: Like) -> String {
+    let mut pattern = String::with_capacity(needle.len() * 3 + 2);
+    if !matches!(shape, Like::Prefix) {
+        pattern.push('%');
+    }
+    for c in needle.chars() {
+        if matches!(c, '%' | '_' | '\\') {
+            pattern.push('\\');
+        }
+        pattern.push(c);
+        if matches!(shape, Like::InOrder) {
+            pattern.push('%');
+        }
+    }
+    if !matches!(shape, Like::InOrder) {
+        pattern.push('%');
+    }
+    pattern
 }
 
 /// The server to read and the account to read it as. Where these come from
@@ -299,6 +336,55 @@ impl Source for Dolt {
         }))
     }
 
+    /// One bounded statement per project: the server has no table that
+    /// spans databases. The `WHERE` is the loose in-order match on the id or
+    /// the title. Because only `quick::MAX_RESULTS` rows come back, the
+    /// `ORDER BY` puts the closest first (the id itself, an id it starts,
+    /// then the query in one piece) so a loose query that matches hundreds
+    /// of titles still returns the issue whose id was typed. Ids and titles
+    /// are lower-cased in the statement: Dolt's default collation tells case
+    /// apart, and the needle is already lower-case.
+    fn search(&self, databases: &[String], needle: &str) -> Result<Vec<Hit>, Failure> {
+        let (mut hits, mut answered, mut failed) = (Vec::new(), false, None);
+        for database in databases {
+            let db = quote(database)?;
+            let sql = format!(
+                "SELECT i.id, i.title, i.status
+                 FROM {db}.issues i
+                 WHERE LOWER(i.id) LIKE ? OR LOWER(i.title) LIKE ?
+                 ORDER BY LOWER(i.id) = ? DESC,
+                          LOWER(i.id) LIKE ? DESC,
+                          (LOWER(i.id) LIKE ? OR LOWER(i.title) LIKE ?) DESC,
+                          i.updated_at DESC
+                 LIMIT {limit}",
+                limit = quick::MAX_RESULTS
+            );
+            let (loose, prefix, whole) =
+                (like(needle, Like::InOrder), like(needle, Like::Prefix), like(needle, Like::Contains));
+            let params: [&str; 6] = [&loose, &loose, needle, &prefix, &whole, &whole];
+            match self.select(&sql, params.into_iter().map(Value::from).collect()) {
+                Ok(rows) => {
+                    answered = true;
+                    hits.extend(rows.iter().filter_map(|r| {
+                        Some(Hit {
+                            project: database.clone(),
+                            id: text(r, "id")?,
+                            title: text(r, "title").unwrap_or_default(),
+                            status: text(r, "status").unwrap_or_else(|| "open".into()),
+                        })
+                    }));
+                }
+                Err(failure) => failed = Some(failure),
+            }
+        }
+        // One project failing must not hide the others' issues; a search
+        // that no project answered is a failure.
+        match failed {
+            Some(failure) if !answered => Err(failure),
+            _ => Ok(hits),
+        }
+    }
+
     fn label(&self) -> String {
         format!("Dolt {}:{}", self.config.host, self.config.port)
     }
@@ -374,6 +460,16 @@ mod tests {
         });
         assert_eq!(classify(&denied), Failure::AuthenticationRejected);
         assert_eq!(classify(&mysql::Error::DriverError(mysql::DriverError::ConnectTimeout)), Failure::Unreachable);
+    }
+
+    #[test]
+    fn like_patterns_escape_what_was_typed() {
+        assert_eq!(like("lh-4", Like::InOrder), "%l%h%-%4%");
+        assert_eq!(like("lh-4", Like::Contains), "%lh-4%");
+        assert_eq!(like("lh-4", Like::Prefix), "lh-4%");
+        // Wildcards and the escape character match themselves.
+        assert_eq!(like("50%_\\", Like::Contains), "%50\\%\\_\\\\%");
+        assert_eq!(like("a_", Like::InOrder), "%a%\\_%");
     }
 
     #[test]
@@ -454,6 +550,42 @@ mod live {
             compared += issues.len();
         }
         assert!(compared > 0, "the server has issues to compare");
+    }
+
+    /// Quick open across every project on the server: an id typed in any
+    /// case finds its issue first, wildcards are literal, and the server's
+    /// candidates are exactly what `quick::score` would keep.
+    #[test]
+    #[ignore = "needs a Dolt server"]
+    fn search_finds_issues_by_id_and_title_in_every_project() {
+        let dolt = from_env(|_| {});
+        let projects = dolt.projects().expect("projects");
+        let names: Vec<String> = projects.iter().map(|p| p.name.clone()).collect();
+        let mut searched = 0;
+        for p in &projects {
+            let issues = dolt.issues(&p.name).expect("issues");
+            let Some(issue) = issues.last() else { continue };
+            searched += 1;
+            let hits = dolt.search(&names, &quick::needle(&issue.id.to_uppercase())).expect("search by id");
+            let found = hits.iter().find(|h| h.project == p.name && h.id == issue.id).expect("the id finds its issue");
+            assert_eq!((&found.title, &found.status), (&issue.title, &issue.status));
+            let first = hits.iter().find(|h| h.project == p.name).unwrap();
+            assert_eq!(first.id, issue.id, "the typed id leads its project's rows");
+
+            // A word from a title, and the loose match against the whole project.
+            let word = issue.title.split_whitespace().max_by_key(|w| w.len()).unwrap_or(&issue.title);
+            let needle = quick::needle(word);
+            let hits = dolt.search(std::slice::from_ref(&p.name), &needle).expect("search by title");
+            assert!(hits.iter().any(|h| h.id == issue.id), "{word}");
+            assert!(hits.len() <= quick::MAX_RESULTS);
+            assert!(hits.iter().all(|h| quick::matches(&needle, &h.id, &h.title)), "only matches come back");
+            let expected = issues.iter().filter(|i| quick::matches(&needle, &i.id, &i.title)).count();
+            assert_eq!(hits.len(), expected.min(quick::MAX_RESULTS), "{word}: the server and the ranking agree");
+        }
+        assert!(searched > 0, "the server has issues to search");
+        let literal = dolt.search(&names, "%").expect("a wildcard is searched for, not expanded");
+        assert!(literal.iter().all(|h| h.id.contains('%') || h.title.contains('%')), "a wildcard is literal");
+        assert_eq!(dolt.search(&["Bad-Name".into()], "x"), Err(Failure::Unknown));
     }
 
     #[test]

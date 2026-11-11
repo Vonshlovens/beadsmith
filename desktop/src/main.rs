@@ -10,6 +10,7 @@ mod app;
 mod dolt;
 mod keys;
 mod model;
+mod quick;
 mod sample;
 mod settings;
 mod theme;
@@ -284,6 +285,44 @@ fn shortcuts_scene(s: &mut State) {
     s.shortcuts = true;
 }
 
+/// Quick open as Cmd-K shows it: nothing typed, so it lists the projects.
+fn quick_open_scene(s: &mut State) {
+    sample_scene(s);
+    s.open_quick();
+}
+
+/// Quick open with `query` typed and the sample server's answer landed.
+fn quick_typed(s: &mut State, query: &str) {
+    quick_open_scene(s);
+    s.quick_field().replace_text(query);
+    let databases: Vec<String> = Sample.projects().unwrap_or_default().into_iter().map(|p| p.name).collect();
+    s.quick_found(Sample.search(&databases, &quick::needle(query)));
+}
+
+/// An id from another project than the one on screen: it leads the list.
+fn quick_open_id_scene(s: &mut State) {
+    quick_typed(s, "pa-2");
+}
+
+/// A loose query: a project and issues from both projects, more than the
+/// list shows at once, with the highlight moved off the first row.
+fn quick_open_results_scene(s: &mut State) {
+    quick_typed(s, "a");
+    s.quick_move(2);
+}
+
+fn quick_open_none_scene(s: &mut State) {
+    quick_typed(s, "zeppelin");
+}
+
+/// The server stopped answering: the projects still match, and the footer
+/// says the issues are missing.
+fn quick_open_failed_scene(s: &mut State) {
+    quick_open_scene(s);
+    s.quick_field().replace_text("pan");
+    s.quick_found(Err(Failure::Unreachable));
+}
+
 /// The window frame on macOS: the content runs under a transparent title
 /// bar, so the app's own bar (`view::title_bar`) is the title bar. The window
 /// buttons are centred in it, and only that bar drags the window, which
@@ -333,6 +372,11 @@ fn main() {
             ("theme-light", theme_light_scene),
             ("theme-dark", theme_dark_scene),
             ("shortcuts", shortcuts_scene),
+            ("quick-open", quick_open_scene),
+            ("quick-open-id", quick_open_id_scene),
+            ("quick-open-results", quick_open_results_scene),
+            ("quick-open-none", quick_open_none_scene),
+            ("quick-open-failed", quick_open_failed_scene),
         ],
         setup: Some(|s, waker| s.setup(waker)),
         poll: Some(|s, clock, tx| s.poll(clock, tx)),

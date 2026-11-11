@@ -20,6 +20,12 @@ use crate::app::{Pane, State, Step, TABLE_KEY};
 /// that view. The view itself is keyed per issue so each issue opens at its top.
 pub const DETAIL_ANCHOR: &str = "issue-heading";
 
+/// The element key of a row in quick open's list, by its place in it: what
+/// the view builds the row under and the keys here scroll to.
+pub fn quick_row_key(row: usize) -> String {
+    format!("quick-row-{row}")
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scroll {
     PageDown,
@@ -45,6 +51,8 @@ pub enum Command {
     SortNext,
     SortReverse,
     Shortcuts,
+    /// Open the palette that jumps to a project or an issue (`app::Quick`).
+    QuickOpen,
     /// Step the theme preference: system, light, dark.
     Theme,
     /// Scroll the issue being read.
@@ -78,6 +86,8 @@ pub fn command(key: &KeyEvent, pane: Pane, typing: bool) -> Option<Command> {
             'f' => Some(Command::Filter),
             'r' => Some(Command::Refresh),
             ',' => Some(Command::Connection),
+            // The editors' and the web's "go to anything".
+            'k' => Some(Command::QuickOpen),
             '1'..='9' => Some(Command::Project(c as usize - '1' as usize)),
             // The browser's and Finder's history keys.
             '[' => Some(Command::TrailBack),
@@ -182,6 +192,7 @@ pub fn run(s: &mut State, command: Command, tx: &mut Tx) -> bool {
         Command::SortNext => s.sort_next(),
         Command::SortReverse => return s.sort_reverse(),
         Command::Shortcuts => s.shortcuts = true,
+        Command::QuickOpen => return s.open_quick(),
         Command::Theme => s.cycle_appearance(),
         Command::Scroll(Scroll::PageDown) => tx.scroll_page(DETAIL_ANCHOR, 1),
         Command::Scroll(Scroll::PageUp) => tx.scroll_page(DETAIL_ANCHOR, -1),
@@ -252,6 +263,59 @@ pub fn filter_key(s: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
     run(s, Command::Select(Step::Next), tx)
 }
 
+/// Go to a row of quick open's list (`State::quick_choose`) and bring the
+/// issue's row into view when the table already has it.
+pub fn quick_choose(s: &mut State, row: usize, tx: &mut Tx) {
+    if let Some(id) = s.quick_choose(row) {
+        reveal(s, &id, tx);
+    }
+}
+
+/// The keys of quick open's field. The palette is a dialog, so the window's
+/// `on_key` stands back and these are all of its keyboard: the arrows (and
+/// Ctrl-N/Ctrl-P, as in a terminal) move through the list while the caret
+/// stays in the field, Enter goes to the active row, and Esc or a second
+/// Cmd-K closes it. Everything else is the field's.
+pub fn quick_key(s: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
+    let Some(quick) = &s.quick else { return false };
+    // An input method is composing: its Enter and arrows are its own.
+    if quick.query.preedit.is_some() {
+        return false;
+    }
+    let m = key.mods;
+    let control = m.ctrl && !m.shift && !m.alt && !m.cmd;
+    let plain = !m.ctrl && !m.alt && !m.cmd;
+    let by = match &key.key {
+        Key::Escape => {
+            s.close_quick();
+            return true;
+        }
+        Key::Command('k') if m.cmd && !m.shift && !m.alt => {
+            if !tx.key_repeat() {
+                s.close_quick();
+            }
+            return true;
+        }
+        Key::Enter if plain => {
+            if !tx.key_repeat() {
+                quick_choose(s, quick.active, tx);
+            }
+            return true;
+        }
+        Key::Down if plain => 1,
+        Key::Up if plain => -1,
+        Key::Text(c) if control && c == "n" => 1,
+        Key::Text(c) if control && c == "p" => -1,
+        Key::Command('n') if control => 1,
+        Key::Command('p') if control => -1,
+        _ => return false,
+    };
+    if let Some(row) = s.quick_move(by) {
+        tx.scroll_into_view(quick_row_key(row));
+    }
+    true
+}
+
 /// The native menu bar (macOS). Every item runs through `run`. Items with a
 /// key equivalent are `keys_first`: the key reaches the window like any
 /// other, so `on_key` answers it once and a dialog can keep it; picking the
@@ -272,6 +336,8 @@ pub fn menu() -> Vec<MenuItem<State>> {
         MenuItem::new("Reverse Sort Order", |s, tx| perform(s, Command::SortReverse, tx)).menu("View"),
         MenuItem::separator().menu("View"),
         MenuItem::new("Switch Theme", |s, tx| perform(s, Command::Theme, tx)).menu("View"),
+        keyed("Quick Open…", |s, tx| perform(s, Command::QuickOpen, tx), "cmd+k").menu("Go"),
+        MenuItem::separator().menu("Go"),
         MenuItem::new("Next Issue", |s, tx| perform(s, Command::Select(Step::Next), tx)).menu("Go"),
         MenuItem::new("Previous Issue", |s, tx| perform(s, Command::Select(Step::Previous), tx)).menu("Go"),
         MenuItem::new("Read Issue", |s, tx| perform(s, Command::Open, tx)).menu("Go"),
@@ -316,6 +382,7 @@ pub const SHORTCUTS: &[(&str, &[Shortcut])] = &[
         "Everywhere",
         &[
             (&["Esc"], "Back: leave the field or the issue, then clear the filters, then the selection"),
+            (&["⌘K"], "Quick open: jump to a project, or to an issue in any project"),
             (&["⌘1–9"], "Switch to that project in the sidebar"),
             (&["r", "⌘R"], "Refresh"),
             (&["⌘,"], "Connection settings"),
@@ -385,6 +452,7 @@ mod tests {
         assert_eq!(typing(cmd('f')), Some(Command::Filter));
         assert_eq!(typing(cmd('r')), Some(Command::Refresh));
         assert_eq!(typing(cmd(',')), Some(Command::Connection));
+        assert_eq!(typing(cmd('k')), Some(Command::QuickOpen));
         assert_eq!(typing(cmd('1')), Some(Command::Project(0)));
         assert_eq!(typing(cmd('9')), Some(Command::Project(8)));
         assert_eq!(typing(cmd('0')), None);
@@ -405,6 +473,7 @@ mod tests {
         assert!(Command::Select(Step::Next).repeats() && Command::Scroll(Scroll::PageDown).repeats());
         assert!(!Command::Refresh.repeats() && !Command::Open.repeats() && !Command::Back.repeats());
         assert!(!Command::TrailBack.repeats() && !Command::TrailForward.repeats());
+        assert!(!Command::QuickOpen.repeats());
     }
 
     #[test]

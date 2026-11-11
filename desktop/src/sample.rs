@@ -1,7 +1,8 @@
 //! A built-in sample dataset, for `--sample`, the headless scenes and tests.
 //! It needs no Dolt server and holds nothing real.
 
-use crate::model::{Comment, Counts, Failure, IssueDetail, IssueRef, IssueSummary, Project, Source};
+use crate::model::{Comment, Counts, Failure, Hit, IssueDetail, IssueRef, IssueSummary, Project, Source};
+use crate::quick;
 
 pub struct Sample;
 
@@ -202,6 +203,19 @@ impl Source for Sample {
             dependents,
             comments: comments(id),
         }))
+    }
+
+    fn search(&self, databases: &[String], needle: &str) -> Result<Vec<Hit>, Failure> {
+        let found = databases.iter().flat_map(|database| {
+            let matching = rows(database).unwrap_or_default().iter().filter(|r| quick::matches(needle, r.id, r.title));
+            matching.take(quick::MAX_RESULTS).map(move |r| Hit {
+                project: database.clone(),
+                id: r.id.into(),
+                title: r.title.into(),
+                status: r.status.into(),
+            })
+        });
+        Ok(found.collect())
     }
 
     fn label(&self) -> String {

@@ -15,7 +15,8 @@ use rune::{Latest, TextEdit, Tx, Waker};
 use rune_kit::{SortDir, TableState};
 
 use crate::dolt::{Config, Credential, Dolt};
-use crate::model::{Failure, IssueDetail, IssueSummary, Project, Source, Unconfigured};
+use crate::model::{Failure, Hit, IssueDetail, IssueSummary, Project, Source, Unconfigured};
+use crate::quick::{self, Target};
 use crate::settings::{self, Backing, Env, FormError, Lookup, SecretStore, Session, StoreError, Stored};
 use crate::theme::Appearance;
 
@@ -196,8 +197,44 @@ impl Connection {
     }
 }
 
+/// Quick open (Cmd-K), present while its palette is open: a field, and the
+/// projects and issues that match what is typed in it.
+///
+/// Projects are matched here, from the list already loaded, so they answer
+/// each keystroke. Issues come from every project on the server
+/// (`Source::search`) on a worker; until an answer lands the issues already
+/// found are re-ranked against the new text, so the list narrows at once and
+/// fills in when the server has spoken.
+pub struct Quick {
+    pub query: TextEdit,
+    /// The issues the server last offered.
+    hits: Vec<Hit>,
+    /// What the list shows, best first (`quick::rank`).
+    pub results: Vec<Target>,
+    /// The row Enter opens.
+    pub active: usize,
+    /// A search is on its way: the list may still gain issues.
+    pub searching: bool,
+    /// The last search failed. Projects still match; issues are missing.
+    pub failed: Option<Failure>,
+}
+
+impl Quick {
+    /// The row that is active, for the view's highlight and the field's
+    /// active descendant.
+    pub fn active_target(&self) -> Option<&Target> {
+        self.results.get(self.active)
+    }
+}
+
+/// How long the search waits for typing to pause. Short enough that the list
+/// feels live, long enough that a typed id is one read and not one per key.
+const SEARCH_PAUSE: std::time::Duration = std::time::Duration::from_millis(120);
+
 type IssuesAnswer = (String, Result<Vec<IssueSummary>, Failure>);
 type DetailAnswer = (String, String, Result<Option<IssueDetail>, Failure>);
+/// The needle a search was for, and what it found.
+type SearchAnswer = (String, Result<Vec<Hit>, Failure>);
 
 pub struct State {
     pub source: Arc<dyn Source>,
@@ -225,6 +262,11 @@ pub struct State {
     pub pane: Pane,
     /// The keyboard shortcuts overlay is open.
     pub shortcuts: bool,
+    /// Quick open's palette, when open.
+    pub quick: Option<Quick>,
+    /// An issue quick open went to in a project whose list was still on its
+    /// way: its row is scrolled to once the list lands (`poll`).
+    reveal: Option<String>,
     /// Seconds between the window's own refreshes, one of
     /// `settings::REFRESH_CHOICES`; 0 is never.
     pub auto_refresh: u32,
@@ -248,6 +290,7 @@ pub struct State {
     projects_req: Latest<Result<Vec<Project>, Failure>>,
     issues_req: Latest<IssuesAnswer>,
     detail_req: Latest<DetailAnswer>,
+    search_req: Latest<SearchAnswer>,
     /// The connection screen, when open.
     pub connection: Option<Connection>,
     pub env: Env,
@@ -313,6 +356,8 @@ impl State {
             stale: Stale::default(),
             pane: Pane::List,
             shortcuts: false,
+            quick: None,
+            reveal: None,
             auto_refresh: settings::load_refresh(&backing.prefs),
             refresh_menu: false,
             background: false,
@@ -324,6 +369,7 @@ impl State {
             projects_req: Latest::default(),
             issues_req: Latest::default(),
             detail_req: Latest::default(),
+            search_req: Latest::default().debounce(SEARCH_PAUSE),
             connection: None,
             env: backing.env,
             lookup: backing.lookup,
@@ -341,6 +387,7 @@ impl State {
         self.projects_req.set_waker(waker.clone());
         self.issues_req.set_waker(waker.clone());
         self.detail_req.set_waker(waker.clone());
+        self.search_req.set_waker(waker.clone());
         self.test_req.set_waker(waker.clone());
         self.save_req.set_waker(waker);
         if self.projects == Load::Idle {
@@ -387,6 +434,7 @@ impl State {
             self.table.clear_selection();
             self.issue = None;
             self.trail.clear();
+            self.reveal = None;
             self.pane = Pane::List;
             self.detail = Load::Idle;
             self.detail_req.cancel();
@@ -470,7 +518,7 @@ impl State {
 
     /// A dialog owns the keyboard: no window shortcut may act under it.
     pub fn modal_open(&self) -> bool {
-        self.connection.is_some() || self.shortcuts || self.refresh_menu
+        self.connection.is_some() || self.shortcuts || self.refresh_menu || self.quick.is_some()
     }
 
     /// The selected issue's row among the visible ones. `None` when nothing
@@ -556,6 +604,140 @@ impl State {
         if let Some(i) = self.issue.clone() {
             self.select_issue(&i);
         }
+    }
+
+    // -- Quick open ----------------------------------------------------------------------------
+
+    /// Open the palette on the project list. False when there is nothing to
+    /// jump to yet (no project list) or another dialog has the window.
+    pub fn open_quick(&mut self) -> bool {
+        if self.modal_open() {
+            return false;
+        }
+        let Some(projects) = self.projects.ready() else { return false };
+        let mut query = TextEdit::new("");
+        query.focused = true;
+        self.quick = Some(Quick {
+            query,
+            hits: Vec::new(),
+            results: quick::rank("", projects, &[]),
+            active: 0,
+            searching: false,
+            failed: None,
+        });
+        true
+    }
+
+    pub fn close_quick(&mut self) {
+        self.search_req.cancel();
+        self.quick = None;
+    }
+
+    /// The palette's field, for the view's edit binding.
+    pub fn quick_field(&mut self) -> &mut TextEdit {
+        match &mut self.quick {
+            Some(quick) => &mut quick.query,
+            None => &mut self.closed_edit,
+        }
+    }
+
+    /// The query changed: narrow the list now, and ask the server for the
+    /// issues that match it.
+    pub fn quick_edited(&mut self) {
+        let Some(quick) = &mut self.quick else { return };
+        let needle = quick::needle(&quick.query.text);
+        quick.active = 0;
+        quick.failed = None;
+        quick.searching = !needle.is_empty();
+        if needle.is_empty() {
+            quick.hits.clear();
+            self.search_req.cancel();
+        } else {
+            let source = self.source.clone();
+            let databases: Vec<String> = self.projects.ready().into_iter().flatten().map(|p| p.name.clone()).collect();
+            self.search_req.request((databases, needle), move |(databases, needle)| {
+                let found = source.search(&databases, &needle);
+                (needle, found)
+            });
+        }
+        self.rank_quick();
+    }
+
+    /// The server's answer for the text in the field: its issues join the
+    /// list, or the list says they are missing. The row the reader is on
+    /// stays theirs when the answer keeps it.
+    pub fn quick_found(&mut self, found: Result<Vec<Hit>, Failure>) {
+        let Some(quick) = &mut self.quick else { return };
+        quick.searching = false;
+        let on = quick.active_target().cloned();
+        match found {
+            Ok(hits) => quick.hits = hits,
+            Err(failure) => quick.failed = Some(failure),
+        }
+        self.rank_quick();
+        if let Some(quick) = &mut self.quick {
+            quick.active = on.and_then(|on| quick.results.iter().position(|t| *t == on)).unwrap_or(0);
+        }
+    }
+
+    /// Rebuild the list from the projects and the issues in hand.
+    fn rank_quick(&mut self) {
+        let Some(quick) = &mut self.quick else { return };
+        let projects = self.projects.ready().map_or(&[][..], Vec::as_slice);
+        quick.results = quick::rank(&quick.query.text, projects, &quick.hits);
+        quick.active = quick.active.min(quick.results.len().saturating_sub(1));
+    }
+
+    /// Move the active row by `by`, round the ends as a menu does. Returns
+    /// the row now active, for the caller to scroll to.
+    pub fn quick_move(&mut self, by: isize) -> Option<usize> {
+        let quick = self.quick.as_mut()?;
+        let rows = quick.results.len();
+        if rows == 0 {
+            return None;
+        }
+        quick.active = (quick.active as isize + by).rem_euclid(rows as isize) as usize;
+        Some(quick.active)
+    }
+
+    /// The pointer is over a row: Enter and a click now mean the same one.
+    pub fn quick_hover(&mut self, row: usize) {
+        if let Some(quick) = &mut self.quick
+            && row < quick.results.len()
+        {
+            quick.active = row;
+        }
+    }
+
+    /// Go to a row of the list and close the palette. Returns the issue to
+    /// scroll the table to, when its row is already there.
+    pub fn quick_choose(&mut self, row: usize) -> Option<String> {
+        let target = self.quick.as_ref()?.results.get(row)?.clone();
+        self.close_quick();
+        match target {
+            Target::Project(name) => {
+                self.select_project(&name);
+                None
+            }
+            Target::Issue(hit) => self.open_issue(&hit.project, &hit.id),
+        }
+    }
+
+    /// Show an issue in whichever project holds it, switching to that project
+    /// first. The issue is asked for at once, beside the project's list, so
+    /// its pane does not wait for the table. Returns the issue when its row
+    /// can be scrolled to now; otherwise `poll` does that when the list lands.
+    fn open_issue(&mut self, project: &str, id: &str) -> Option<String> {
+        if self.project.as_deref() != Some(project) {
+            self.select_project(project);
+        }
+        self.pane = Pane::List;
+        self.select_issue(id);
+        if self.issues.ready().is_some() {
+            return Some(id.to_string());
+        }
+        self.reveal = Some(id.to_string());
+        None
     }
 
     // -- The window's own refresh --------------------------------------------------------------
@@ -787,6 +969,7 @@ impl State {
         self.source = Arc::new(Dolt::new(config, self.stored_credential()));
         self.issues_req.cancel();
         self.detail_req.cancel();
+        self.reveal = None;
         self.projects = Load::Idle;
         self.project = None;
         self.issues = Load::Idle;
@@ -807,6 +990,14 @@ impl State {
         self.projects_req.is_pending() || self.issues_req.is_pending() || self.detail_req.is_pending()
     }
 
+    /// The row to scroll the table to now that its list has landed: the
+    /// issue quick open went to in another project, if the filters show it.
+    fn take_reveal(&mut self) -> Option<String> {
+        self.issues.ready()?;
+        let id = self.reveal.take()?;
+        (self.issue.as_deref() == Some(id.as_str()) && self.selected_row().is_some()).then_some(id)
+    }
+
     /// `AppSpec::poll`: one `tick`, then ask to be woken for the next one.
     /// Rune keeps no timer thread for this; the wake only schedules a frame.
     pub fn poll(&mut self, clock: f64, tx: &mut Tx) -> bool {
@@ -814,6 +1005,9 @@ impl State {
         // Answers land without animation, so the first second after launch stays still.
         if changed {
             tx.instant();
+        }
+        if let Some(id) = self.take_reveal() {
+            tx.scroll_into_view_in(TABLE_KEY, id);
         }
         if let Some(wait) = self.next_tick() {
             tx.wake_after(std::time::Duration::from_secs_f64(wait));
@@ -879,6 +1073,13 @@ impl State {
                 Err(f) if self.detail.ready().is_some() => self.stale.detail = Some(f),
                 Err(f) => self.detail = Load::Failed(f),
             }
+        }
+        if let Some((needle, found)) = self.search_req.take()
+            && let Some(quick) = &mut self.quick
+            && quick::needle(&quick.query.text) == needle
+        {
+            changed = true;
+            self.quick_found(found);
         }
         if let Some(answer) = self.test_req.take()
             && let Some(form) = &mut self.connection
@@ -1307,6 +1508,9 @@ mod tests {
         fn issue(&self, database: &str, id: &str) -> Result<Option<IssueDetail>, Failure> {
             self.check().and_then(|()| Sample.issue(database, id))
         }
+        fn search(&self, databases: &[String], needle: &str) -> Result<Vec<Hit>, Failure> {
+            self.check().and_then(|()| Sample.search(databases, needle))
+        }
         fn label(&self) -> String {
             "Flaky".into()
         }
@@ -1523,6 +1727,9 @@ mod tests {
         }
         fn issue(&self, database: &str, id: &str) -> Result<Option<IssueDetail>, Failure> {
             Sample.issue(database, id)
+        }
+        fn search(&self, databases: &[String], needle: &str) -> Result<Vec<Hit>, Failure> {
+            Sample.search(databases, needle)
         }
         fn label(&self) -> String {
             "Shifting".into()
@@ -1840,6 +2047,162 @@ mod tests {
         assert!(!s.has_filters());
         s.status_filter = 2;
         assert!(s.has_filters());
+    }
+
+    /// Type into the palette and wait for the server's answer.
+    fn quick_type(s: &mut State, text: &str) {
+        s.quick.as_mut().expect("the palette is open").query.replace_text(text);
+        s.quick_edited();
+        quick_wait(s);
+    }
+
+    fn quick_names(s: &State) -> Vec<String> {
+        let name = |t: &Target| match t {
+            Target::Project(name) => name.clone(),
+            Target::Issue(hit) => hit.id.clone(),
+        };
+        s.quick.as_ref().unwrap().results.iter().map(name).collect()
+    }
+
+    #[test]
+    fn quick_open_lists_the_projects_and_switches_to_one() {
+        let mut s = State::new(Arc::new(Sample), Backing::detached());
+        assert!(!s.open_quick(), "nowhere to go before the projects load");
+        s.load_projects();
+        drain(&mut s);
+        s.select_issue("lh-1");
+        assert!(s.open_quick() && s.modal_open());
+        assert!(s.quick.as_ref().unwrap().query.focused, "typing goes to the palette");
+        assert_eq!(quick_names(&s), ["lighthouse", "pantry"]);
+        assert!(!s.open_quick(), "it is already open");
+
+        assert_eq!(s.quick_move(1), Some(1));
+        assert_eq!(s.quick_move(1), Some(0), "the list goes round");
+        assert_eq!(s.quick_move(-1), Some(1));
+        assert_eq!(s.quick_choose(1), None);
+        assert!(s.quick.is_none() && !s.modal_open());
+        assert_eq!((s.project.as_deref(), s.issue.as_deref()), (Some("pantry"), None));
+        drain(&mut s);
+        assert!(s.issues.ready().is_some_and(|i| i.iter().all(|i| i.id.starts_with("pa-"))));
+    }
+
+    #[test]
+    fn quick_open_goes_to_an_issue_in_another_project() {
+        let mut s = State::new(Arc::new(Sample), Backing::detached());
+        s.load_projects();
+        drain(&mut s);
+        s.select_issue("lh-1");
+        s.follow_link("lh-4");
+        drain(&mut s);
+        s.open_quick();
+        quick_type(&mut s, "PA-2");
+        assert_eq!(quick_names(&s)[0], "pa-2", "an id typed in any case leads");
+        let Some(Target::Issue(hit)) = s.quick.as_ref().unwrap().active_target() else { panic!("an issue") };
+        assert_eq!((hit.project.as_str(), hit.status.as_str()), ("pantry", "in_progress"));
+
+        assert_eq!(s.quick_choose(0), None, "the row is not there to scroll to yet");
+        assert!(s.quick.is_none());
+        assert_eq!((s.project.as_deref(), s.issue.as_deref()), (Some("pantry"), Some("pa-2")));
+        assert_eq!(
+            (&s.issues, &s.detail),
+            (&Load::Loading, &Load::Loading),
+            "the list and the issue are both asked for"
+        );
+        assert!(s.trail.is_empty() && s.table.is_selected("pa-2"));
+        drain(&mut s);
+        assert!(matches!(&s.detail, Load::Ready(Some(d)) if d.summary.id == "pa-2"));
+        assert!(s.selected_row().is_some(), "selected in the list that landed");
+        assert_eq!(s.take_reveal().as_deref(), Some("pa-2"), "and scrolled to, once");
+        assert_eq!(s.take_reveal(), None);
+
+        // In the project already open the row is there to scroll to at once.
+        s.open_quick();
+        quick_type(&mut s, "import");
+        assert_eq!(quick_names(&s), ["pa-4"]);
+        assert_eq!(s.quick_choose(0).as_deref(), Some("pa-4"));
+        assert_eq!((s.project.as_deref(), s.issue.as_deref()), (Some("pantry"), Some("pa-4")));
+        assert!(s.issues.ready().is_some(), "the list on screen stays");
+    }
+
+    #[test]
+    fn quick_open_narrows_at_once_and_keeps_the_active_row_when_the_answer_lands() {
+        let mut s = State::new(Arc::new(Sample), Backing::detached());
+        s.load_projects();
+        drain(&mut s);
+        s.open_quick();
+        quick_type(&mut s, "gasket");
+        assert_eq!(quick_names(&s), ["lh-5", "lh-4"]);
+
+        // Typing on: the issues in hand are re-ranked before the server answers.
+        s.quick.as_mut().unwrap().query.replace_text("gasket k");
+        s.quick_edited();
+        assert_eq!(quick_names(&s), ["lh-5"]);
+        assert!(s.quick.as_ref().unwrap().searching);
+        quick_type(&mut s, "l");
+        let before = quick_names(&s);
+        assert!(before.len() > 3 && before.contains(&"lighthouse".to_string()), "{before:?}");
+        s.quick_move(2);
+        let on = before[2].clone();
+        s.quick_hover(1);
+        assert_eq!(s.quick.as_ref().unwrap().active, 1, "the pointer moves the active row too");
+        s.quick_hover(999);
+        s.quick_move(1);
+        // The same query asked again lands the same rows under the same one.
+        s.quick_edited();
+        assert_eq!(s.quick.as_ref().unwrap().active, 0, "an edit starts from the best match");
+        s.quick_move(2);
+        quick_wait(&mut s);
+        assert_eq!(quick_names(&s)[s.quick.as_ref().unwrap().active], on);
+
+        // Emptied, it is the project switcher again, and asks for nothing.
+        s.quick.as_mut().unwrap().query.replace_text("  ");
+        s.quick_edited();
+        assert_eq!(quick_names(&s), ["lighthouse", "pantry"]);
+        assert!(!s.quick.as_ref().unwrap().searching);
+
+        // An answer for text since replaced, or after the palette closed, is dropped.
+        s.quick.as_mut().unwrap().query.replace_text("zzzz");
+        s.quick_edited();
+        assert!(quick_names(&s).is_empty());
+        assert_eq!(s.quick_move(1), None);
+        assert_eq!(s.quick_choose(0), None);
+        assert!(s.quick.is_some(), "nothing to choose leaves it open");
+        s.close_quick();
+        std::thread::sleep(SEARCH_PAUSE * 3);
+        assert!(!s.land() && s.quick.is_none());
+    }
+
+    #[test]
+    fn a_failed_search_still_offers_the_projects() {
+        let source = Flaky::new(None);
+        let mut s = State::new(source.clone(), Backing::detached());
+        s.load_projects();
+        drain(&mut s);
+        source.set(Some(Failure::Unreachable));
+        s.open_quick();
+        quick_type(&mut s, "pan");
+        assert_eq!(quick_names(&s), ["pantry"]);
+        assert_eq!(s.quick.as_ref().unwrap().failed, Some(Failure::Unreachable));
+        // The next search that works clears it.
+        source.set(None);
+        quick_type(&mut s, "pa-");
+        assert_eq!(s.quick.as_ref().unwrap().failed, None);
+        assert!(quick_names(&s).contains(&"pa-1".to_string()));
+        // The window does not refresh behind the palette.
+        s.tick(10_000.0);
+        assert!(!s.background);
+    }
+
+    /// Wait for the search in flight.
+    fn quick_wait(s: &mut State) {
+        for _ in 0..500 {
+            s.land();
+            if !s.quick.as_ref().unwrap().searching {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("the search never answered");
     }
 
     #[test]

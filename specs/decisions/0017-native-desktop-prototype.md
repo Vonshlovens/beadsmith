@@ -121,6 +121,13 @@ window: it still needs a running server and gains nothing native.
   overlapping and never repeating a rejected or missing password. It adds no
   statement and no authority; see
   [Automatic refresh](../../desktop/README.md#automatic-refresh).
+- Quick open (`State::open_quick` in `desktop/src/app.rs`, ranking in
+  [`desktop/src/quick.rs`](../../desktop/src/quick.rs)) adds one read,
+  `Source::search`: a single parameterized `SELECT` per project with `LIKE`
+  on issue ids and titles, the typed text bound as a value with its
+  wildcards escaped, and a fixed row limit. It reads only the projects the
+  sidebar already lists and adds no authority; see
+  [Quick open](../../desktop/README.md#quick-open).
 - The view a relaunch restores (project, status tab, sort, theme choice,
   window size) is kept in the same settings file (`settings::Session`); it
   holds names and numbers only, and an unusable value falls back to its

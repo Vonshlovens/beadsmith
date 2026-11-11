@@ -25,6 +25,9 @@ The decision record is
   criteria and notes, labels, dependencies both ways and comments. A
   dependency is a link: follow it, and the ones after it, then come back the
   way you came with the arrows above the issue or `⌘[` and `⌘]`.
+- Jumps anywhere with quick open (`⌘K`): type a project's name, or an issue's
+  id or part of its title, and go to it in whichever project holds it. See
+  [Quick open](#quick-open).
 - Works from the keyboard: every action has a key, listed under
   [Keyboard](#keyboard) and in the app on `?`.
 - Refreshes on the Refresh button above the table, `r` or `⌘R`. A refresh
@@ -47,7 +50,8 @@ The decision record is
   first.
 
 It reads only. Dispatch, accounts, the console, backups, the board, the
-Ready deck across projects, todos and the command palette are web-only.
+Ready deck across projects, todos and the command palette's actions are
+web-only.
 
 ## Ready and blockers
 
@@ -141,6 +145,7 @@ is Ctrl off macOS. Plain keys never fire while you type in a field.
 | `⌘[`                 | Back to the issue a link was followed from                                     |
 | `⌘]`                 | Forward again                                                                  |
 | `Esc`                | Back: leave the field or the issue, then clear the filters, then the selection |
+| `⌘K`                 | Quick open: jump to a project, or to an issue in any project                   |
 | `⌘1–9`               | Switch to that project in the sidebar                                          |
 | `r` / `⌘R`           | Refresh                                                                        |
 | `⌘,`                 | Connection settings                                                            |
@@ -456,6 +461,29 @@ every pull request and push to `main` that touches `desktop/`
 uploads the scene images as an artifact. It is a separate workflow from the
 web app's, so neither waits on the other.
 
+## Quick open
+
+`⌘K` (or Go > Quick Open…) opens a field over the window. With nothing typed
+it lists the projects, so it is also a project switcher. Typing matches
+project names and, in every project on the server, issue ids and titles:
+the characters typed have to appear in that order, not side by side, so
+`fghrn` finds "Fog horn …". The closest match is first: the whole text, then
+a leading match, then a word start, then the inside of a word, then scattered
+characters; an id outranks a project name, which outranks a title, and a
+shorter text wins a tie. `↑`/`↓` (or `Ctrl-N`/`Ctrl-P`) move, `Enter` opens,
+`Esc` closes.
+
+Choosing an issue in another project switches to that project with the issue
+selected and open; its row is scrolled to when the list arrives.
+
+Projects are matched in the app. Issues are one bounded read per project
+(`Source::search` in [`src/dolt.rs`](src/dolt.rs)): a parameterized `SELECT`
+with `LIKE` on the id and title, the typed text bound as a value with its
+wildcards escaped, at most 50 rows, the closest first. It runs on a worker
+after typing pauses, and a newer query replaces an older one. The ranking is
+[`src/quick.rs`](src/quick.rs). If the read fails, the projects still match
+and the palette says the issues are missing.
+
 ## Layout
 
 | File                                 | Role                                              |
@@ -464,6 +492,7 @@ web app's, so neither waits on the other.
 | [`src/app.rs`](src/app.rs)           | State, requests on workers, filtering and sorting |
 | [`src/view.rs`](src/view.rs)         | The window: projects, issue table, issue detail   |
 | [`src/keys.rs`](src/keys.rs)         | Keys to commands, the menu bar, the shortcut list |
+| [`src/quick.rs`](src/quick.rs)       | Quick open's matching and ranking                 |
 | [`src/dolt.rs`](src/dolt.rs)         | The Dolt read plane                               |
 | [`src/settings.rs`](src/settings.rs) | Environment, settings file and keychain           |
 | [`src/model.rs`](src/model.rs)       | Read-model types and the failure classes          |
@@ -481,5 +510,5 @@ pin is in [`Cargo.toml`](Cargo.toml).
   accounts and the project gate (see the ADR's alternatives).
 - Developer ID signing and notarization of the macOS download. Bundles for
   Linux and Windows.
-- The board, the Ready deck across projects, the activity feed, search
-  across projects, and any writes.
+- The board, the Ready deck across projects, the activity feed, full-text
+  search of issue bodies and comments, and any writes.
