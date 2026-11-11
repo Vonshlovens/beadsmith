@@ -10,6 +10,7 @@
 	 */
 	import type { Component } from 'svelte';
 	import { page } from '$app/state';
+	import CalendarCheckIcon from 'phosphor-svelte/lib/CalendarCheckIcon';
 	import ClockCounterClockwiseIcon from 'phosphor-svelte/lib/ClockCounterClockwiseIcon';
 	import FoldersIcon from 'phosphor-svelte/lib/FoldersIcon';
 	import KanbanIcon from 'phosphor-svelte/lib/KanbanIcon';
@@ -112,6 +113,12 @@
 						icon: KanbanIcon,
 						active: board_active,
 						keys: 'g b'
+					},
+					{
+						href: `/automations?project=${encodeURIComponent(current.id)}`,
+						label: 'Automations',
+						icon: CalendarCheckIcon,
+						active: path === '/automations' && page.url.searchParams.get('project') === current.id
 					}
 				]
 			});
@@ -123,6 +130,15 @@
 				icon: RobotIcon,
 				active: path === '/missions',
 				keys: 'g m'
+			},
+			{
+				href: '/automations',
+				label: 'Automations',
+				icon: CalendarCheckIcon,
+				active:
+					(path === '/automations' && !page.url.searchParams.has('project')) ||
+					path.startsWith('/automations/'),
+				keys: 'g u'
 			},
 			{
 				href: '/activity',

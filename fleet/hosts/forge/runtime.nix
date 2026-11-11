@@ -17,6 +17,11 @@ let
   '';
   knownHosts = pkgs.writeText "mate-known-hosts" "${net.guestAddress} ${net.hostKey}\n";
   credentials = name: "${name}:${config.sops.secrets.${name}.path}";
+  # Tailnet HTTPS port for Underclass's admin API; Beadsmith's
+  # BDX_UNDERCLASS_URL is https://<forge's tailnet name>:10000. Not 8443:
+  # that is the guest's model filter port on the host link (mate-net.nix),
+  # and one number for two doors makes the firewall harder to read.
+  underclassTailnetPort = 10000;
 in {
   nixpkgs.config.allowUnfreePredicate = pkg: lib.getName pkg == "claude-code";
   nixpkgs.overlays = [ (import ../../../nix/overlay.nix) ];
@@ -32,6 +37,36 @@ in {
       exec ${config.services.underclass.package}/bin/underclass serve --bind 127.0.0.1:8080
     '');
   };
+  # Beadsmith's model pool console reads Underclass's admin API (ADR-0022,
+  # rule 4). Underclass stays on loopback; tailscaled terminates tailnet
+  # HTTPS on its own port and proxies to it. Serve, never Funnel: this is
+  # reachable from the tailnet only, and the tailnet policy grants this port
+  # to the Beadsmith host alone (docs/operations/host-forge.md). Guests cannot
+  # reach it: microvms.nix drops their traffic to the tailnet and to every
+  # host port but their model filter. Declared as a unit, not a one-off
+  # `tailscale serve` command, so the route is in the configuration, comes
+  # back after tailscaled's state is reset, and goes away with this unit.
+  systemd.services.underclass-tailnet-serve =
+    let
+      tailscale = "${config.services.tailscale.package}/bin/tailscale";
+      port = toString underclassTailnetPort;
+    in {
+      description = "Publish Underclass's admin API on tailnet HTTPS for Beadsmith";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "tailscaled.service" "underclass.service" ];
+      wants = [ "tailscaled.service" ];
+      # tailscaled may still be logging in at boot, or tailnet certificates
+      # may not be enabled yet: keep retrying rather than give up silently.
+      startLimitIntervalSec = 0;
+      serviceConfig = {
+        Type = "oneshot"; RemainAfterExit = true;
+        Restart = "on-failure"; RestartSec = 30;
+        ExecStart = "${tailscale} serve --bg --https=${port} http://127.0.0.1:8080";
+        # Only this port's handler: other Serve routes (the mate runner's on
+        # 443) are left as they are.
+        ExecStop = "${tailscale} serve --https=${port} off";
+      };
+    };
   systemd.services.mate-model-proxy = {
     wantedBy = [ "multi-user.target" ];
     after = [ "underclass.service" "microvm-tap-interfaces@mate.service" ];
@@ -64,6 +99,8 @@ in {
       MATE_AGENT_WORKDIR = "/var/lib/agent/home/work";
       MATE_AGENT_CLAUDE_CONFIG = "/var/lib/agent/home/.claude";
       MATE_AGENT_CLAUDE = "/run/current-system/sw/bin/mate-claude";
+      # The guest's hc (guests/mate.nix); its core runs as a user service there.
+      MATE_AGENT_HC = "/run/current-system/sw/bin/hc";
     };
     serviceConfig = {
       ExecStart = "${node}/bin/node --import ${source}/scripts/ts-resolve.mjs ${source}/scripts/mate-runner.ts";

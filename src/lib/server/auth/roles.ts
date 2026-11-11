@@ -68,6 +68,8 @@ export function roleCan(role: AccountRole | undefined, permission: Permission): 
  */
 const ADMIN_PREFIXES = ['/console', '/api/console', '/api/todos', '/api/mate/chats'];
 const DISPATCH_PATTERN = /^\/api\/projects\/[^/]+\/dispatch(?:\/|$)/;
+/** An automation launches missions on its creator's behalf (ADR-0019 rule 7). */
+const AUTOMATIONS_PREFIX = '/api/automations';
 /** Mutations a member may make: their own session/password, the shared theme, a re-scan. */
 const MEMBER_MUTATIONS = ['/api/auth/', '/api/settings/theme', '/api/projects/refresh'];
 
@@ -95,7 +97,7 @@ export function requiredPermission(method: string, pathname: string): Permission
 	if (safe || !pathname.startsWith('/api/')) {
 		return undefined;
 	}
-	if (DISPATCH_PATTERN.test(pathname)) {
+	if (DISPATCH_PATTERN.test(pathname) || under(pathname, AUTOMATIONS_PREFIX)) {
 		return { dispatch: ['launch'] };
 	}
 	if (MEMBER_MUTATIONS.some((prefix) => pathname === prefix || pathname.startsWith(prefix))) {

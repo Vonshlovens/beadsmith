@@ -22,6 +22,13 @@ export type RalphHarness = (typeof RALPH_HARNESSES)[number];
  */
 export const LOOP_MAX_ITERATIONS = 200;
 
+/**
+ * Longest steer note (ADR-0019 rule 3): a note for the next iteration's
+ * prompt, not a document. The steer route, the ralph client and the thread's
+ * composer all read this one.
+ */
+export const RALPH_STEER_MAX_LENGTH = 4_000;
+
 /** Why a ralph run ended, as its run record names it. */
 export const RALPH_STOP_REASONS = [
 	'max_iterations',

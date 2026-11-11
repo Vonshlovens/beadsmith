@@ -5,8 +5,10 @@
  * far more than this console needs (it can read the proxy key, remove
  * accounts and start onboarding), so this module is the one place that holds
  * it, and it only ever sends it to a fixed list of read routes on the
- * configured origin. Nothing from the browser (path, query or body) reaches
- * an Underclass URL: every route and query below is a constant.
+ * configured origin, plus four account actions. Nothing from the browser
+ * reaches an Underclass URL except an account id, which must match
+ * `UNDERCLASS_ACCOUNT_ID` and is path-encoded; every route and query below
+ * is otherwise a constant.
  *
  * Upstream responses are parsed into the typed view in `#lib/types.js` and
  * everything else is dropped: request ids, sticky-session keys, raw account
@@ -22,6 +24,9 @@ import { z } from 'zod';
 import type {
 	DoltFailureKind,
 	ModelPoolAccount,
+	ModelPoolAction,
+	ModelPoolActionResponse,
+	ModelPoolRefusal,
 	ModelPoolCounters,
 	ModelPoolRequest,
 	ModelPoolSnapshot,
@@ -34,9 +39,9 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const RECENT_LIMIT = 20;
 
 /**
- * The read routes Beadsmith may call, and nothing else. Never add
- * `client-key`, `flows`, account deletion, `relogin`, catalog writes or
- * `events/import` here (ADR-0022 rule 4).
+ * The read routes Beadsmith may call. The only other calls are the account
+ * actions in `UNDERCLASS_ACTIONS`. Never add `client-key`, `flows`, account
+ * deletion, `relogin`, catalog writes or `events/import` (ADR-0022 rule 4).
  */
 export const UNDERCLASS_READ_ROUTES = {
 	monitor: '/admin/api/monitor',
@@ -48,6 +53,57 @@ export const UNDERCLASS_READ_ROUTES = {
 } as const;
 
 export type UnderclassRoute = keyof typeof UNDERCLASS_READ_ROUTES;
+
+/** The account actions ADR-0022 rule 4 allows, in Underclass's route names. */
+export const UNDERCLASS_ACTIONS: readonly ModelPoolAction[] = [
+	'refresh',
+	'enable',
+	'disable',
+	'reset'
+] as const;
+
+/**
+ * An Underclass account id as the console accepts it. Underclass mints
+ * UUID-like ids; this is looser than that but admits nothing that could
+ * change the path (`/`, `..`, `?`, `%`).
+ */
+export const UNDERCLASS_ACCOUNT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+/**
+ * Underclass's refusal codes (`ui.rs` `refresh_account` and `reset_account`,
+ * `resets.rs` and `claude.rs` error codes) mapped to the console's. Anything
+ * else is not a refusal Beadsmith understands.
+ */
+const REFUSALS: Record<string, ModelPoolRefusal> = {
+	not_refreshable: 'not_refreshable',
+	refresh_failed: 'refresh_failed',
+	not_rate_limited: 'not_rate_limited',
+	already_redeemed: 'already_redeemed',
+	no_credit: 'no_credit',
+	not_codex: 'not_resettable',
+	upstream_error: 'upstream_failed'
+};
+
+/** Refusals a forced reset may override (Underclass ADR 0020). */
+const FORCEABLE: ReadonlySet<ModelPoolRefusal> = new Set(['not_rate_limited', 'already_redeemed']);
+
+const account_status_schema = z.enum(['healthy', 'cooling', 'auth_error', 'disabled']);
+
+/** The parts of a refresh or reset answer the console keeps; label and credit id are dropped. */
+const action_result_schema = z.object({
+	status: z.unknown().optional(),
+	available_resets: z.number().int().nullish()
+});
+
+const refusal_schema = z.object({ error: z.string() });
+
+/** An action on an account Underclass does not know (404). */
+export class UnderclassAccountNotFound extends Error {
+	constructor() {
+		super('No such account in the model pool.');
+		this.name = 'UnderclassAccountNotFound';
+	}
+}
 
 /**
  * Fixed messages. They avoid the words password, token and secret, which
@@ -195,6 +251,18 @@ export interface UnderclassClientDeps {
 export interface UnderclassClient {
 	/** The console's view of the pool, from all four read routes. */
 	snapshot(): Promise<ModelPoolSnapshot>;
+	/**
+	 * Run one account action. Underclass's refusals come back as
+	 * `outcome: 'refused'`; transport and credential failures throw
+	 * `UnderclassError`, an unknown account `UnderclassAccountNotFound`.
+	 * @param account_id Must match `UNDERCLASS_ACCOUNT_ID`.
+	 * @param options.force Reset only: spend the credit despite an overridable refusal.
+	 */
+	act(
+		account_id: string,
+		action: ModelPoolAction,
+		options?: { force?: boolean }
+	): Promise<ModelPoolActionResponse>;
 }
 
 const readTokenFile: TokenReader = (path) => readFile(path, 'utf8');
@@ -339,6 +407,61 @@ export function toPoolSnapshot(raw: Record<UnderclassRoute, unknown>): ModelPool
 	};
 }
 
+/**
+ * Map Underclass's answer to an account action. Its refusal messages can
+ * carry upstream error text, so only the code is read.
+ * @throws UnderclassError for credential, transport and unreadable answers.
+ * @throws UnderclassAccountNotFound for a 404.
+ */
+export async function toActionResponse(
+	response: Response,
+	account_id: string,
+	action: ModelPoolAction
+): Promise<ModelPoolActionResponse> {
+	if (response.status === 401 || response.status === 403) {
+		throw new UnderclassError('authentication_rejected');
+	}
+	if (response.status === 404) {
+		throw new UnderclassAccountNotFound();
+	}
+	if (response.status === 204) {
+		return { outcome: 'done', action, account_id, status: null, banked_resets: null };
+	}
+	let body: unknown;
+	try {
+		body = await response.json();
+	} catch {
+		body = undefined;
+	}
+	if (response.status === 200) {
+		const result = action_result_schema.safeParse(body);
+		if (!result.success) throw new UnderclassError('unknown');
+		const status = account_status_schema.safeParse(result.data.status);
+		return {
+			outcome: 'done',
+			action,
+			account_id,
+			status: status.success ? status.data : null,
+			banked_resets: result.data.available_resets ?? null
+		};
+	}
+	const refusal = refusal_schema.safeParse(body);
+	const code = refusal.success ? REFUSALS[refusal.data.error] : undefined;
+	if (code !== undefined && [400, 409, 502].includes(response.status)) {
+		return {
+			outcome: 'refused',
+			action,
+			account_id,
+			refusal: code,
+			can_force: action === 'reset' && FORCEABLE.has(code)
+		};
+	}
+	if (response.status === 502 || response.status === 503 || response.status === 504) {
+		throw new UnderclassError('unreachable');
+	}
+	throw new UnderclassError('unknown');
+}
+
 /** Strip one trailing line ending, as the Dolt password reader does. */
 function tokenFromFile(contents: string): string {
 	return contents.replace(/\r?\n$/, '');
@@ -401,6 +524,29 @@ export function createUnderclassClient(
 	}
 
 	return {
+		async act(account_id, action, options = {}) {
+			// The route validates too; this keeps the client safe on its own.
+			if (!UNDERCLASS_ACCOUNT_ID.test(account_id) || !UNDERCLASS_ACTIONS.includes(action)) {
+				throw new UnderclassAccountNotFound();
+			}
+			const bearer = await token();
+			const force = action === 'reset' && options.force === true ? '?force=true' : '';
+			let response: Response;
+			try {
+				response = await fetch_impl(
+					`${settings.origin}/admin/api/accounts/${encodeURIComponent(account_id)}/${action}${force}`,
+					{
+						method: 'POST',
+						headers: { authorization: `Bearer ${bearer}`, accept: 'application/json' },
+						redirect: 'manual',
+						signal: AbortSignal.timeout(timeout_ms)
+					}
+				);
+			} catch {
+				throw new UnderclassError('unreachable');
+			}
+			return toActionResponse(response, account_id, action);
+		},
 		async snapshot() {
 			const bearer = await token();
 			const routes = Object.keys(UNDERCLASS_READ_ROUTES) as UnderclassRoute[];

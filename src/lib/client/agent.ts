@@ -197,7 +197,9 @@ export interface ComposerState {
 
 /**
  * Whether the operator can reply on a thread, and if not, why. Order matters:
- * the most actionable reason wins.
+ * the most actionable reason wins. On a working loop the message is a steer
+ * note for its next iteration (ADR-0019), not a reply; an ended loop takes
+ * nothing.
  *
  * @param mission - The thread's mission.
  * @param dispatch - Current dispatch health.
@@ -221,14 +223,19 @@ export function composerState(
 	if (runner === undefined) {
 		return { can_send: false, reason: 'Started on a runner that is no longer configured.' };
 	}
-	// A loop's agent works from the plan; the service refuses a follow-up on it.
+	// A loop's agent works from the plan; the service refuses a follow-up on
+	// it, but a working loop takes steer notes.
 	if (mission.operation === 'loop') {
-		return {
-			can_send: false,
-			reason: isBusyStatus(mission.status)
-				? 'The loop is running. It works from its plan, not from replies.'
-				: 'A loop works from its plan and does not take replies.'
-		};
+		if (!isBusyStatus(mission.status)) {
+			return { can_send: false, reason: 'A loop works from its plan and does not take replies.' };
+		}
+		if (runner.capabilities.loop !== true) {
+			return { can_send: false, reason: 'This runner cannot steer loops.' };
+		}
+		if (!dispatch.armed) {
+			return { can_send: false, reason: 'Agent dispatch is disarmed in the console.' };
+		}
+		return { can_send: true };
 	}
 	if (isBusyStatus(mission.status)) {
 		return { can_send: false, reason: 'The agent is working. Wait for its reply or stop the run.' };
@@ -240,6 +247,27 @@ export function composerState(
 		return { can_send: false, reason: 'Agent dispatch is disarmed in the console.' };
 	}
 	return { can_send: true };
+}
+
+/**
+ * Whether an ended loop's thread offers Restart: a new run of the same
+ * mission with its stored flags (ADR-0019 rule 5). It starts work, so it
+ * needs dispatch armed and a runner that runs loops; otherwise the control
+ * is not offered at all. Tackle being allowed for the project is checked by
+ * the service, which explains a refusal.
+ */
+export function canRestartLoop(
+	mission: Pick<DispatchRequest, 'status' | 'agent_id' | 'provider'> &
+		Partial<Pick<DispatchRequest, 'operation'>>,
+	dispatch: DispatchView | null
+): boolean {
+	if (mission.operation !== 'loop' || mission.agent_id === undefined) {
+		return false;
+	}
+	if (isBusyStatus(mission.status) || dispatch === null || !dispatch.armed) {
+		return false;
+	}
+	return missionProvider(mission, dispatch)?.capabilities.loop === true;
 }
 
 /** Short verb for a mission, for thread titles and rows. */

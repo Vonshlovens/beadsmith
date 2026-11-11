@@ -52,6 +52,7 @@ export const RELAY_PAUSED_MESSAGE =
 	"This agent's sandbox is paused. Watching does not wake it; take over to resume it.";
 export const RELAY_FINISHED_MESSAGE = "This agent's terminal has finished.";
 export const RELAY_UNAVAILABLE_MESSAGE = "This agent's terminal could not be reached.";
+export const RELAY_NOT_STARTED_MESSAGE = 'This chat has no agent yet. Send it a message first.';
 
 /** Scrollback lines in the first paint, so a watcher sees the current screen and some context. */
 const ATTACH_HISTORY = 2_000;
@@ -75,29 +76,46 @@ export async function attachSandboxTerminal(
 	pick: (live: HcTerminal[], info: SandboxInfo) => HcTerminal | undefined,
 	request: TerminalAttachRequest
 ): Promise<TerminalRelay> {
-	let info;
+	let found: SandboxInfo | undefined;
 	try {
-		info = await deps.driver.info(sandbox_id);
+		found = await deps.driver.info(sandbox_id);
 	} catch {
 		throw new TerminalRelayError('unavailable', RELAY_UNAVAILABLE_MESSAGE);
 	}
+	const info = found;
 	if (info === undefined) throw new TerminalRelayError('conflict', RELAY_GONE_MESSAGE);
 	if (info.state === 'paused' && request.mode === 'watch') {
 		throw new TerminalRelayError('conflict', RELAY_PAUSED_MESSAGE);
 	}
-	let client: HcClient | undefined;
+	let sandbox: SandboxRef;
 	try {
-		let sandbox: SandboxRef;
-		try {
-			sandbox = await deps.driver.connect(sandbox_id, deps.idle_ms);
-		} catch {
-			throw new TerminalRelayError('conflict', RELAY_GONE_MESSAGE);
-		}
+		sandbox = await deps.driver.connect(sandbox_id, deps.idle_ms);
+	} catch {
+		throw new TerminalRelayError('conflict', RELAY_GONE_MESSAGE);
+	}
+	let client: HcClient;
+	try {
 		client = await deps.connect_hc(sandbox);
-		const terminal = pick(
-			(await client.list()).filter((t) => t.state === 'live'),
-			info
-		);
+	} catch {
+		throw new TerminalRelayError('unavailable', RELAY_UNAVAILABLE_MESSAGE);
+	}
+	return attachHcTerminal(client, (live) => pick(live, info), request);
+}
+
+/**
+ * Attach to the live terminal `pick` chooses on an hc connection the caller
+ * opened for this relay alone. The relay owns `client` from here: it is
+ * closed when the stream ends, when the relay is closed, or when the attach
+ * fails. Shared by the sandbox relay above and the forge mate runner, which
+ * opens the connection over its own SSH `hc connect`.
+ */
+export async function attachHcTerminal(
+	client: HcClient,
+	pick: (live: HcTerminal[]) => HcTerminal | undefined,
+	request: TerminalAttachRequest
+): Promise<TerminalRelay> {
+	try {
+		const terminal = pick((await client.list()).filter((t) => t.state === 'live'));
 		if (terminal === undefined) throw new TerminalRelayError('conflict', RELAY_FINISHED_MESSAGE);
 		const observe = request.mode === 'watch';
 		const attachment = await client.attach(
@@ -105,9 +123,8 @@ export async function attachSandboxTerminal(
 			{ cols: request.cols, rows: request.rows, observe, history: ATTACH_HISTORY },
 			{ onData: request.onData, onResize: request.onResize }
 		);
-		const held = client;
 		// The relay is over when the stream ends; the connection goes with it.
-		void attachment.ended.then(() => held.close());
+		void attachment.ended.then(() => client.close());
 		return {
 			mode: request.mode,
 			size: { cols: attachment.terminal.cols, rows: attachment.terminal.rows },
@@ -116,11 +133,11 @@ export async function attachSandboxTerminal(
 			resize: (cols, rows) => attachment.resize(cols, rows),
 			close: () => {
 				attachment.close();
-				held.close();
+				client.close();
 			}
 		};
 	} catch (error) {
-		client?.close();
+		client.close();
 		if (error instanceof TerminalRelayError) throw error;
 		throw new TerminalRelayError('unavailable', RELAY_UNAVAILABLE_MESSAGE);
 	}

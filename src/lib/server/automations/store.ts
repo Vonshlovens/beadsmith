@@ -6,6 +6,11 @@
  */
 import { randomBytes } from 'node:crypto';
 import type { Client } from '@libsql/client';
+import type {
+	AutomationOverlap,
+	AutomationRunOutcome,
+	AutomationTrigger
+} from '#lib/automations.js';
 import type { DispatchProviderId } from '#lib/types.js';
 import type { DispatchPayload } from '../dispatch/types.js';
 
@@ -40,27 +45,6 @@ export const AUTOMATION_SCHEMA_SQL: string[] = [
 	`CREATE INDEX IF NOT EXISTS automation_runs_pending
 		ON automation_runs (outcome, slot) WHERE outcome IN ('firing', 'queued')`
 ];
-
-/**
- * What to do with a slot that falls due while the automation's previous
- * mission is still working: `skip` records it as skipped (the default);
- * `queue` holds one slot and fires it when the previous mission ends, and
- * skips any further slot while one is already waiting.
- */
-export const AUTOMATION_OVERLAPS = ['skip', 'queue'] as const;
-export type AutomationOverlap = (typeof AUTOMATION_OVERLAPS)[number];
-
-/**
- * A slot's history. `firing` is claimed and not yet resolved (a crash leaves
- * it, and the next tick finishes it); `queued` waits for the previous
- * mission; the rest are final. `refused` means dispatch policy or the
- * creator's standing said no; `failed` means the launch could not be
- * attempted (no such project or issue, Dolt unreachable).
- */
-export type AutomationRunOutcome = 'firing' | 'queued' | 'fired' | 'skipped' | 'refused' | 'failed';
-
-/** `schedule` slots are cron instants; `manual` ones are a Run now press. */
-export type AutomationTrigger = 'schedule' | 'manual';
 
 export interface Automation {
 	id: string;
@@ -110,6 +94,15 @@ export interface CreateAutomationInput {
 	created_by: string;
 }
 
+/** What an edit replaces; the project, runner and creator stay. */
+export interface UpdateAutomationInput {
+	name: string;
+	cron: string;
+	time_zone: string;
+	overlap: AutomationOverlap;
+	payload: DispatchPayload;
+}
+
 /** Runs kept per automation; an every-minute schedule would grow without bound. */
 export const AUTOMATION_RUNS_KEPT = 1000;
 
@@ -123,6 +116,12 @@ export interface AutomationStore {
 	 * cursor to now, so slots missed while it was off never fire.
 	 */
 	setEnabled(id: string, enabled: boolean, paused_reason?: string): Promise<Automation | undefined>;
+	/**
+	 * Replace its name, schedule, overlap and launch, keeping its history.
+	 * The cursor moves to now, so an edit never fires a slot from before it
+	 * (a schedule moved earlier in the day would otherwise fire at once).
+	 */
+	update(id: string, input: UpdateAutomationInput): Promise<Automation | undefined>;
 	remove(id: string): Promise<boolean>;
 	/**
 	 * Claim a slot: record it as `firing` and advance the cursor. False when
@@ -266,6 +265,25 @@ export function createAutomationStore(
 							args: [paused_reason ?? null, at, id]
 						}
 			);
+			return get(id);
+		},
+
+		async update(id, input) {
+			const at = now().toISOString();
+			await client.execute({
+				sql: `UPDATE automations SET name = ?, cron = ?, time_zone = ?, overlap = ?,
+					payload_json = ?, last_slot = MAX(last_slot, ?), updated_at = ? WHERE id = ?`,
+				args: [
+					input.name,
+					input.cron,
+					input.time_zone,
+					input.overlap,
+					JSON.stringify(input.payload),
+					at,
+					at,
+					id
+				]
+			});
 			return get(id);
 		},
 

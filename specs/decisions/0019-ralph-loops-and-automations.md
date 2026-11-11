@@ -229,8 +229,12 @@ Nothing ships with this record. Planned, each in its own change:
   reaches `/v1` with curl to loopback over the E2B process channel
   (`src/lib/server/e2b/ralph-transport.ts`). Its observer is off because
   Beadsmith keeps none of its summaries. A loop sandbox is created to be
-  destroyed, not paused, on timeout; a loop that outlives
-  `BDX_E2B_MAX_RUN_MINUTES` is cut off with it. Pushing: the loop's checkout
+  destroyed, not paused, on timeout. Each status read that sees ralph
+  alive with another iteration finished gives the sandbox
+  `BDX_E2B_MAX_RUN_MINUTES` again, and the dispatch follower reads a loop
+  until it ends, so a loop may outlast the run limit as long as each
+  iteration fits in it; an iteration that does not is cut off with the
+  sandbox (docs/sand-e2b.md, "How a loop runs"). Pushing: the loop's checkout
   gets a write-scoped GitHub token at the egress, as Tackle's does, and
   ralph's prompts decide when to push;
 - loop controls and the loop UI on project, epic, issue and mission pages;
@@ -246,12 +250,48 @@ Nothing ships with this record. Planned, each in its own change:
   runner reports `capabilities.loop`, and explains a refusal (disarmed, the
   picked runner has no ralph, Tackle not allowed). Without epic scope, an
   epic page says its build covers the whole plan;
+  Steer and graceful stop shipped as `AgentProvider.steerRun` and
+  `stopRunAfterIteration` (Sand implements both through the ralph client),
+  `POST .../dispatch/:requestId/steer` and `.../stop-after-iteration`, and
+  the mission thread: a working loop's composer sends steer notes (kept as
+  operator turns), and its footer offers Stop after iteration beside Stop
+  now (cancel). Steer needs the arm and Tackle allowed, like a follow-up; a
+  graceful stop only ends work, so, like cancel, it does not. The request is
+  kept on the record (`loop_stop_requested_at`, public
+  `loop.stop_requested`) until a new run. Restart shipped as
+  `AgentProvider.restartLoop` and `POST .../dispatch/:requestId/restart`
+  `{max_iterations?}`, with a Restart control in an ended loop's thread.
+  It is a new run of the same mission (`restartDispatch` claims the record
+  as `launching`, then records the run the runner names) with the launch's
+  flags. Each follow-up or restart claim bumps the record's `generation`;
+  a follower writes status only on the generation, agent and run it was
+  started for, so a read of the ended run still in flight cannot finish or
+  orphan the new one, and followers are keyed by mission and generation so
+  the new run is followed at once. If the claim was lost before the new run
+  is recorded, the new run is cancelled and the restart reports a conflict; a new limit applies to that run only, so the stored payload still
+  matches its idempotency key. On Sand a loop's sandbox outlives the loop
+  only by the idle time, so the lifecycle is: restart in that sandbox while
+  E2B still has it (keeping the checkout and unpushed work, each run with
+  its own hc terminal and ralph name), otherwise in a fresh sandbox from the
+  project's current Tackle checkout with the run numbering carried on, and
+  the mission's `agent_id` follows. Keeping loop sandboxes alive for a
+  restart window was not chosen: it would bill an idle sandbox for every
+  ended loop for a restart that seldom comes, and anything worth keeping is
+  pushed by the loop's prompts anyway. Add sign stays out until ralph has
+  the route.
 - automations: tables, the ticker beside `src/lib/server/backup/runtime.ts`,
   and an automations page. ADR-0004's list of what `state.db` holds and
   `docs/contract.md`'s dispatch section are updated when these ship.
   The tables and ticker shipped in `src/lib/server/automations/`
-  (`cron.ts`, `store.ts`, `scheduler.ts`, `runtime.ts`); the page and its
-  API are still to come. Cron is a small five-field parser in the repository
+  (`cron.ts`, `store.ts`, `scheduler.ts`, `runtime.ts`), and the page and
+  its API (`service.ts`, `/automations`, `/api/automations`) followed. A
+  template is validated with the dispatch body's own schema minus the
+  idempotency key and runner (`launch_schema`), and `launchPayload` builds
+  the stored payload for a launch and a template alike. Creating one checks
+  the schedule (refusing one with no slot in five years, which the ticker
+  would otherwise search for every minute), the project and the bead; the
+  dispatch policy is checked at each fire. The page creates loops only; the
+  API takes any operation. Cron is a small five-field parser in the repository
   rather than a dependency; like ralph's, it refuses an expression that
   restricts both day of month and day of week. Each automation keeps a
   cursor (`last_slot`), starting at creation and reset when it is

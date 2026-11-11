@@ -166,6 +166,13 @@ export interface DispatchHealth {
 	 * missions keep the provider that launched them.
 	 */
 	providers?: DispatchProviderInfo[];
+	/**
+	 * Models and efforts a launch may ask for (`BDX_AGENT_MODELS`,
+	 * `BDX_AGENT_EFFORTS`), operator's order; absent when none are offered.
+	 * Not asking is always allowed and means the runner's default.
+	 */
+	models?: string[];
+	efforts?: string[];
 }
 
 /**
@@ -189,6 +196,12 @@ export interface DispatchCapabilities {
 	 * provider implements `attachTerminal`.
 	 */
 	terminal: boolean;
+	/**
+	 * Launches its agents with the model and effort a launch asks for. A
+	 * launch that asks on a provider without it is refused before anything
+	 * starts.
+	 */
+	models: boolean;
 }
 
 /** Public GitHub checkout shown on the operator console. Not a secret. */
@@ -358,6 +371,44 @@ export type ModelPoolResponse =
 	| { configured: false; config_error?: UnderclassConfigError }
 	| { configured: true; pool: ModelPoolSnapshot };
 
+/** An admin action on one pooled account (ADR-0022 rule 4). */
+export type ModelPoolAction = 'refresh' | 'enable' | 'disable' | 'reset';
+
+/**
+ * Why Underclass declined an action, as a fixed code (its own message never
+ * leaves the server). `unknown_account` answers 404 rather than a refusal body.
+ */
+export type ModelPoolRefusal =
+	| 'not_refreshable'
+	| 'refresh_failed'
+	| 'not_rate_limited'
+	| 'already_redeemed'
+	| 'no_credit'
+	| 'not_resettable'
+	| 'upstream_failed';
+
+/**
+ * `POST /api/console/model-pool/accounts/:id/:action`. A refusal is an
+ * answer, not a failure: it comes back 200 with `outcome: 'refused'`, and
+ * `can_force` says a forced reset may still go through. `status` is the
+ * account's state after the action when Underclass reports it.
+ */
+export type ModelPoolActionResponse =
+	| {
+			outcome: 'done';
+			action: ModelPoolAction;
+			account_id: string;
+			status: ModelPoolAccount['status'] | null;
+			banked_resets: number | null;
+	  }
+	| {
+			outcome: 'refused';
+			action: ModelPoolAction;
+			account_id: string;
+			refusal: ModelPoolRefusal;
+			can_force: boolean;
+	  };
+
 export type ApiErrorCode =
 	| 'bad_request'
 	| 'unauthorized'
@@ -439,6 +490,9 @@ export interface DispatchRequest {
 	created_at: string;
 	updated_at: string;
 	error_message?: string;
+	/** The model and effort the launch asked for; absent = the runner's default. */
+	model?: string;
+	effort?: string;
 	/** Present on `loop` missions. */
 	loop?: DispatchLoop;
 }
@@ -460,6 +514,12 @@ export interface DispatchLoop {
 	stop_reason?: RalphStopReason;
 	/** The ended run asks a person to look (ralph's stop reason or report). */
 	needs_person?: boolean;
+	/**
+	 * An operator asked the current run to stop after its iteration; true
+	 * until a restart starts a new run. While the loop works, it says the
+	 * stop is on its way.
+	 */
+	stop_requested?: boolean;
 }
 
 /**

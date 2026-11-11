@@ -19,6 +19,9 @@
 	import IssueId from '#lib/components/issue-id.svelte';
 	import RunnerSelect from '#lib/components/runner-select.svelte';
 	import SelectField from '#lib/components/select-field.svelte';
+	import AgentChoiceSelect from '#lib/components/agent-choice-select.svelte';
+	import { agent_choice } from '#lib/client/agent-choice.svelte.js';
+	import { launchTakesChoice } from '#lib/client/agent-choice.js';
 	import { api, errorMessage } from '#lib/client/api.js';
 	import { run_place } from '#lib/client/agent-runner.svelte.js';
 	import { missionThreadHref } from '#lib/client/first-mate.js';
@@ -52,6 +55,10 @@
 	const presets = $derived(loopPresets(scope));
 	const availability = $derived(
 		loopAvailability(statusSnapshot(), project?.allow, run_place.launchField().provider)
+	);
+
+	const choice_takes = $derived(
+		availability.enabled && launchTakesChoice(statusSnapshot(), run_place.launchField().provider)
 	);
 
 	let preset_id = $state<LoopPreset['id']>('build');
@@ -95,7 +102,8 @@
 				...loopLaunch(preset, target, {
 					max_iterations: Number(iterations.trim()),
 					...(harness === 'default' ? {} : { harness })
-				})
+				}),
+				...agent_choice.forLaunch(statusSnapshot(), run_place.launchField().provider)
 			});
 			if (result.request.status === 'failed') {
 				toast.error('The loop did not start', {
@@ -217,6 +225,11 @@
 						{/if}
 					</label>
 				</div>
+				{#if choice_takes}
+					<div class="mt-3">
+						<AgentChoiceSelect takes={choice_takes} disabled={submitting} />
+					</div>
+				{/if}
 				<p class="faint note mt-3">
 					Each iteration is one fresh agent session that commits its work. The loop stops at the
 					limit (up to {LOOP_MAX_ITERATIONS}), when the plan is done, or when you stop it.

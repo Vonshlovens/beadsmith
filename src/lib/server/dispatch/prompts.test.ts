@@ -15,6 +15,7 @@ const fileRecord: DispatchRecord = {
 		title: 'Fix Google login'
 	},
 	status: 'queued',
+	generation: 0,
 	created_at: '2026-08-16T00:00:00.000Z',
 	updated_at: '2026-08-16T00:00:00.000Z'
 };
@@ -33,6 +34,7 @@ const tackleRecord: DispatchRecord = {
 		description: 'Access login fails on the public host.'
 	},
 	status: 'queued',
+	generation: 0,
 	created_at: '2026-08-16T00:00:00.000Z',
 	updated_at: '2026-08-16T00:00:00.000Z'
 };
@@ -52,6 +54,7 @@ const commentRecord: DispatchRecord = {
 		title: 'Let humans add comments'
 	},
 	status: 'queued',
+	generation: 0,
 	created_at: '2026-08-16T00:00:00.000Z',
 	updated_at: '2026-08-16T00:00:00.000Z'
 };
@@ -164,6 +167,7 @@ function discussRecord(
 			...(message === undefined ? {} : { message })
 		},
 		status: 'queued',
+		generation: 0,
 		created_at: '2026-10-17T00:00:00.000Z',
 		updated_at: '2026-10-17T00:00:00.000Z'
 	};

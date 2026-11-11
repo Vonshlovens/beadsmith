@@ -13,6 +13,9 @@
 import type {
 	DoltFailureKind,
 	ModelPoolAccount,
+	ModelPoolAction,
+	ModelPoolActionResponse,
+	ModelPoolRefusal,
 	ModelPoolResponse,
 	ModelPoolSnapshot,
 	ModelPoolWindow,
@@ -190,7 +193,7 @@ export function accountState(account: ModelPoolAccount, now: number): AccountSta
 			return {
 				word: 'disabled',
 				badge: 'closed',
-				detail: 'turned off in Underclass',
+				detail: 'turned off by an admin',
 				in_rotation: false
 			};
 	}
@@ -376,4 +379,111 @@ export function hourBars(day: ModelPoolSnapshot['day']): HourBar[] {
 		requests: hour.requests,
 		share: peak === 0 ? 0 : hour.requests / peak
 	}));
+}
+
+/** One action an account's menu offers (ADR-0022 rule 4). */
+export interface AccountActionItem {
+	action: ModelPoolAction;
+	label: string;
+	/** Disable and reset ask first: one takes the account out, the other spends a credit. */
+	confirm: boolean;
+	destructive: boolean;
+}
+
+/**
+ * The actions that make sense for an account now, in menu order. Mirrors
+ * what Underclass would accept: Copilot tokens never refresh, enabling only
+ * changes a disabled or signed-out account, and a reset needs a banked credit.
+ */
+export function accountActions(account: ModelPoolAccount): AccountActionItem[] {
+	const items: AccountActionItem[] = [];
+	if (account.backend !== 'copilot') {
+		items.push({ action: 'refresh', label: 'Refresh token', confirm: false, destructive: false });
+	}
+	if (account.banked_resets !== null && account.banked_resets > 0) {
+		items.push({ action: 'reset', label: 'Use a reset', confirm: true, destructive: false });
+	}
+	if (account.status === 'disabled' || account.status === 'auth_error') {
+		items.push({ action: 'enable', label: 'Enable', confirm: false, destructive: false });
+	}
+	if (account.status !== 'disabled') {
+		items.push({ action: 'disable', label: 'Disable', confirm: true, destructive: true });
+	}
+	return items;
+}
+
+/** What the row says while an action runs. */
+export const ACTION_PENDING: Record<ModelPoolAction, string> = {
+	refresh: 'Refreshing token…',
+	enable: 'Enabling…',
+	disable: 'Disabling…',
+	reset: 'Using a reset…'
+};
+
+/** What the row says once Underclass has done it. */
+export function actionDone(result: Extract<ModelPoolActionResponse, { outcome: 'done' }>): string {
+	switch (result.action) {
+		case 'refresh':
+			return result.status === 'healthy'
+				? 'Token refreshed; the account is back in rotation.'
+				: 'Token refreshed.';
+		case 'enable':
+			return result.status === 'cooling'
+				? 'Enabled; it rejoins rotation when its cooldown ends.'
+				: 'Enabled.';
+		case 'disable':
+			return 'Disabled. Requests already in flight finish.';
+		case 'reset':
+			return result.banked_resets === null
+				? 'Reset used.'
+				: `Reset used; ${result.banked_resets} left.`;
+	}
+}
+
+/** Why Underclass declined, and what to do about it. */
+export const REFUSAL_COPY: Record<ModelPoolRefusal, string> = {
+	not_refreshable: 'This backend’s tokens do not expire, so there is nothing to refresh.',
+	refresh_failed:
+		'The provider did not issue a new token. Nothing changed; try again later, or sign in again in Underclass.',
+	not_rate_limited: 'The provider says this account is not rate limited, so no reset was spent.',
+	already_redeemed:
+		'A reset was already spent for this outage and the provider has not reopened usage yet.',
+	no_credit: 'The provider lists no reset left for this account.',
+	not_resettable: 'This account has no banked resets to spend.',
+	upstream_failed: 'The provider could not be reached. No reset was spent; try again later.'
+};
+
+/** The confirmation an action needs, or null when it runs straight away. */
+export function actionConfirm(
+	account: ModelPoolAccount,
+	action: ModelPoolAction,
+	force: boolean
+): { title: string; description: string; confirm_label: string; destructive: boolean } | null {
+	if (action === 'disable') {
+		const flight =
+			account.in_flight > 0
+				? ` Its ${account.in_flight} in-flight ${account.in_flight === 1 ? 'request finishes' : 'requests finish'}.`
+				: '';
+		return {
+			title: 'Disable this account?',
+			description: `Underclass stops sending agent requests to ${account.label} until an admin enables it again.${flight}`,
+			confirm_label: 'Disable account',
+			destructive: true
+		};
+	}
+	if (action === 'reset') {
+		const banked =
+			account.banked_resets === null
+				? 'a rate-limit reset'
+				: `one of the ${account.banked_resets} rate-limit ${account.banked_resets === 1 ? 'reset' : 'resets'}`;
+		return {
+			title: force ? 'Use a reset anyway?' : 'Use a reset?',
+			description: force
+				? `Underclass advised against it. Forcing spends ${banked} banked on ${account.label}’s own subscription even if the provider then changes nothing. This cannot be undone.`
+				: `This spends ${banked} banked on ${account.label}’s own subscription to reopen its quota now. This cannot be undone.`,
+			confirm_label: force ? 'Spend it anyway' : 'Use a reset',
+			destructive: force
+		};
+	}
+	return null;
 }

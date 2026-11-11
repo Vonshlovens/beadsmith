@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	agentAvailability,
+	canRestartLoop,
 	composerState,
 	formatElapsed,
 	intentAllowed,
@@ -24,7 +25,8 @@ function health(patch: Partial<DispatchHealth> = {}): { dispatch: DispatchHealth
 				follow_up: true,
 				cancel: true,
 				loop: false,
-				terminal: false
+				terminal: false,
+				models: false
 			},
 			...patch
 		}
@@ -102,14 +104,16 @@ describe('missions across several runners', () => {
 		follow_up: false,
 		cancel: true,
 		loop: false,
-		terminal: false
+		terminal: false,
+		models: false
 	};
 	const sand_caps = {
 		live_events: true,
 		follow_up: true,
 		cancel: true,
 		loop: false,
-		terminal: false
+		terminal: false,
+		models: false
 	};
 	const dispatch = {
 		armed: true,
@@ -172,7 +176,8 @@ describe('composerState', () => {
 						follow_up: false,
 						cancel: false,
 						loop: false,
-						terminal: false
+						terminal: false,
+						models: false
 					}
 				}).dispatch
 			).reason
@@ -181,15 +186,63 @@ describe('composerState', () => {
 		expect(composerState(done, null).can_send).toBe(false);
 	});
 
-	it('never offers a reply on a loop, running or ended', () => {
+	it('takes a steer note on a working loop only, on a loop runner, while armed', () => {
 		const loop = { ...done, operation: 'loop' as const };
-		expect(composerState(loop, health().dispatch)).toEqual({
+		const running = { ...loop, status: 'running' as const };
+		const looping = health({
+			capabilities: {
+				live_events: false,
+				follow_up: true,
+				cancel: true,
+				loop: true,
+				terminal: false,
+				models: false
+			}
+		}).dispatch;
+		expect(composerState(loop, looping)).toEqual({
 			can_send: false,
 			reason: 'A loop works from its plan and does not take replies.'
 		});
-		expect(composerState({ ...loop, status: 'running' }, health().dispatch).reason).toContain(
-			'The loop is running'
+		expect(composerState(running, looping)).toEqual({ can_send: true });
+		expect(composerState(running, health().dispatch).reason).toBe(
+			'This runner cannot steer loops.'
 		);
+		expect(composerState(running, { ...looping, armed: false }).reason).toContain('disarmed');
+	});
+});
+
+describe('canRestartLoop', () => {
+	const ended = {
+		status: 'succeeded' as const,
+		agent_id: 'sbx-1',
+		provider: 'webhook' as const,
+		operation: 'loop' as const
+	};
+	const looping = health({
+		capabilities: {
+			live_events: false,
+			follow_up: true,
+			cancel: true,
+			loop: true,
+			terminal: false,
+			models: false
+		}
+	}).dispatch;
+
+	it('offers Restart on an ended loop, on a loop runner, while armed', () => {
+		expect(canRestartLoop(ended, looping)).toBe(true);
+		expect(canRestartLoop({ ...ended, status: 'failed' }, looping)).toBe(true);
+		expect(canRestartLoop({ ...ended, status: 'cancelled' }, looping)).toBe(true);
+	});
+
+	it('does not offer it while working, unlaunched, disarmed, off a loop runner or off a loop', () => {
+		expect(canRestartLoop({ ...ended, status: 'running' }, looping)).toBe(false);
+		expect(canRestartLoop({ ...ended, status: 'launching' }, looping)).toBe(false);
+		expect(canRestartLoop({ ...ended, agent_id: undefined }, looping)).toBe(false);
+		expect(canRestartLoop(ended, { ...looping, armed: false })).toBe(false);
+		expect(canRestartLoop(ended, health().dispatch)).toBe(false);
+		expect(canRestartLoop(ended, null)).toBe(false);
+		expect(canRestartLoop({ ...ended, operation: 'tackle' }, looping)).toBe(false);
 	});
 });
 
@@ -226,7 +279,8 @@ describe('missionCardState', () => {
 		follow_up: true,
 		cancel,
 		loop: false,
-		terminal: false
+		terminal: false,
+		models: false
 	});
 	const dispatch = {
 		armed: true,

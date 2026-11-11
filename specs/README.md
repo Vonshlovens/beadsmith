@@ -73,8 +73,10 @@ reality**. Search `src/` before treating a spec as implemented.
   that stores no bytes. hc is pinned by version and SHA-256 in one file
   ([ADR-0021](decisions/0021-hc-terminal-runtime.md)). Sand missions and
   First Mate chats (on both runners) run this way today, and the relay
-  serves Sand missions and chats, where admins open it from the thread's or
-  chat's terminal view; the forge guest's hc and the forge relay follow.
+  serves Sand missions and chats and forge chats, where admins open it from
+  the thread's or chat's terminal view. The forge guest runs hc as its
+  agent's user service; the forge runner serves the relay over its signed
+  contract, attaching over its own SSH `hc connect`.
 - **ralph loops are missions**. A `loop`
   dispatch runs [ralph](https://github.com/Vonshlovens/von-ralph) in the
   mission's hc terminal on Sand or forge (pinned by commit, never in the app
@@ -82,13 +84,16 @@ reality**. Search `src/` before treating a spec as implemented.
   `ralph serve` on the sandbox's loopback over the channel it already holds,
   under the usual arm, allow and repository map. Sand runs loops today
   (curl to loopback over the E2B process channel), and admins start one from
-  a project or issue page or the agent dialog; forge and loop controls
-  follow. **Automations** are Beadsmith's: dispatch templates on a cron in
+  a project or issue page or the agent dialog; steer and graceful stop
+  are controls in the mission thread, and an ended loop restarts as a new
+  run of its mission (in its sandbox while E2B keeps it, else a fresh one);
+  forge follows. **Automations** are Beadsmith's: dispatch templates on a cron in
   `state.db`, fired by an in-process ticker
   (`src/lib/server/automations/`) through dispatch as the automation on
-  behalf of its creator; ralph's own schedules are not used. The ticker
-  ships; the automations page and its API follow
-  ([ADR-0019](decisions/0019-ralph-loops-and-automations.md)).
+  behalf of its creator; ralph's own schedules are not used. Admins
+  create, run now, pause and delete them on the Automations page
+  (`/automations`, `/api/automations`), which shows each one's next runs and
+  history ([ADR-0019](decisions/0019-ralph-loops-and-automations.md)).
 - **Underclass is the model gateway** on forge: a subscription pool on host
   loopback that guests reach only through the host's key-injecting filter,
   so no guest holds the proxy key or can reach Underclass's UI or admin API.
@@ -182,8 +187,8 @@ Follow the `architecture` skill at
 | [0018-sand-e2b-sandboxes.md](decisions/0018-sand-e2b-sandboxes.md) | [`src/lib/server/e2b/`](../src/lib/server/e2b/), [`src/lib/server/dispatch/e2b-provider.ts`](../src/lib/server/dispatch/e2b-provider.ts), [`src/lib/server/mate/e2b-runner.ts`](../src/lib/server/mate/e2b-runner.ts), [`sandbox/e2b/`](../sandbox/e2b/) | Sand: E2B sandboxes for missions and chats; several runners, picked in First Mate |
 | [0019-ralph-loops-and-automations.md](decisions/0019-ralph-loops-and-automations.md) | Partly: [`src/lib/server/dispatch/`](../src/lib/server/dispatch/), [`src/lib/server/automations/`](../src/lib/server/automations/), [`sandbox/e2b/`](../sandbox/e2b/), [`nix/ralph.json`](../nix/ralph.json) | Loop missions running ralph in an hc terminal; Beadsmith-owned automations |
 | [0020-first-mate-crew-tools.md](decisions/0020-first-mate-crew-tools.md) | [`src/lib/server/crew/`](../src/lib/server/crew/) | Crew tools: one transport-free MCP tool module for First Mate chats (read tools, todo writes and mission launches as the chat's owner), relayed into Sand chats by [`src/lib/server/mate/crew-bridge.ts`](../src/lib/server/mate/crew-bridge.ts) |
-| [0021-hc-terminal-runtime.md](decisions/0021-hc-terminal-runtime.md) | Partly: the hc client is in [`src/lib/hc/`](../src/lib/hc/), the session core in [`src/lib/agent-session/`](../src/lib/agent-session/), and Sand missions ([`src/lib/server/dispatch/e2b-provider.ts`](../src/lib/server/dispatch/e2b-provider.ts)) and First Mate chats ([`src/lib/mate-runner/`](../src/lib/mate-runner/)) run on it; the admin relay for Sand is in [`src/lib/server/terminal-relay/`](../src/lib/server/terminal-relay/); the forge guest has no hc yet and forge chats have no relay | hc terminal runtime for every agent: `hc connect` over the sandbox's own channel, transcript-derived MissionEvents, admin relay with audited attach and take-over |
-| [0022-underclass-model-gateway.md](decisions/0022-underclass-model-gateway.md) | [`fleet/hosts/forge/runtime.nix`](../fleet/hosts/forge/runtime.nix), [`fleet/hosts/forge/model-proxy.mjs`](../fleet/hosts/forge/model-proxy.mjs); the console client is planned | Underclass pool on forge behind the guest filter; admin console reads its API server-side |
+| [0021-hc-terminal-runtime.md](decisions/0021-hc-terminal-runtime.md) | Partly: the hc client is in [`src/lib/hc/`](../src/lib/hc/), the session core in [`src/lib/agent-session/`](../src/lib/agent-session/), and Sand missions ([`src/lib/server/dispatch/e2b-provider.ts`](../src/lib/server/dispatch/e2b-provider.ts)) and First Mate chats ([`src/lib/mate-runner/`](../src/lib/mate-runner/)) run on it; the admin relay for Sand is in [`src/lib/server/terminal-relay/`](../src/lib/server/terminal-relay/); the forge guest's hc core is a user service in [`fleet/hosts/forge/guests/mate.nix`](../fleet/hosts/forge/guests/mate.nix); forge chats relay through the mate runner's terminal attach ([`src/lib/mate-runner/server.ts`](../src/lib/mate-runner/server.ts)) | hc terminal runtime for every agent: `hc connect` over the sandbox's own channel, transcript-derived MissionEvents, admin relay with audited attach and take-over |
+| [0022-underclass-model-gateway.md](decisions/0022-underclass-model-gateway.md) | [`fleet/hosts/forge/runtime.nix`](../fleet/hosts/forge/runtime.nix), [`fleet/hosts/forge/model-proxy.mjs`](../fleet/hosts/forge/model-proxy.mjs), [`src/lib/server/underclass/client.ts`](../src/lib/server/underclass/client.ts), [`src/routes/console/model-pool/`](../src/routes/console/model-pool/) | Underclass pool on forge behind the guest filter; admin console reads its API and runs four account actions server-side |
 
 ## UI map
 

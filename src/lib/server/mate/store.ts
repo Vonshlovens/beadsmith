@@ -42,6 +42,8 @@ export const MATE_SCHEMA_SQL: string[] = [
 		scope TEXT,
 		session_id TEXT NOT NULL UNIQUE,
 		runner TEXT,
+		model TEXT,
+		effort TEXT,
 		created_at TEXT NOT NULL,
 		updated_at TEXT NOT NULL
 	)`,
@@ -92,7 +94,14 @@ export interface MateStore {
 	getChat(owner_id: string, id: string): Promise<StoredMateChat | undefined>;
 	createChat(
 		owner_id: string,
-		input: { title: string; scope: string | null; runner?: MateRunnerId }
+		input: {
+			title: string;
+			scope: string | null;
+			runner?: MateRunnerId;
+			/** Already checked against the operator's list by the caller. */
+			model?: string;
+			effort?: string;
+		}
 	): Promise<MateChat>;
 	updateChat(
 		owner_id: string,
@@ -180,8 +189,22 @@ function toChat(value: unknown): StoredMateChat {
 			? (r.runner as MateRunnerId)
 			: 'remote',
 		session_id: String(r.session_id),
+		...agentChoiceOf(r),
 		created_at: String(r.created_at),
 		updated_at: String(r.updated_at)
+	};
+}
+
+/** The chat's model and effort, each only when one was picked. */
+function agentChoiceOf(source: { model?: unknown; effort?: unknown }): {
+	model?: string;
+	effort?: string;
+} {
+	const model = optText(source.model);
+	const effort = optText(source.effort);
+	return {
+		...(model === undefined ? {} : { model }),
+		...(effort === undefined ? {} : { effort })
 	};
 }
 
@@ -198,6 +221,7 @@ export function publicChat(chat: StoredMateChat): MateChat {
 		title: chat.title,
 		scope: chat.scope,
 		runner: chat.runner,
+		...agentChoiceOf(chat),
 		created_at: chat.created_at,
 		updated_at: chat.updated_at
 	};
@@ -327,7 +351,7 @@ const EVENT_COLUMNS =
 export function createMateStore(client: Client, now: () => Date = () => new Date()): MateStore {
 	async function getChat(owner_id: string, id: string): Promise<StoredMateChat | undefined> {
 		const result = await client.execute({
-			sql: `SELECT id, title, scope, session_id, runner, created_at, updated_at
+			sql: `SELECT id, title, scope, session_id, runner, model, effort, created_at, updated_at
 				FROM mate_chats WHERE id = ? AND owner_id = ?`,
 			args: [id, owner_id]
 		});
@@ -337,7 +361,7 @@ export function createMateStore(client: Client, now: () => Date = () => new Date
 	return {
 		async listChats(owner_id, limit) {
 			const result = await client.execute({
-				sql: `SELECT id, title, scope, session_id, runner, created_at, updated_at FROM mate_chats
+				sql: `SELECT id, title, scope, session_id, runner, model, effort, created_at, updated_at FROM mate_chats
 					WHERE owner_id = ? ORDER BY updated_at DESC, id LIMIT ?`,
 				args: [owner_id, limit]
 			});
@@ -359,15 +383,27 @@ export function createMateStore(client: Client, now: () => Date = () => new Date
 			const id = `mc_${randomBytes(12).toString('hex')}`;
 			const runner = input.runner ?? 'remote';
 			await client.execute({
-				sql: `INSERT INTO mate_chats (id, owner_id, title, scope, session_id, runner, created_at, updated_at)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-				args: [id, owner_id, input.title, input.scope, randomUUID(), runner, stamp, stamp]
+				sql: `INSERT INTO mate_chats (id, owner_id, title, scope, session_id, runner, model, effort, created_at, updated_at)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				args: [
+					id,
+					owner_id,
+					input.title,
+					input.scope,
+					randomUUID(),
+					runner,
+					input.model ?? null,
+					input.effort ?? null,
+					stamp,
+					stamp
+				]
 			});
 			return {
 				id,
 				title: input.title,
 				scope: input.scope,
 				runner,
+				...agentChoiceOf(input),
 				created_at: stamp,
 				updated_at: stamp
 			};
@@ -418,7 +454,7 @@ export function createMateStore(client: Client, now: () => Date = () => new Date
 
 		async noticeChat(chat_id) {
 			const result = await client.execute({
-				sql: `SELECT c.id, c.title, c.scope, c.session_id, c.runner, c.created_at, c.updated_at,
+				sql: `SELECT c.id, c.title, c.scope, c.session_id, c.runner, c.model, c.effort, c.created_at, c.updated_at,
 						u.banned, u.ban_expires
 					FROM mate_chats c JOIN auth_user u ON u.id = c.owner_id
 					WHERE c.id = ?`,

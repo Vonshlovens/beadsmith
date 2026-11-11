@@ -8,6 +8,7 @@
  * Chats from the localStorage era (`bdui:first-mate-chats`) are not imported;
  * they stay in that browser, unread.
  */
+import { agent_choice } from '#lib/client/agent-choice.svelte.js';
 import { run_place } from '#lib/client/agent-runner.svelte.js';
 import { browser } from '$app/env';
 import { isBusyStatus, isFollowedMission, THREAD_POLL_MS } from '#lib/client/agent.js';
@@ -359,7 +360,8 @@ class MateChats {
 		const { chat } = await api.createMateChat({
 			title: chatTitle(text),
 			scope,
-			...(runner === undefined ? {} : { runner })
+			...(runner === undefined ? {} : { runner }),
+			...agent_choice.forChat(statusSnapshot())
 		});
 		this.#upsertChat(chat);
 		await this.open(chat.id);

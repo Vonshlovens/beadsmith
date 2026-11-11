@@ -101,7 +101,9 @@ export async function sendMateMessage(
 		session_id: chat.session_id,
 		message_id,
 		prompt: input.text,
-		scope: chat.scope
+		scope: chat.scope,
+		model: chat.model,
+		effort: chat.effort
 	});
 	return { event_id };
 }

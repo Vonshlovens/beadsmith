@@ -2,7 +2,7 @@ import { type Client, createClient } from '@libsql/client';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { initStateSchema } from '../state/db.js';
 import type { RalphIteration } from './ralph.js';
-import { createDispatchStore } from './store.js';
+import { createDispatchStore, runClaimOf } from './store.js';
 import { DispatchError } from './types.js';
 
 let client: Client;
@@ -207,6 +207,56 @@ describe('createDispatchStore', () => {
 		expect(resumed).toBeUndefined();
 		expect((await store.get(record.id))?.status).toBe('running');
 		expect((await store.get(record.id))?.run_id).toBe('run-1');
+	});
+
+	it('refuses a status write for a run claim the mission has left', async () => {
+		const store = createDispatchStore(client);
+		const { record } = await store.create(baseInput);
+		const running = (await store.updateStatus(record.id, {
+			status: 'running',
+			agent_id: 'bc-1',
+			run_id: 'run-1'
+		}))!;
+		expect(running.generation).toBe(0);
+		const old_claim = runClaimOf(running);
+		await store.updateStatus(record.id, { status: 'succeeded' });
+
+		// A restart claim keeps the run id but moves to a new generation.
+		const claimed = await store.startFollowUp(record.id, { run_id: 'run-1', status: 'launching' });
+		expect(claimed?.generation).toBe(1);
+		expect(
+			await store.updateStatus(record.id, { status: 'succeeded', expect: old_claim })
+		).toBeUndefined();
+		expect((await store.get(record.id))?.status).toBe('launching');
+
+		// The claim's own write lands, and the old run's still does not.
+		const saved = await store.updateStatus(record.id, {
+			status: 'launched',
+			agent_id: 'bc-2',
+			run_id: 'run-2',
+			expect: runClaimOf(claimed!)
+		});
+		expect(saved).toMatchObject({ status: 'launched', agent_id: 'bc-2', run_id: 'run-2' });
+		expect(
+			await store.updateStatus(record.id, { status: 'succeeded', expect: old_claim })
+		).toBeUndefined();
+		expect((await store.get(record.id))?.status).toBe('launched');
+	});
+
+	it('still reads back a write the terminal guard refused on the current claim', async () => {
+		const store = createDispatchStore(client);
+		const { record } = await store.create(baseInput);
+		const running = (await store.updateStatus(record.id, {
+			status: 'running',
+			agent_id: 'bc-1',
+			run_id: 'run-1'
+		}))!;
+		await store.updateStatus(record.id, { status: 'cancelled' });
+		const read = await store.updateStatus(record.id, {
+			status: 'failed',
+			expect: runClaimOf(running)
+		});
+		expect(read?.status).toBe('cancelled');
 	});
 });
 

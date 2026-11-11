@@ -43,6 +43,9 @@ export interface AgentLaunchInput {
 		url: string;
 		starting_ref: string;
 	};
+	/** Only on a provider with the `models` capability (checked before launch). */
+	model?: string;
+	effort?: string;
 }
 
 /**
@@ -64,6 +67,12 @@ export interface AgentLaunch {
 	agent_id: string;
 	agent_url?: string;
 	run_id?: string;
+}
+
+/** Where a restarted loop's new run is: its sandbox may be a new one (ADR-0019 rule 5). */
+export interface AgentLoopRestart {
+	agent_id: string;
+	run_id: string;
 }
 
 export type AgentRunStatus = 'running' | 'succeeded' | 'cancelled' | 'failed';
@@ -121,6 +130,28 @@ export interface AgentProvider {
 	getRun(agent_id: string, run_id: string): Promise<AgentRunUpdate>;
 	createRun?(agent_id: string, prompt: string): Promise<AgentFollowUpRun>;
 	cancelRun?(agent_id: string, run_id: string): Promise<void>;
+	/**
+	 * Loop controls (ADR-0019 rules 3 and 5), on every provider that has
+	 * `launchLoop`. `steerRun` queues a note for the loop's next iteration;
+	 * `stopRunAfterIteration` lets the current iteration finish and then
+	 * ends the loop (ralph's graceful stop). Stopping now is `cancelRun`.
+	 * Both throw a `conflict` DispatchError when the loop is not running.
+	 */
+	steerRun?(agent_id: string, run_id: string, text: string): Promise<void>;
+	stopRunAfterIteration?(agent_id: string, run_id: string): Promise<void>;
+	/**
+	 * Start a new run of an ended loop with `input`'s flags, numbered after
+	 * `after_run_id`, as a new terminal (ADR-0019 rule 2), never ralph's own
+	 * restart. The runner may place it on a different agent (a fresh sandbox
+	 * when the old one is gone); the mission follows the returned ids. Throws
+	 * a `conflict` DispatchError when the agent is not a loop or has already
+	 * moved past `after_run_id`.
+	 */
+	restartLoop?(
+		agent_id: string,
+		after_run_id: string,
+		input: AgentLoopLaunchInput
+	): Promise<AgentLoopRestart>;
 	streamRun?(
 		agent_id: string,
 		run_id: string,
@@ -145,6 +176,12 @@ export interface AgentProvider {
 export const AGENT_BUSY_MESSAGE = 'The agent is still busy.';
 /** Public message when the active run cannot be cancelled. */
 export const RUN_NOT_CANCELLABLE_MESSAGE = 'This run cannot be cancelled.';
+/** Public message when a loop control reaches a loop that is not (or not yet) running. */
+export const LOOP_NOT_RUNNING_MESSAGE = 'The loop is not running.';
+/** Public message when a restart reaches an agent that is not a loop. */
+export const NOT_A_LOOP_SANDBOX_MESSAGE = "This mission's agent is not a loop.";
+/** Public message when another restart already started the next run. */
+export const LOOP_ALREADY_RESTARTED_MESSAGE = 'The loop has already been restarted.';
 
 export const WEBHOOK_PROVIDER_LABEL = 'Webhook agent runner';
 
@@ -156,11 +193,27 @@ export const WEBHOOK_PROVIDER_LABEL = 'Webhook agent runner';
  * implements `launchLoop`: the webhook contract has no loop, and Sand gains
  * one when its template carries ralph. `terminal` is true exactly when the
  * provider implements `attachTerminal` (Sand's hc relay; the webhook contract
- * has none). A new provider adds its row here.
+ * has none). `models` is true when the provider passes a launch's model and
+ * effort to its agent; the webhook contract carries neither. A new provider
+ * adds its row here.
  */
 export const PROVIDER_CAPABILITIES: Record<DispatchProviderId, DispatchCapabilities> = {
-	webhook: { live_events: false, follow_up: true, cancel: true, loop: false, terminal: false },
-	e2b: { live_events: true, follow_up: true, cancel: true, loop: true, terminal: true }
+	webhook: {
+		live_events: false,
+		follow_up: true,
+		cancel: true,
+		loop: false,
+		terminal: false,
+		models: false
+	},
+	e2b: {
+		live_events: true,
+		follow_up: true,
+		cancel: true,
+		loop: true,
+		terminal: true,
+		models: true
+	}
 };
 
 /** Label for a provider id, for status and messages. */

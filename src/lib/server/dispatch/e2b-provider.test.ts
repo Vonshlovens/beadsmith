@@ -9,17 +9,29 @@ import {
 	createE2bProvider,
 	LOOP_METADATA,
 	LOOP_TERMINAL,
+	loopTerminalName,
 	parseRunFiles,
+	parseTranscriptEnd,
 	ralphArgv,
 	SERVE_TERMINAL,
 	settledUpdate,
 	SESSION_METADATA,
+	MODEL_METADATA,
+	EFFORT_METADATA,
+	type E2bProviderDeps,
 	type SandboxCreateInput,
 	type SandboxDriver,
 	type SandboxNetwork,
 	type SandboxRef
 } from './e2b-provider.js';
-import { AGENT_BUSY_MESSAGE, RUN_NOT_CANCELLABLE_MESSAGE } from './provider.js';
+import {
+	AGENT_BUSY_MESSAGE,
+	LOOP_ALREADY_RESTARTED_MESSAGE,
+	LOOP_NOT_RUNNING_MESSAGE,
+	NOT_A_LOOP_SANDBOX_MESSAGE,
+	RUN_NOT_CANCELLABLE_MESSAGE
+} from './provider.js';
+import { ralphRouteAllowed } from './ralph.js';
 import { ANTHROPIC_PLACEHOLDER, GITHUB_PLACEHOLDER } from '../e2b/sandbox.js';
 import { CLAUDE_CONFIG_DIR, HC_CARRIER, RUNS_DIR, WORK_DIR } from '../e2b/image.js';
 
@@ -119,6 +131,8 @@ class FakeSandbox implements SandboxRef {
 	killed = false;
 	/** What setup does when `beadsmith-run` starts. */
 	setup: Partial<FakeRun> = { ready: true };
+	/** Runs before each command; a test returns a promise to hold that command. */
+	hold?: (command: string) => Promise<void> | undefined;
 	constructor(
 		readonly id: string,
 		readonly claude: FakeClaude
@@ -128,7 +142,27 @@ class FakeSandbox implements SandboxRef {
 		return this.files.get(`${RUNS_DIR}/${run_id}/${name}`);
 	}
 
+	/** The newest claim time among earlier runs whose starters have not finished. */
+	previousStart(run_id: string): number | undefined {
+		let newest: number | undefined;
+		for (const [id, run] of this.runs) {
+			if (Number(id.slice(1)) >= Number(run_id.slice(1))) continue;
+			if (run.claimed_s === undefined) continue;
+			if (this.file(id, 'start-done') !== undefined) continue;
+			if (this.file(id, 'result.json') !== undefined) continue;
+			newest = Math.max(newest ?? 0, run.claimed_s);
+		}
+		return newest;
+	}
+
+	/** The transcript's line count, as `wc -l` gives it for the path in a command. */
+	transcriptLines(command: string): number {
+		const path = /\[ -e '([^']+)' \]/.exec(command)![1];
+		return (this.claude.core.files.get(path) ?? '').split('\n').length - 1;
+	}
+
 	async exec(command: string) {
+		await this.hold?.(command);
 		const run_of = (re: RegExp) => this.runs.get(re.exec(command)?.[1] ?? '');
 		if (/^d='[^']+\/(r[0-9]+)'; if \[ ! -d/.test(command)) {
 			const id = /runs\/(r[0-9]+)'/.exec(command)![1];
@@ -140,14 +174,56 @@ class FakeSandbox implements SandboxRef {
 					`exit=${run.exit ?? ''}\ncancelled=${run.cancelled ? '1' : ''}\n` +
 					`ready=${run.ready ? '1' : ''}\nclaimed=${run.claimed_s ?? ''}\nnow=1000\n` +
 					`started=${this.file(id, 'started') === undefined ? '' : '1'}\n` +
+					`prev_claimed=${this.previousStart(id) ?? ''}\n` +
 					`turn=${this.file(id, 'turn.json') ?? ''}\nresult=${this.file(id, 'result.json') ?? ''}\n`
 			};
+		}
+		if (/^d='[^']+\/(r[0-9]+)'; mkdir "\$d\/claim"/.test(command)) {
+			const id = /runs\/(r[0-9]+)'/.exec(command)![1];
+			const run = this.runs.get(id)!;
+			if (run.claimed_s !== undefined) return { exit_code: 1, stdout: '' };
+			run.claimed_s = 1000;
+			this.files.set(`${RUNS_DIR}/${id}/start-line`, `${this.transcriptLines(command)}\n`);
+			return { exit_code: 0, stdout: '' };
+		}
+		if (/^d='[^']+\/(r[0-9]+)'; if \[ -f "\$d\/end" \]/.test(command)) {
+			const id = /runs\/(r[0-9]+)'/.exec(command)![1];
+			const end = this.file(id, 'end');
+			if (end !== undefined) return { exit_code: 0, stdout: `end=${end.trim()}\n` };
+			const later = [...this.runs.keys()]
+				.map((r) => Number(r.slice(1)))
+				.filter((n) => n > Number(id.slice(1)))
+				.sort((a, b) => a - b)
+				.map(
+					(n) =>
+						`later=${this.file(`r${n}`, 'start-line')?.trim() ?? ''}|${this.file(`r${n}`, 'turn.json') ?? ''}\n`
+				);
+			return {
+				exit_code: 0,
+				stdout: `lines=${this.transcriptLines(command)}\n${later.join('')}`
+			};
+		}
+		if (command.includes('(set -C; printf')) {
+			const id = /runs\/(r[0-9]+)'/.exec(command)![1];
+			const value = /printf '%s\\n' ([0-9]+)/.exec(command)![1];
+			if (this.file(id, 'end') === undefined) this.files.set(`${RUNS_DIR}/${id}/end`, `${value}\n`);
+			return { exit_code: 0, stdout: this.file(id, 'end')! };
 		}
 		if (command.startsWith("mkdir '") && command.includes('/claim')) {
 			const run = run_of(/runs\/(r[0-9]+)\/claim/)!;
 			if (run.claimed_s !== undefined) return { exit_code: 1, stdout: '' };
 			run.claimed_s = 1000;
 			return { exit_code: 0, stdout: '' };
+		}
+		if (command.startsWith("[ -f '") && command.includes("/cancelled' ] && echo cancelled=1")) {
+			const id = /runs\/(r[0-9]+)\/cancelled/.exec(command)![1];
+			const later = [...this.runs].some(
+				([r, run]) => Number(r.slice(1)) > Number(id.slice(1)) && run.claimed_s !== undefined
+			);
+			return {
+				exit_code: 0,
+				stdout: `${this.runs.get(id)?.cancelled ? 'cancelled=1\n' : ''}${later ? 'later=1\n' : ''}`
+			};
 		}
 		if (command.startsWith("cat '")) {
 			const path = /^cat '([^']+)'/.exec(command)![1];
@@ -182,6 +258,7 @@ class FakeSandbox implements SandboxRef {
 	) {
 		expect(command).toBe(`${HC_CARRIER} connect`);
 		this.carriers += 1;
+		await this.hold?.(command);
 		const hc = this.claude.core.connect();
 		let exited!: (code: number | null) => void;
 		const exit = new Promise<number | null>((resolve) => (exited = resolve));
@@ -267,7 +344,7 @@ function setup(overrides: { create_fails?: boolean; ralph?: FakeRalph } = {}) {
 	const logs: string[] = [];
 	const mint_github_token = vi.fn(async () => GITHUB_TOKEN);
 	const mint_tailscale_key = vi.fn(async () => 'tskey-auth-single-use');
-	const provider = createE2bProvider({
+	const deps: E2bProviderDeps = {
 		settings: SETTINGS,
 		label: 'Sand',
 		driver,
@@ -281,10 +358,13 @@ function setup(overrides: { create_fails?: boolean; ralph?: FakeRalph } = {}) {
 		timing: { poll_ms: 5, startup_ms: 500, settle_ms: 50, wait_ms: 5 },
 		...(overrides.ralph === undefined ? {} : { ralph_fetch: () => overrides.ralph!.fetch }),
 		log: (message) => logs.push(message)
-	});
+	};
+	const provider = createE2bProvider(deps);
 	providers.push({ claude });
 	return {
 		provider,
+		/** A new provider on the same sandboxes, as after a Beadsmith restart. */
+		restartServer: () => createE2bProvider(deps),
 		claude,
 		sandboxes,
 		states,
@@ -571,6 +651,29 @@ describe('E2B provider', () => {
 		expect(claude.sends().at(-1)).toBe('again');
 	});
 
+	it('launches the CLI with the mission model and effort, and resumes with them', async () => {
+		const { provider, claude, created } = setup();
+		await provider.launch({ ...TACKLE, model: 'opus', effort: 'medium' });
+		expect(created[0].metadata).toMatchObject({
+			[MODEL_METADATA]: 'opus',
+			[EFFORT_METADATA]: 'medium'
+		});
+		await provider.getRun('sbx1', 'r1');
+		await later(10);
+		expect((await provider.getRun('sbx1', 'r1')).status).toBe('succeeded');
+		expect(claude.runs()[0]).toEqual(
+			expect.arrayContaining(['--model', 'opus', '--effort', 'medium'])
+		);
+
+		// A relaunch after the terminal went keeps the launch's choice.
+		claude.core.exit(claude.live()!.address);
+		await provider.createRun!('sbx1', 'again');
+		await provider.getRun('sbx1', 'r2');
+		expect(claude.runs()[1]).toEqual(
+			expect.arrayContaining(['--resume', '--model', 'opus', '--effort', 'medium'])
+		);
+	});
+
 	it('fails a turn whose terminal was lost', async () => {
 		const { provider, claude } = setup();
 		claude.auto = false;
@@ -619,6 +722,170 @@ describe('E2B provider', () => {
 		expect(claude.runs()).toHaveLength(1);
 	});
 
+	it('sends no prompt when a cancel lands while the CLI is still launching', async () => {
+		const { provider, claude, sandboxes } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		const run = sandboxes.get('sbx1')!.runs.get('r1')!;
+		const launch = claude.core.onRun!;
+		claude.core.onRun = (t) => {
+			// The cancel finds no terminal yet and leaves only its mark.
+			run.cancelled = true;
+			launch(t);
+		};
+		expect(await provider.getRun('sbx1', 'r1')).toEqual({ status: 'cancelled' });
+		expect(claude.runs()).toHaveLength(1);
+		expect(claude.sends()).toEqual([]);
+		expect(claude.core.terminal('t1').state).toBe('finished');
+	});
+
+	it("never lets a cancelled run's delayed starter end a follow-up's CLI", async () => {
+		const { provider, claude, sandboxes } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		const sandbox = sandboxes.get('sbx1')!;
+		// r1's starter stalls reading its prompt, before any CLI exists.
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => (release = resolve));
+		sandbox.hold = (command) => (command === `cat '${RUNS_DIR}/r1/prompt'` ? held : undefined);
+		const first = provider.getRun('sbx1', 'r1');
+		await later(10);
+		// The cancel finds no terminal and leaves its mark; the follow-up is accepted.
+		await provider.cancelRun!('sbx1', 'r1');
+		expect(await provider.createRun!('sbx1', 'Try again')).toEqual({ run_id: 'r2' });
+		// r2 waits for r1's starter rather than racing it for the one CLI.
+		expect(await provider.getRun('sbx1', 'r2')).toEqual({ status: 'running' });
+		release();
+		expect(await first).toEqual({ status: 'cancelled' });
+		expect(await provider.getRun('sbx1', 'r2')).toEqual({ status: 'running' });
+		expect(claude.sends()).toEqual(['Try again']);
+		expect(claude.live()).toBeDefined();
+		expect([...claude.core.terminals.values()].filter((t) => t.state === 'live')).toHaveLength(1);
+		claude.finish();
+		expect((await provider.getRun('sbx1', 'r2')).status).toBe('succeeded');
+	});
+
+	it('leaves the CLI alone when a starter resumes after the next run stopped waiting', async () => {
+		const { provider, claude, sandboxes } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		const sandbox = sandboxes.get('sbx1')!;
+		// r1's starter passed its cancel check and stalls opening hc.
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => (release = resolve));
+		let holding = true;
+		sandbox.hold = (command) => {
+			if (!holding || command !== `${HC_CARRIER} connect`) return undefined;
+			holding = false;
+			return held;
+		};
+		const first = provider.getRun('sbx1', 'r1');
+		await later(10);
+		await provider.cancelRun!('sbx1', 'r1');
+		// Its claim goes stale, so r2 no longer waits for it.
+		sandbox.runs.get('r1')!.claimed_s = 1;
+		await provider.createRun!('sbx1', 'Try again');
+		expect(await provider.getRun('sbx1', 'r2')).toEqual({ status: 'running' });
+		const now = Date.now();
+		const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 300_000);
+		try {
+			release();
+			await first;
+		} finally {
+			clock.mockRestore();
+		}
+		expect(claude.sends()).toEqual(['Try again']);
+		expect(claude.live()).toBeDefined();
+	});
+
+	it('waits for every earlier starter, past a cancelled run that never claimed a start', async () => {
+		const { provider, claude, sandboxes } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		const sandbox = sandboxes.get('sbx1')!;
+		// r1's starter stalls reading its prompt, before any CLI exists.
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => (release = resolve));
+		sandbox.hold = (command) => (command === `cat '${RUNS_DIR}/r1/prompt'` ? held : undefined);
+		const first = provider.getRun('sbx1', 'r1');
+		await later(10);
+		await provider.cancelRun!('sbx1', 'r1');
+		// r2 is cancelled before anything claimed its start.
+		expect(await provider.createRun!('sbx1', 'Second')).toEqual({ run_id: 'r2' });
+		await provider.cancelRun!('sbx1', 'r2');
+		expect(sandbox.runs.get('r2')!.claimed_s).toBeUndefined();
+		expect(await provider.createRun!('sbx1', 'Third')).toEqual({ run_id: 'r3' });
+		// r3 waits for r1's starter even though r2, its previous run, never claimed.
+		expect(await provider.getRun('sbx1', 'r3')).toEqual({ status: 'running' });
+		expect(sandbox.runs.get('r3')!.claimed_s).toBeUndefined();
+		release();
+		expect(await first).toEqual({ status: 'cancelled' });
+		expect(await provider.getRun('sbx1', 'r3')).toEqual({ status: 'running' });
+		expect(claude.sends()).toEqual(['Third']);
+		expect([...claude.core.terminals.values()].filter((t) => t.state === 'live')).toHaveLength(1);
+		claude.finish();
+		expect((await provider.getRun('sbx1', 'r3')).status).toBe('succeeded');
+	});
+
+	it('never lets a starter act on the CLI once a later run claimed its start', async () => {
+		const { provider, claude, sandboxes } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		const sandbox = sandboxes.get('sbx1')!;
+		// r1's starter passed its first check and stalls opening hc.
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => (release = resolve));
+		let holding = true;
+		sandbox.hold = (command) => {
+			if (!holding || command !== `${HC_CARRIER} connect`) return undefined;
+			holding = false;
+			return held;
+		};
+		const first = provider.getRun('sbx1', 'r1');
+		await later(10);
+		await provider.cancelRun!('sbx1', 'r1');
+		await provider.createRun!('sbx1', 'Second');
+		await provider.cancelRun!('sbx1', 'r2');
+		// r1's claim reads stale in the sandbox, so r3 starts; r1's own clock
+		// has not reached its act limit, so only r3's claim fences it off.
+		sandbox.runs.get('r1')!.claimed_s = 1;
+		await provider.createRun!('sbx1', 'Third');
+		expect(await provider.getRun('sbx1', 'r3')).toEqual({ status: 'running' });
+		release();
+		await first;
+		expect(claude.sends()).toEqual(['Third']);
+		expect(claude.live()).toBeDefined();
+		expect([...claude.core.terminals.values()].filter((t) => t.state === 'live')).toHaveLength(1);
+	});
+
+	it("lets a follow-up start once a dead starter's claim is stale", async () => {
+		const { provider, claude, sandboxes } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		const sandbox = sandboxes.get('sbx1')!;
+		// A starter claimed r1 and its process died: no start-done, an old claim.
+		sandbox.runs.get('r1')!.claimed_s = 1;
+		expect((await provider.getRun('sbx1', 'r1')).status).toBe('failed');
+		await provider.createRun!('sbx1', 'Try again');
+		expect(await provider.getRun('sbx1', 'r2')).toEqual({ status: 'running' });
+		expect(claude.sends()).toEqual(['Try again']);
+	});
+
+	it('ends the CLI when a cancel lands while the prompt is being sent', async () => {
+		const { provider, claude, sandboxes } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		const run = sandboxes.get('sbx1')!.runs.get('r1')!;
+		const send = claude.core.onSend!;
+		claude.core.onSend = (t, text) => {
+			run.cancelled = true;
+			send(t, text);
+		};
+		expect(await provider.getRun('sbx1', 'r1')).toEqual({ status: 'cancelled' });
+		expect(claude.sends()).toEqual(['Tackle bw-1']);
+		expect(claude.core.terminal('t1').state).toBe('finished');
+	});
+
 	it('streams the transcript as mission events and resumes after the last id', async () => {
 		const { provider, claude, sandboxes } = setup();
 		claude.auto = false;
@@ -639,7 +906,12 @@ describe('E2B provider', () => {
 		const result = JSON.parse(sandboxes.get('sbx1')!.file('r1', 'result.json')!);
 		expect(result).toMatchObject({ status: 'succeeded', event_id: events.at(-1)!.id });
 
-		// A finished run replays only its stored result, unless the client has it.
+		// A finished run replays its transcript and result, from after what the client has.
+		const replay: MissionEvent[] = [];
+		expect(
+			await provider.streamMissionEvents!('sbx1', 'r1', async (e) => void replay.push(e))
+		).toBe('terminal');
+		expect(replay).toEqual(events);
 		const again: MissionEvent[] = [];
 		const after = events[1].id;
 		expect(
@@ -647,12 +919,131 @@ describe('E2B provider', () => {
 				last_event_id: after
 			})
 		).toBe('terminal');
-		expect(again).toEqual([events.at(-1)]);
+		expect(again).toEqual(events.slice(2));
 		const none: MissionEvent[] = [];
 		await provider.streamMissionEvents!('sbx1', 'r1', async (e) => void none.push(e), {
 			last_event_id: events.at(-1)!.id
 		});
 		expect(none).toEqual([]);
+	});
+
+	it('replays a finished run without the runs after it', async () => {
+		const { provider, claude } = setup();
+		await provider.launch(TACKLE);
+		await provider.getRun('sbx1', 'r1');
+		expect(await provider.createRun!('sbx1', 'Now add tests')).toEqual({ run_id: 'r2' });
+		expect((await provider.getRun('sbx1', 'r2')).status).toBe('succeeded');
+
+		const first: MissionEvent[] = [];
+		const second: MissionEvent[] = [];
+		await provider.streamMissionEvents!('sbx1', 'r1', async (e) => void first.push(e));
+		await provider.streamMissionEvents!('sbx1', 'r2', async (e) => void second.push(e));
+		expect(first.map((e) => e.type)).toEqual(['tool_call', 'tool_call', 'assistant', 'result']);
+		expect(second.map((e) => e.type)).toEqual(['tool_call', 'tool_call', 'assistant', 'result']);
+		const line = (e: MissionEvent) => Number(e.id.split('.')[0]);
+		expect(Math.max(...first.map(line))).toBeLessThan(Math.min(...second.map(line)));
+		// The stored ids are the live ones, so the replay resumes where a client stopped.
+		expect(second.at(-1)!.id).not.toBe(first.at(-1)!.id);
+		expect(claude.sends()).toEqual(['Tackle bw-1', 'Now add tests']);
+	});
+
+	it('bounds a cancelled run with no stored result by the next run', async () => {
+		const { provider, claude, sandboxes } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		await provider.getRun('sbx1', 'r1');
+		await provider.cancelRun!('sbx1', 'r1');
+		const sandbox = sandboxes.get('sbx1')!;
+		expect(sandbox.file('r1', 'result.json')).toBeUndefined();
+
+		// Only the cancelled run's lines so far: its result sorts after them.
+		const before: MissionEvent[] = [];
+		await provider.streamMissionEvents!('sbx1', 'r1', async (e) => void before.push(e));
+		expect(before.map((e) => e.type)).toEqual(['tool_call', 'result']);
+		expect(before.at(-1)).toMatchObject({ id: '2.9000', status: 'cancelled' });
+
+		claude.auto = true;
+		expect(await provider.createRun!('sbx1', 'Try again')).toEqual({ run_id: 'r2' });
+		expect((await provider.getRun('sbx1', 'r2')).status).toBe('succeeded');
+		const after: MissionEvent[] = [];
+		await provider.streamMissionEvents!('sbx1', 'r1', async (e) => void after.push(e));
+		expect(after).toEqual(before);
+	});
+
+	it('bounds a cancelled run by the first later run with a turn', async () => {
+		const { provider, claude, sandboxes } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		await provider.getRun('sbx1', 'r1');
+		await provider.cancelRun!('sbx1', 'r1');
+		const sandbox = sandboxes.get('sbx1')!;
+		const before: MissionEvent[] = [];
+		await provider.streamMissionEvents!('sbx1', 'r1', async (e) => void before.push(e));
+		expect(before.map((e) => e.type)).toEqual(['tool_call', 'result']);
+
+		// r2 is cancelled while its setup runs, so it never marks a turn.
+		sandbox.setup = { ready: false };
+		expect(await provider.createRun!('sbx1', 'Try again')).toEqual({ run_id: 'r2' });
+		await provider.cancelRun!('sbx1', 'r2');
+		expect(sandbox.runs.get('r2')!.setup_killed).toBe(true);
+		expect(sandbox.file('r2', 'turn.json')).toBeUndefined();
+
+		claude.auto = true;
+		sandbox.setup = { ready: true };
+		expect(await provider.createRun!('sbx1', 'Once more')).toEqual({ run_id: 'r3' });
+		expect((await provider.getRun('sbx1', 'r3')).status).toBe('succeeded');
+		const after: MissionEvent[] = [];
+		await provider.streamMissionEvents!('sbx1', 'r1', async (e) => void after.push(e));
+		expect(after).toEqual(before);
+	});
+
+	it('keeps a cancelled run to the end taken before a follow-up wrote past it', async () => {
+		const { provider, claude, sandboxes } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		await provider.getRun('sbx1', 'r1');
+		await provider.cancelRun!('sbx1', 'r1');
+		const sandbox = sandboxes.get('sbx1')!;
+		// The stop keeps the transcript's end once the CLI is gone.
+		expect(sandbox.file('r1', 'end')).toBe('2\n');
+
+		// A run from before stored ends has none: the replay takes the bound
+		// itself, before it connects to hc. Hold that connection while r2 runs.
+		sandbox.files.delete(`${RUNS_DIR}/r1/end`);
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => (release = resolve));
+		let holding = true;
+		sandbox.hold = (command) => {
+			if (!holding || command !== `${HC_CARRIER} connect`) return undefined;
+			holding = false;
+			return held;
+		};
+		const events: MissionEvent[] = [];
+		const streaming = provider.streamMissionEvents!('sbx1', 'r1', async (e) => void events.push(e));
+		while (holding) await later(1);
+
+		claude.auto = true;
+		expect(await provider.createRun!('sbx1', 'Try again')).toEqual({ run_id: 'r2' });
+		expect((await provider.getRun('sbx1', 'r2')).status).toBe('succeeded');
+		expect(sandbox.file('r2', 'start-line')).toBe('2\n');
+		release();
+		expect(await streaming).toBe('terminal');
+		expect(events.map((e) => e.type)).toEqual(['tool_call', 'result']);
+		expect(events.at(-1)).toMatchObject({ id: '2.9000', status: 'cancelled' });
+		expect(sandbox.file('r1', 'end')).toBe('2\n');
+	});
+
+	it('bounds a run by the transcript and the first later run that claimed its start', () => {
+		expect(parseTranscriptEnd('end=7\n')).toBe(7);
+		expect(parseTranscriptEnd('lines=9\n')).toBe(9);
+		// A later run that has not claimed its start wrote nothing before the count.
+		expect(parseTranscriptEnd('lines=9\nlater=|\nlater=6|\n')).toBe(6);
+		expect(parseTranscriptEnd('lines=4\nlater=6|\n')).toBe(4);
+		// A run from before start lines: its turn's first line.
+		expect(parseTranscriptEnd('lines=9\nlater=|{"base":1,"first_line":5}\n')).toBe(4);
+		// An unreadable transcript is bounded by a later start, or not at all.
+		expect(parseTranscriptEnd('lines=\nlater=3|\n')).toBe(3);
+		expect(parseTranscriptEnd('lines=\nlater=|\n')).toBeUndefined();
 	});
 
 	it('resumes a live stream after the last id the client saw', async () => {
@@ -882,6 +1273,116 @@ describe('E2B provider loops', () => {
 		expect(ralph.requests.every((r) => r.method === 'GET')).toBe(true);
 	});
 
+	it('gives a loop the run limit again each time it finishes an iteration', async () => {
+		const { provider, ralph, sandbox, name } = await launched();
+		const max_run_ms = SETTINGS.max_run_minutes * 60_000;
+		const iteration = (n: number) => ({
+			iteration: n,
+			outcome: 'completed',
+			startedAt: '2026-11-11T10:00:00.000Z',
+			finishedAt: '2026-11-11T10:50:00.000Z',
+			durationMs: 3_000_000,
+			headBefore: null,
+			headAfter: null,
+			inputTokens: 1,
+			outputTokens: 1,
+			costUsd: null,
+			validateOk: null,
+			planOpen: null
+		});
+		// ralph has not recorded the run: no sign of progress, no extension.
+		await provider.getRun('sbx1', 'r1');
+		expect(sandbox.timeouts).toEqual([]);
+
+		ralph.addRun({ name });
+		await provider.getRun('sbx1', 'r1');
+		// The first sight of a live run counts as progress.
+		expect(sandbox.timeouts).toEqual([max_run_ms]);
+		await provider.getRun('sbx1', 'r1');
+		expect(sandbox.timeouts).toEqual([max_run_ms]);
+
+		ralph.iterations.set(name, [iteration(1)]);
+		expect((await provider.getRun('sbx1', 'r1')).status).toBe('running');
+		expect(sandbox.timeouts).toEqual([max_run_ms, max_run_ms]);
+		// Stuck in iteration 2: no more time, so the run limit cuts it off.
+		await provider.getRun('sbx1', 'r1');
+		await provider.getRun('sbx1', 'r1');
+		expect(sandbox.timeouts).toEqual([max_run_ms, max_run_ms]);
+
+		ralph.iterations.set(name, [iteration(1), iteration(2)]);
+		await provider.getRun('sbx1', 'r1');
+		expect(sandbox.timeouts).toEqual([max_run_ms, max_run_ms, max_run_ms]);
+
+		// Ended: the idle window replaces the run limit.
+		ralph.addRun({ name, status: 'finished', alive: false, stopReason: 'max_iterations' });
+		expect((await provider.getRun('sbx1', 'r1')).status).not.toBe('running');
+		expect(sandbox.timeouts.at(-1)).toBe(SETTINGS.idle_minutes * 60_000);
+	});
+
+	it('keeps reporting a running loop when its sandbox cannot get more time', async () => {
+		const { provider, ralph, sandbox, name, logs } = await launched();
+		await provider.getRun('sbx1', 'r1');
+		ralph.addRun({ name });
+		sandbox.setTimeout = async () => {
+			throw new Error('rate limited');
+		};
+		expect((await provider.getRun('sbx1', 'r1')).status).toBe('running');
+		expect(logs.join('\n')).toContain('could not extend the run limit');
+	});
+
+	it("replaces a running loop's GitHub token at the egress before its hour runs out", async () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		try {
+			vi.setSystemTime(new Date('2026-11-11T10:00:00Z'));
+			const { provider, ralph, sandbox, name, mint_github_token, restartServer } = await launched();
+			expect(mint_github_token).toHaveBeenCalledTimes(1);
+			ralph.addRun({ name });
+			await provider.getRun('sbx1', 'r1');
+			vi.setSystemTime(new Date('2026-11-11T10:44:00Z'));
+			await provider.getRun('sbx1', 'r1');
+			// Still fresh: the egress keeps the launch token.
+			expect(sandbox.networks).toHaveLength(0);
+
+			mint_github_token.mockResolvedValueOnce('ghs_refreshed_token_000000000000');
+			vi.setSystemTime(new Date('2026-11-11T10:46:00Z'));
+			expect((await provider.getRun('sbx1', 'r1')).status).toBe('running');
+			expect(sandbox.networks).toHaveLength(1);
+			// Same scope as at launch: the one repository, write.
+			expect(mint_github_token).toHaveBeenLastCalledWith(
+				'https://github.com/example-org/beads-web',
+				true
+			);
+			expect(sandbox.networks[0].headers['api.github.com']).toEqual({
+				authorization: 'Bearer ghs_refreshed_token_000000000000'
+			});
+			await provider.getRun('sbx1', 'r1');
+			expect(sandbox.networks).toHaveLength(1);
+
+			// A failed refresh is retried on the next read.
+			mint_github_token.mockRejectedValueOnce(new Error('GitHub could not be reached.'));
+			vi.setSystemTime(new Date('2026-11-11T11:32:00Z'));
+			expect((await provider.getRun('sbx1', 'r1')).status).toBe('running');
+			expect(sandbox.networks).toHaveLength(1);
+			await provider.getRun('sbx1', 'r1');
+			expect(sandbox.networks).toHaveLength(2);
+
+			// After a Beadsmith restart nothing says how old the token is: mint now.
+			const restarted = restartServer();
+			await restarted.getRun('sbx1', 'r1');
+			expect(sandbox.networks).toHaveLength(3);
+			await restarted.getRun('sbx1', 'r1');
+			expect(sandbox.networks).toHaveLength(3);
+
+			// An ended loop is not refreshed.
+			ralph.addRun({ name, status: 'finished', alive: false, stopReason: 'max_iterations' });
+			vi.setSystemTime(new Date('2026-11-11T13:00:00Z'));
+			await restarted.getRun('sbx1', 'r1');
+			expect(sandbox.networks).toHaveLength(3);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('relays the loop terminal, not ralph serve', async () => {
 		const { provider, claude } = await launched();
 		await provider.getRun('sbx1', 'r1');
@@ -962,9 +1463,159 @@ describe('E2B provider loops', () => {
 		await expect(provider.cancelRun!('sbx1', 'r1')).rejects.toThrow(RUN_NOT_CANCELLABLE_MESSAGE);
 	});
 
+	it('steers a running loop through ralph, and refuses before it starts or after it ends', async () => {
+		const { provider, ralph, name } = await launched();
+		// Setup has not started ralph yet.
+		await expect(provider.steerRun!('sbx1', 'r1', 'Fix the test first.')).rejects.toThrow(
+			LOOP_NOT_RUNNING_MESSAGE
+		);
+		await provider.getRun('sbx1', 'r1');
+		// Started, but ralph has not recorded the run: its 404 reads as not running.
+		await expect(provider.steerRun!('sbx1', 'r1', 'Fix the test first.')).rejects.toThrow(
+			LOOP_NOT_RUNNING_MESSAGE
+		);
+		const run = ralph.addRun({ name });
+		await provider.steerRun!('sbx1', 'r1', 'Fix the test first.');
+		expect(ralph.steers).toEqual([{ name, text: 'Fix the test first.' }]);
+		run.status = 'finished';
+		await expect(provider.steerRun!('sbx1', 'r1', 'Too late.')).rejects.toMatchObject({
+			code: 'conflict',
+			message: LOOP_NOT_RUNNING_MESSAGE
+		});
+		expect(ralph.requests.every((r) => ralphRouteAllowed(r.method, r.path))).toBe(true);
+	});
+
+	it("stops after the iteration with ralph's graceful stop, leaving the terminal running", async () => {
+		const { provider, claude, ralph, name } = await launched();
+		await provider.getRun('sbx1', 'r1');
+		const run = ralph.addRun({ name });
+		await provider.stopRunAfterIteration!('sbx1', 'r1');
+		expect(ralph.stops).toEqual([{ name, graceful: true }]);
+		expect(terminals(claude).find((t) => t.name === LOOP_TERMINAL)?.state).not.toBe('finished');
+		expect((await provider.getRun('sbx1', 'r1')).status).toBe('running');
+		run.status = 'stopped';
+		await expect(provider.stopRunAfterIteration!('sbx1', 'r1')).rejects.toMatchObject({
+			code: 'conflict'
+		});
+	});
+
+	it('refuses loop controls on a one-shot mission', async () => {
+		const env = setup();
+		const launch = await env.provider.launch(TACKLE);
+		await expect(env.provider.steerRun!(launch.agent_id, 'r1', 'Hi.')).rejects.toThrow(
+			LOOP_NOT_RUNNING_MESSAGE
+		);
+		await expect(env.provider.stopRunAfterIteration!(launch.agent_id, 'r1')).rejects.toThrow(
+			LOOP_NOT_RUNNING_MESSAGE
+		);
+	});
+
 	it('refuses a follow-up', async () => {
 		const { provider } = await launched();
 		await expect(provider.createRun!('sbx1', 'more')).rejects.toThrow('A loop takes no follow-up.');
+	});
+
+	/** A launched loop whose first run ralph finished and Beadsmith recorded. */
+	async function ended() {
+		const env = await launched();
+		await env.provider.getRun('sbx1', 'r1');
+		env.ralph.addRun({
+			name: env.name,
+			status: 'finished',
+			alive: false,
+			stopReason: 'max_iterations'
+		});
+		env.claude.core.exit(terminals(env.claude)[1].address, 0);
+		expect((await env.provider.getRun('sbx1', 'r1')).status).toBe('succeeded');
+		return env;
+	}
+
+	it('restarts an ended loop in its live sandbox as a new run with its own names', async () => {
+		const { provider, claude, ralph, sandbox, name, created, mint_github_token } = await ended();
+		const restarted = await provider.restartLoop!('sbx1', 'r1', {
+			...LOOP,
+			loop: { ...LOOP.loop, max_iterations: 2 }
+		});
+		expect(restarted).toEqual({ agent_id: 'sbx1', run_id: 'r2' });
+		// Same sandbox and checkout: nothing created, a fresh push token, the full run limit.
+		expect(created).toHaveLength(1);
+		expect(sandbox.networks).toHaveLength(1);
+		expect(mint_github_token).toHaveBeenCalledTimes(2);
+		expect(sandbox.timeouts.at(-1)).toBe(SETTINGS.max_run_minutes * 60_000);
+		expect(sandbox.started.map((s) => s.command)).toEqual(['beadsmith-run r1', 'beadsmith-run r2']);
+		expect(JSON.parse(sandbox.file('r2', 'loop.json')!)).toEqual([
+			'ralph',
+			'build',
+			'--name',
+			`${name}-r2`,
+			'--no-observer',
+			'--max',
+			'2',
+			'--harness',
+			'claude'
+		]);
+
+		// The new run starts in a terminal of its own; the first run keeps its result.
+		expect(await provider.getRun('sbx1', 'r2')).toEqual({ status: 'running' });
+		const loop = terminals(claude).find((t) => t.name === loopTerminalName('r2'))!;
+		expect(loop.argv).toEqual(JSON.parse(sandbox.file('r2', 'loop.json')!));
+		expect(loopTerminalName('r2')).not.toBe(LOOP_TERMINAL);
+		expect((await provider.getRun('sbx1', 'r1')).status).toBe('succeeded');
+
+		// Controls and the relay address the new run.
+		ralph.addRun({ name: `${name}-r2` });
+		await provider.steerRun!('sbx1', 'r2', 'Smaller steps.');
+		expect(ralph.steers).toEqual([{ name: `${name}-r2`, text: 'Smaller steps.' }]);
+		const relay = await provider.attachTerminal!('sbx1', {
+			mode: 'watch',
+			cols: 80,
+			rows: 24,
+			onData: () => {}
+		});
+		const attach = claude.core.calls.findLast((call) => call.method === 'terminal.attach');
+		expect(attach?.params.terminal).toBe(loop.address);
+		relay.close();
+	});
+
+	it('restarts in a fresh sandbox once E2B has destroyed the old one, numbering on', async () => {
+		const { provider, sandboxes, states, metadata, created } = await ended();
+		// E2B no longer knows it.
+		states.delete('sbx1');
+		const restarted = await provider.restartLoop!('sbx1', 'r1', LOOP);
+		expect(restarted).toEqual({ agent_id: 'sbx2', run_id: 'r2' });
+		expect(created).toHaveLength(2);
+		expect(created[1].on_timeout).toBe('kill');
+		const base = metadata.get('sbx2')![LOOP_METADATA];
+		expect(base).toMatch(/^bdx-build-[0-9a-f]{8}$/);
+		const fresh = sandboxes.get('sbx2')!;
+		expect(fresh.started.map((s) => s.command)).toEqual(['beadsmith-run r2']);
+		expect(JSON.parse(fresh.file('r2', 'loop.json')!)).toContain(`${base}-r2`);
+		expect(await provider.getRun('sbx2', 'r2')).toEqual({ status: 'running' });
+	});
+
+	it('stops a run the sandbox still counts as working before starting the next', async () => {
+		const { provider, ralph, sandbox, name } = await launched();
+		await provider.getRun('sbx1', 'r1');
+		ralph.addRun({ name });
+		await provider.restartLoop!('sbx1', 'r1', LOOP);
+		expect(ralph.stops).toEqual([{ name, graceful: false }]);
+		expect(sandbox.runs.get('r1')?.cancelled).toBe(true);
+		expect(sandbox.timeouts.at(-1)).toBe(SETTINGS.max_run_minutes * 60_000);
+	});
+
+	it('refuses a restart of a one-shot mission or of a run already restarted', async () => {
+		const env = setup();
+		const launch = await env.provider.launch(TACKLE);
+		await expect(env.provider.restartLoop!(launch.agent_id, 'r1', LOOP)).rejects.toMatchObject({
+			code: 'conflict',
+			message: NOT_A_LOOP_SANDBOX_MESSAGE
+		});
+		const { provider } = await ended();
+		await provider.restartLoop!('sbx1', 'r1', LOOP);
+		await expect(provider.restartLoop!('sbx1', 'r1', LOOP)).rejects.toMatchObject({
+			code: 'conflict',
+			message: LOOP_ALREADY_RESTARTED_MESSAGE
+		});
 	});
 
 	it('streams ralph events as mission events and records the result once', async () => {

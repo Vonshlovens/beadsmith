@@ -123,7 +123,9 @@ export async function deliverCrewNotice(
 			session_id: chat.session_id,
 			message_id,
 			prompt: crewNoticeText(record),
-			scope: chat.scope
+			scope: chat.scope,
+			model: chat.model,
+			effort: chat.effort
 		});
 		await deps.dispatch.markChatNotice(record.id, key);
 		return 'sent';

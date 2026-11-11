@@ -151,6 +151,7 @@
 		{ keys: ['g r'], label: 'Ready', group: 'Go to', run: () => go('/ready') },
 		{ keys: ['g f'], label: 'First Mate', group: 'Go to', run: () => go('/first-mate') },
 		{ keys: ['g m'], label: 'Missions', group: 'Go to', run: () => go('/missions') },
+		{ keys: ['g u'], label: 'Automations', group: 'Go to', run: () => go('/automations') },
 		{ keys: ['g a'], label: 'Activity log', group: 'Go to', run: () => go('/activity') },
 		{ keys: ['g c'], label: 'Console', group: 'Go to', run: () => go('/console') },
 		{

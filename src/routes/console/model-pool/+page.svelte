@@ -2,18 +2,27 @@
 	/**
 	 * The Underclass model pool (ADR-0022): which subscriptions are serving
 	 * agent work, how close each is to its quota, and what the pool has done
-	 * lately. Read-only; account actions belong to Underclass until the
-	 * console grows them. Re-reads every 15 s while the tab is visible and
-	 * keeps the last good read on screen, marked stale, if a refresh fails.
+	 * lately. Each account row has an Actions menu (refresh token, enable,
+	 * disable, use a reset); disable and reset confirm first, and the
+	 * outcome is written in the row. Re-reads every 15 s while the tab is
+	 * visible and keeps the last good read on screen, marked stale, if a
+	 * refresh fails.
 	 */
 	import ArrowLeftIcon from 'phosphor-svelte/lib/ArrowLeftIcon';
+	import CaretDownIcon from 'phosphor-svelte/lib/CaretDownIcon';
+	import ConfirmDialog from '#lib/components/confirm-dialog.svelte';
 	import EmptyState from '#lib/components/empty-state.svelte';
 	import SkeletonRows from '#lib/components/skeleton-rows.svelte';
-	import { api } from '#lib/client/api.js';
+	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
+	import { api, errorMessage } from '#lib/client/api.js';
 	import { tip } from '#lib/client/tooltip.js';
 	import { relativeLong } from '#lib/client/format.js';
 	import {
+		ACTION_PENDING,
+		accountActions,
 		accountKind,
+		actionConfirm,
+		actionDone,
 		accountState,
 		clockTime,
 		compactCount,
@@ -25,6 +34,7 @@
 		meterWidth,
 		MODEL_POOL_POLL_MS,
 		poolView,
+		REFUSAL_COPY,
 		requestFailed,
 		requestResult,
 		resetPhrase,
@@ -36,7 +46,12 @@
 		type PoolFailure
 	} from '#lib/client/model-pool.js';
 	import { PRODUCT_NAME } from '#lib/product.js';
-	import type { ModelPoolResponse, ModelPoolSnapshot } from '#lib/types.js';
+	import type {
+		ModelPoolAccount,
+		ModelPoolAction,
+		ModelPoolResponse,
+		ModelPoolSnapshot
+	} from '#lib/types.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -71,8 +86,14 @@
 	);
 	const shown_hour = $derived(active_hour ?? busiest);
 
+	/** A read asked for while one was running; it runs once that one ends. */
+	let read_again = false;
+
 	async function read(by_hand = false): Promise<void> {
-		if (reading) return;
+		if (reading) {
+			read_again = true;
+			return;
+		}
 		reading = true;
 		manual = by_hand;
 		try {
@@ -85,6 +106,90 @@
 			now = Date.now();
 			reading = false;
 			manual = false;
+		}
+		if (read_again) {
+			read_again = false;
+			void read();
+		}
+	}
+
+	/**
+	 * The last action on each account, said in its row: pending while
+	 * Underclass works, then what happened. A refusal and a failure stay
+	 * until the next action on that row; a success fades after a while.
+	 */
+	interface RowNote {
+		tone: 'pending' | 'done' | 'refused' | 'failed';
+		text: string;
+		/** A refused reset Underclass would accept with force. */
+		can_force: boolean;
+	}
+	let notes = $state<Record<string, RowNote>>({});
+	const note_timers = new Map<string, ReturnType<typeof setTimeout>>();
+	const DONE_NOTE_MS = 12_000;
+
+	/** The action waiting on its confirmation. */
+	let asking = $state<{
+		account: ModelPoolAccount;
+		action: ModelPoolAction;
+		force: boolean;
+	} | null>(null);
+	let confirm_open = $state(false);
+	const ask = $derived(asking ? actionConfirm(asking.account, asking.action, asking.force) : null);
+
+	const VERB: Record<ModelPoolAction, string> = {
+		refresh: 'refresh the token',
+		enable: 'enable the account',
+		disable: 'disable the account',
+		reset: 'use a reset'
+	};
+
+	function setNote(id: string, note: RowNote): void {
+		clearTimeout(note_timers.get(id));
+		note_timers.delete(id);
+		notes[id] = note;
+		if (note.tone === 'done') {
+			note_timers.set(
+				id,
+				setTimeout(() => {
+					delete notes[id];
+					note_timers.delete(id);
+				}, DONE_NOTE_MS)
+			);
+		}
+	}
+
+	$effect(() => () => {
+		for (const timer of note_timers.values()) clearTimeout(timer);
+	});
+
+	function choose(account: ModelPoolAccount, action: ModelPoolAction, force = false): void {
+		if (actionConfirm(account, action, force)) {
+			asking = { account, action, force };
+			confirm_open = true;
+			return;
+		}
+		void act(account, action, force);
+	}
+
+	async function act(account: ModelPoolAccount, action: ModelPoolAction, force: boolean) {
+		if (notes[account.id]?.tone === 'pending') return;
+		setNote(account.id, { tone: 'pending', text: ACTION_PENDING[action], can_force: false });
+		try {
+			const result = await api.modelPoolAction(account.id, action, force);
+			setNote(
+				account.id,
+				result.outcome === 'done'
+					? { tone: 'done', text: actionDone(result), can_force: false }
+					: { tone: 'refused', text: REFUSAL_COPY[result.refusal], can_force: result.can_force }
+			);
+			void read();
+		} catch (thrown) {
+			setNote(account.id, {
+				tone: 'failed',
+				text: `Could not ${VERB[action]}. ${errorMessage(thrown)}`,
+				can_force: false
+			});
 		}
 	}
 
@@ -272,11 +377,15 @@
 								<th scope="col" class="num">Month</th>
 								<th scope="col" class="num">Tokens in / out</th>
 								<th scope="col" class="num">Banked</th>
+								<th scope="col" class="acts-col"><span class="sr-only">Actions</span></th>
 							</tr>
 						</thead>
 						<tbody>
 							{#each pool.accounts as account (account.id)}
 								{@const state = accountState(account, now)}
+								{@const note = notes[account.id]}
+								{@const items = accountActions(account)}
+								{@const busy = note?.tone === 'pending'}
 								<tr class:is-out={!state.in_rotation}>
 									<td class="who">
 										<div class="label">{account.label}</div>
@@ -287,6 +396,20 @@
 											<i class="dot dot-{state.badge}" aria-hidden="true"></i>{state.word}
 										</span>
 										{#if state.detail}<div class="detail">{state.detail}</div>{/if}
+										<div class="act-note" role="status">
+											{#if note}
+												<span class="act-{note.tone}">{note.text}</span>
+												{#if note.can_force}
+													<button
+														class="btn btn-sm force"
+														type="button"
+														onclick={() => choose(account, 'reset', true)}
+													>
+														Use a reset anyway…
+													</button>
+												{/if}
+											{/if}
+										</div>
 									</td>
 									<td class="quota">
 										{#if account.windows.length === 0}
@@ -349,6 +472,39 @@
 											{account.banked_resets}
 										{/if}
 									</td>
+									<td class="acts-col">
+										<DropdownMenu.Root>
+											<DropdownMenu.Trigger disabled={items.length === 0}>
+												{#snippet child({ props })}
+													<button
+														{...props}
+														class="btn btn-sm"
+														type="button"
+														aria-label="Actions for {account.label}"
+														aria-busy={busy}
+													>
+														Actions<CaretDownIcon size={11} weight="bold" aria-hidden="true" />
+													</button>
+												{/snippet}
+											</DropdownMenu.Trigger>
+											<DropdownMenu.Content
+												class="ui-menu ui-menu-narrow"
+												align="end"
+												sideOffset={4}
+											>
+												{#each items as item (item.action)}
+													{#if item.destructive}<DropdownMenu.Separator class="ui-menu-sep" />{/if}
+													<DropdownMenu.Item
+														class="ui-menu-item{item.destructive ? ' menu-danger' : ''}"
+														disabled={busy}
+														onSelect={() => choose(account, item.action)}
+													>
+														{item.label}{item.confirm ? '…' : ''}
+													</DropdownMenu.Item>
+												{/each}
+											</DropdownMenu.Content>
+										</DropdownMenu.Root>
+									</td>
 								</tr>
 							{/each}
 						</tbody>
@@ -357,7 +513,7 @@
 				<p class="note">
 					Sessions are conversations pinned to an account so its prompt cache stays warm. Banked
 					resets are rate-limit resets the subscription can spend; a dash means the backend does not
-					report them.
+					report them. Adding an account or signing one in again happens in Underclass.
 				</p>
 			{/if}
 		</section>
@@ -552,6 +708,18 @@
 	{/if}
 </div>
 
+{#if asking && ask}
+	{@const pending = asking}
+	<ConfirmDialog
+		bind:open={confirm_open}
+		title={ask.title}
+		description={ask.description}
+		confirm_label={ask.confirm_label}
+		destructive={ask.destructive}
+		onconfirm={() => void act(pending.account, pending.action, pending.force)}
+	/>
+{/if}
+
 <style>
 	.crumbs {
 		margin-bottom: var(--s-2);
@@ -658,6 +826,49 @@
 	}
 	.state .badge {
 		gap: 6px;
+	}
+	/* The outcome of the row's last action, under its state. Empty, it takes
+	   no room; it stays in the DOM so screen readers hear each change. */
+	.act-note {
+		max-width: 24ch;
+		font-size: var(--t-xs);
+		line-height: 1.45;
+	}
+	.act-note:not(:empty) {
+		margin-top: 6px;
+	}
+	.act-pending {
+		color: var(--tx-dim);
+	}
+	.act-done {
+		color: var(--tx-mid);
+	}
+	.act-refused {
+		color: var(--amber-tx);
+	}
+	.act-failed {
+		color: var(--danger-tx);
+	}
+	.act-note .force {
+		margin-top: 6px;
+	}
+	/* The actions stay in view while the wide table scrolls sideways under
+	   them, so no row's controls sit off screen. The hairline marks the edge
+	   the other columns pass beneath. */
+	.acts-col {
+		position: sticky;
+		right: 0;
+		width: 1%;
+		text-align: right;
+		white-space: nowrap;
+		background: var(--s2);
+		box-shadow: inset 1px 0 0 var(--line);
+	}
+	.acts-col .btn {
+		gap: 6px;
+	}
+	:global(.ui-menu-item.menu-danger) {
+		color: var(--danger-tx);
 	}
 	/* Out of rotation reads quieter, but stays legible and keeps its state word. */
 	tr.is-out .who .label {
@@ -884,6 +1095,14 @@
 		}
 		.accounts tbody td.num {
 			text-align: left;
+		}
+		.accounts tbody td.acts-col {
+			position: static;
+			width: 100%;
+			text-align: left;
+			padding-top: var(--s-1);
+			background: none;
+			box-shadow: none;
 		}
 		.accounts tbody td.num::before {
 			content: attr(data-label);

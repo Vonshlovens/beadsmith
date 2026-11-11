@@ -8,6 +8,14 @@
 import { browser } from '$app/env';
 import { goto } from '$app/navigation';
 import type {
+	AutomationDetailResponse,
+	AutomationOverlap,
+	AutomationPreviewResponse,
+	AutomationRunView,
+	AutomationsResponse,
+	AutomationView
+} from '#lib/automations.js';
+import type {
 	DispatchProviderId,
 	AccountRole,
 	AccountView,
@@ -29,6 +37,8 @@ import type {
 	IssueDetailResponse,
 	IssueListResponse,
 	Mission,
+	ModelPoolAction,
+	ModelPoolActionResponse,
 	ModelPoolResponse,
 	Project,
 	ReadyListResponse,
@@ -38,7 +48,9 @@ import type {
 
 import type { Todo, TodoComment, TodoStatus } from '#lib/server/todos/store.js';
 import type { RouteIssue } from '#lib/todos/route-state.js';
+import type { AgentChoice } from '#lib/client/agent-choice.js';
 import type { LoopLaunch } from '#lib/client/loop.js';
+import type { AutomationEdit, AutomationLoopLaunch } from '#lib/client/automations.js';
 import type {
 	MateChat,
 	MateChatDetail,
@@ -249,6 +261,20 @@ export const api = {
 		return request<ModelPoolResponse>('GET', '/console/model-pool', init);
 	},
 
+	/** Refresh, enable, disable or reset one pooled account; a refusal resolves, not throws. */
+	modelPoolAction(
+		account_id: string,
+		action: ModelPoolAction,
+		force = false,
+		init?: RequestInitLike
+	) {
+		return request<ModelPoolActionResponse>(
+			'POST',
+			`/console/model-pool/accounts/${encodeURIComponent(account_id)}/${action}`,
+			{ ...init, body: force ? { force: true } : {} }
+		);
+	},
+
 	/** Backup settings (no secrets), recent runs, and run state. */
 	backups(init?: RequestInitLike) {
 		return request<BackupsResponse>('GET', '/console/backups', init);
@@ -409,7 +435,7 @@ export const api = {
 			priority?: number;
 			labels?: string[];
 			status?: string;
-		},
+		} & AgentChoice,
 		init?: RequestInitLike
 	) {
 		return request<{ request: DispatchRequest }>(
@@ -426,7 +452,7 @@ export const api = {
 			idempotency_key: string;
 			issue_id: string;
 			destination_status?: 'open' | 'in_progress' | 'blocked' | 'deferred' | 'closed';
-		},
+		} & AgentChoice,
 		init?: RequestInitLike
 	) {
 		return request<{ request: DispatchRequest }>(
@@ -452,7 +478,12 @@ export const api = {
 	/** Ask an agent to discuss, elaborate, or close an issue. */
 	discussIssue(
 		project_id: string,
-		body: { idempotency_key: string; issue_id: string; intent: DiscussIntent; message?: string },
+		body: {
+			idempotency_key: string;
+			issue_id: string;
+			intent: DiscussIntent;
+			message?: string;
+		} & AgentChoice,
 		init?: RequestInitLike
 	) {
 		return request<{ request: DispatchRequest }>(
@@ -465,7 +496,7 @@ export const api = {
 	/** Start a ralph loop (ADR-0019) on the project's plan or on one bead. */
 	launchLoop(
 		project_id: string,
-		body: { idempotency_key: string } & LoopLaunch,
+		body: { idempotency_key: string } & LoopLaunch & AgentChoice,
 		init?: RequestInitLike
 	) {
 		return request<{ request: DispatchRequest }>(
@@ -510,6 +541,43 @@ export const api = {
 		);
 	},
 
+	/** Queue a note for a working loop's next iteration (ADR-0019). */
+	steerDispatch(
+		project_id: string,
+		request_id: string,
+		body: { text: string },
+		init?: RequestInitLike
+	) {
+		return request<{ request: DispatchRequest }>(
+			'POST',
+			`/projects/${encodeURIComponent(project_id)}/dispatch/${encodeURIComponent(request_id)}/steer`,
+			{ ...init, body }
+		);
+	},
+
+	/** Let a working loop finish its current iteration, then stop it. */
+	stopDispatchAfterIteration(project_id: string, request_id: string, init?: RequestInitLike) {
+		return request<{ request: DispatchRequest }>(
+			'POST',
+			`/projects/${encodeURIComponent(project_id)}/dispatch/${encodeURIComponent(request_id)}/stop-after-iteration`,
+			init
+		);
+	},
+
+	/** Start a new run of an ended loop on the same mission, optionally with a new iteration limit. */
+	restartDispatch(
+		project_id: string,
+		request_id: string,
+		body: { max_iterations?: number },
+		init?: RequestInitLike
+	) {
+		return request<{ request: DispatchRequest }>(
+			'POST',
+			`/projects/${encodeURIComponent(project_id)}/dispatch/${encodeURIComponent(request_id)}/restart`,
+			{ ...init, body }
+		);
+	},
+
 	/** Send a size-capped follow-up on the same agent. */
 	followUpDispatch(
 		project_id: string,
@@ -525,6 +593,79 @@ export const api = {
 	},
 
 	/** Cross-project File/Tackle fleet, optionally scoped to one issue. */
+	/** Automations (ADR-0019 rule 7), all or one project's. */
+	automations(filters: { project?: string } = {}, init?: RequestInitLike) {
+		return request<AutomationsResponse>('GET', '/automations', {
+			...init,
+			query: { project: filters.project }
+		});
+	},
+
+	automation(id: string, init?: RequestInitLike) {
+		return request<AutomationDetailResponse>('GET', `/automations/${encodeURIComponent(id)}`, init);
+	},
+
+	/** The next fire times of a schedule, or a `bad_request` saying why it would be refused. */
+	previewAutomation(cron: string, time_zone: string, init?: RequestInitLike) {
+		return request<AutomationPreviewResponse>('GET', '/automations/preview', {
+			...init,
+			query: { cron, time_zone }
+		});
+	},
+
+	/** Schedule a loop on the viewer's behalf; it launches on the picked runner. */
+	createAutomation(
+		body: {
+			project_id: string;
+			name: string;
+			cron: string;
+			time_zone: string;
+			overlap: AutomationOverlap;
+			launch: AutomationLoopLaunch;
+		},
+		init?: RequestInitLike
+	) {
+		return request<{ automation: AutomationView }>('POST', '/automations', {
+			...init,
+			body: { ...launch_field(), ...body }
+		});
+	},
+
+	/**
+	 * Edit its name, schedule and overlap, and a loop's agent CLI and
+	 * iteration limit (absent `harness` means ralph's default). The project,
+	 * what it runs, the runner and the model and effort stay as saved.
+	 */
+	updateAutomation(id: string, body: AutomationEdit, init?: RequestInitLike) {
+		return request<{ automation: AutomationView }>(
+			'PATCH',
+			`/automations/${encodeURIComponent(id)}`,
+			{ ...init, body }
+		);
+	},
+
+	/** Pause (`false`) or resume (`true`) the schedule. */
+	setAutomationEnabled(id: string, enabled: boolean, init?: RequestInitLike) {
+		return request<{ automation: AutomationView }>(
+			'PATCH',
+			`/automations/${encodeURIComponent(id)}`,
+			{ ...init, body: { enabled } }
+		);
+	},
+
+	/** Fire it once now; the run says whether it launched a mission. */
+	runAutomation(id: string, init?: RequestInitLike) {
+		return request<{ run: AutomationRunView }>(
+			'POST',
+			`/automations/${encodeURIComponent(id)}/run`,
+			init
+		);
+	},
+
+	deleteAutomation(id: string, init?: RequestInitLike) {
+		return request<void>('DELETE', `/automations/${encodeURIComponent(id)}`, init);
+	},
+
 	missions(
 		filters: { project_id?: string; issue_id?: string; limit?: number } = {},
 		init?: RequestInitLike
@@ -638,7 +779,7 @@ export const api = {
 	},
 
 	createMateChat(
-		body: { title?: string; scope: string | null; runner?: MateRunnerId },
+		body: { title?: string; scope: string | null; runner?: MateRunnerId } & AgentChoice,
 		init?: RequestInitLike
 	) {
 		return request<{ chat: MateChat }>('POST', '/mate/chats', { ...init, body });

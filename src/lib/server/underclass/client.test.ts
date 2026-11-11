@@ -3,6 +3,7 @@ import {
 	createUnderclassClient,
 	toPoolSnapshot,
 	UNDERCLASS_READ_ROUTES,
+	UnderclassAccountNotFound,
 	UnderclassError,
 	type UnderclassClientDeps
 } from './client.js';
@@ -277,5 +278,165 @@ describe('Underclass client', () => {
 			stats: statsFixture()
 		});
 		expect(pool.accounts[0].cooling_until).toBeNull();
+	});
+});
+
+describe('Underclass account actions', () => {
+	function json(status: number, body: unknown): Response {
+		return new Response(JSON.stringify(body), {
+			status,
+			headers: { 'content-type': 'application/json' }
+		});
+	}
+
+	/** A fake that answers every action POST with `answer`, recording the calls. */
+	function actionServer(answer: (path: string) => Response) {
+		return fakeServer((path) => answer(path));
+	}
+
+	it('posts to the one account route, with the bearer and no body or redirect', async () => {
+		const server = actionServer(() => new Response(null, { status: 204 }));
+		const c = client({ fetch: server.fetch });
+		for (const action of ['refresh', 'enable', 'disable', 'reset'] as const) {
+			await c.act('acct-codex', action).catch(() => undefined);
+		}
+		expect(server.calls.map((call) => call.url)).toEqual([
+			'https://underclass.example:8443/admin/api/accounts/acct-codex/refresh',
+			'https://underclass.example:8443/admin/api/accounts/acct-codex/enable',
+			'https://underclass.example:8443/admin/api/accounts/acct-codex/disable',
+			'https://underclass.example:8443/admin/api/accounts/acct-codex/reset'
+		]);
+		for (const call of server.calls) {
+			expect(call.init.method).toBe('POST');
+			expect(call.init.body).toBeUndefined();
+			expect(call.init.redirect).toBe('manual');
+			expect((call.init.headers as Record<string, string>).authorization).toBe(`Bearer ${TOKEN}`);
+		}
+	});
+
+	it('adds force only to a reset', async () => {
+		const server = actionServer(() => new Response(null, { status: 204 }));
+		const c = client({ fetch: server.fetch });
+		await c.act('acct-codex', 'reset', { force: true });
+		await c.act('acct-codex', 'disable', { force: true });
+		expect(server.calls.map((call) => new URL(call.url).search)).toEqual(['?force=true', '']);
+	});
+
+	it('refuses an id that could change the path without calling Underclass', async () => {
+		const server = actionServer(() => new Response(null, { status: 204 }));
+		const c = client({ fetch: server.fetch });
+		for (const id of ['../state', 'a/b', 'a?x=1', '%2e%2e', '', 'x'.repeat(129)]) {
+			await expect(c.act(id, 'disable')).rejects.toBeInstanceOf(UnderclassAccountNotFound);
+		}
+		await expect(c.act('acct-codex', 'relogin' as unknown as 'disable')).rejects.toBeInstanceOf(
+			UnderclassAccountNotFound
+		);
+		expect(server.calls).toEqual([]);
+	});
+
+	it('reads the resulting status and banked resets, and drops the label and credit id', async () => {
+		const c = client({
+			fetch: actionServer(() =>
+				json(200, {
+					account_id: 'acct-codex',
+					label: CLAUDE_EMAIL,
+					outcome: 'redeemed',
+					credit_id: 'credit-should-not-appear',
+					status: 'healthy',
+					available_resets: 1
+				})
+			).fetch
+		});
+		const result = await c.act('acct-codex', 'reset');
+		expect(result).toEqual({
+			outcome: 'done',
+			action: 'reset',
+			account_id: 'acct-codex',
+			status: 'healthy',
+			banked_resets: 1
+		});
+		expect(JSON.stringify(result)).not.toContain(CLAUDE_EMAIL);
+		expect(JSON.stringify(result)).not.toContain('credit-should-not-appear');
+	});
+
+	it('reports enable and disable (204) as done with no status', async () => {
+		const c = client({ fetch: actionServer(() => new Response(null, { status: 204 })).fetch });
+		expect(await c.act('acct-codex', 'enable')).toEqual({
+			outcome: 'done',
+			action: 'enable',
+			account_id: 'acct-codex',
+			status: null,
+			banked_resets: null
+		});
+	});
+
+	it('turns Underclass refusals into fixed codes, never its message', async () => {
+		const cases: [number, string, string, boolean][] = [
+			[409, 'not_refreshable', 'not_refreshable', false],
+			[502, 'refresh_failed', 'refresh_failed', false],
+			[409, 'not_rate_limited', 'not_rate_limited', true],
+			[409, 'already_redeemed', 'already_redeemed', true],
+			[409, 'no_credit', 'no_credit', false],
+			[400, 'not_codex', 'not_resettable', false],
+			[502, 'upstream_error', 'upstream_failed', false],
+			[409, 'upstream_error', 'upstream_failed', false]
+		];
+		for (const [status, upstream, refusal, can_force] of cases) {
+			const c = client({
+				fetch: actionServer(() =>
+					json(status, { error: upstream, message: `secret detail for ${CLAUDE_EMAIL}` })
+				).fetch
+			});
+			const result = await c.act('acct-codex', 'reset');
+			expect(result).toEqual({
+				outcome: 'refused',
+				action: 'reset',
+				account_id: 'acct-codex',
+				refusal,
+				can_force
+			});
+			expect(JSON.stringify(result)).not.toContain(CLAUDE_EMAIL);
+		}
+	});
+
+	it('only offers force on a reset', async () => {
+		const c = client({
+			fetch: actionServer(() => json(409, { error: 'not_rate_limited' })).fetch
+		});
+		const result = await c.act('acct-codex', 'refresh');
+		expect(result.outcome === 'refused' && result.can_force).toBe(false);
+	});
+
+	it('classes 404, credential, transport and unreadable answers', async () => {
+		const answer = (response: () => Response) =>
+			client({ fetch: actionServer(response).fetch }).act('acct-codex', 'disable');
+		await expect(
+			answer(() => new Response('unknown account', { status: 404 }))
+		).rejects.toBeInstanceOf(UnderclassAccountNotFound);
+		expect((await failure(answer(() => new Response('', { status: 401 })))).kind).toBe(
+			'authentication_rejected'
+		);
+		expect((await failure(answer(() => new Response('bad gateway', { status: 502 })))).kind).toBe(
+			'unreachable'
+		);
+		expect((await failure(answer(() => json(409, { error: 'something_new' })))).kind).toBe(
+			'unknown'
+		);
+		expect((await failure(answer(() => new Response('', { status: 302 })))).kind).toBe('unknown');
+		expect((await failure(answer(() => json(200, 'not an object')))).kind).toBe('unknown');
+		const offline = client({
+			fetch: (async () => {
+				throw new TypeError('fetch failed');
+			}) as typeof fetch
+		});
+		expect((await failure(offline.act('acct-codex', 'disable'))).kind).toBe('unreachable');
+		const no_token = client({
+			readToken: async () => {
+				throw new Error('ENOENT');
+			}
+		});
+		expect((await failure(no_token.act('acct-codex', 'disable'))).kind).toBe(
+			'credential_unavailable'
+		);
 	});
 });

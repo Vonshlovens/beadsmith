@@ -13,6 +13,10 @@ import { toPoolSnapshot } from '#lib/server/underclass/client.js';
 import type { DoltFailureKind } from '#lib/types.js';
 import { GET } from './+server.js';
 
+const unused = async (): Promise<never> => {
+	throw new Error('not called');
+};
+
 const KEYS = ['BDX_UNDERCLASS_URL', 'BDX_UNDERCLASS_UI_TOKEN_FILE'] as const;
 const saved: Partial<Record<(typeof KEYS)[number], string>> = {};
 
@@ -70,6 +74,7 @@ describe('/api/console/model-pool', () => {
 	it('returns the pool for an admin', async () => {
 		configure('https://underclass.example', '/run/secrets/token');
 		setUnderclassClient({
+			act: unused,
 			snapshot: async () =>
 				toPoolSnapshot({
 					monitor: monitorFixture(),
@@ -96,6 +101,7 @@ describe('/api/console/model-pool', () => {
 		];
 		for (const kind of kinds) {
 			setUnderclassClient({
+				act: unused,
 				snapshot: async () => {
 					throw new UnderclassError(kind);
 				}
@@ -114,6 +120,7 @@ describe('/api/console/model-pool', () => {
 	it('collapses an unexpected error without leaking its text', async () => {
 		configure('https://underclass.example', '/run/secrets/token');
 		setUnderclassClient({
+			act: unused,
 			snapshot: async () => {
 				throw new Error(`token file /run/secrets/token for ${CLAUDE_EMAIL}`);
 			}

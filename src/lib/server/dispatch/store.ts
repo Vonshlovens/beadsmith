@@ -88,11 +88,33 @@ export const DISPATCH_ITERATIONS_SCHEMA_SQL: string[] = [
 /** Turn text is display copy, so it is capped like a follow-up. */
 export const TURN_TEXT_MAX = 8000;
 
+/** The run a status write is for: see `DispatchStore.updateStatus`. */
+export interface RunClaim {
+	generation: number;
+	agent_id: string | undefined;
+	run_id: string | undefined;
+}
+
+/** The claim a record is on, for a write that must not outlive it. */
+export function runClaimOf(record: DispatchRecord): RunClaim {
+	return { generation: record.generation, agent_id: record.agent_id, run_id: record.run_id };
+}
+
+function onClaim(record: DispatchRecord, claim: RunClaim): boolean {
+	return (
+		record.generation === claim.generation &&
+		record.agent_id === claim.agent_id &&
+		record.run_id === claim.run_id
+	);
+}
+
 export interface ListDispatchFilter {
 	project_id?: string;
 	issue_id?: string;
 	/** Missions a First Mate chat's crew tools launched (ADR-0020 rule 5). */
 	chat_id?: string;
+	/** Only rows in one of these states (the missions still worth following). */
+	statuses?: DispatchStatus[];
 	limit: number;
 }
 
@@ -114,19 +136,37 @@ export interface DispatchStore {
 			duration_ms?: number;
 			git_pr_url?: string;
 			loop_end?: LoopEnd;
+			/**
+			 * Write only if the row is still on this run claim. A follower
+			 * passes the generation, agent and run it was started for; when the
+			 * row has moved on (a follow-up or restart claimed it), nothing is
+			 * written and the result is undefined, so the stale reader stops.
+			 */
+			expect?: RunClaim;
 		},
 		now?: () => Date
 	): Promise<DispatchRecord | undefined>;
-	/** Move a terminal mission onto a new run of the same agent (follow-up). */
+	/**
+	 * Move a terminal mission onto a new run of the same agent (follow-up),
+	 * or claim it for a loop restart (`launching`, keeping the ended run's id
+	 * until the runner names the new one). Only one caller wins: undefined
+	 * when the mission was not terminal. The claim bumps `generation`, which
+	 * retires every follower of the earlier run.
+	 */
 	startFollowUp(
 		id: string,
-		patch: { run_id: string; status: 'launched' | 'running' },
+		patch: { run_id: string; status: 'launching' | 'launched' | 'running' },
 		now?: () => Date
 	): Promise<DispatchRecord | undefined>;
 	/** Append a conversation turn. A second agent turn for the same run is ignored. */
 	appendTurn(request_id: string, turn: AppendTurnInput, now?: () => Date): Promise<void>;
 	/** Turns for one mission, oldest first. */
 	listTurns(request_id: string): Promise<DispatchTurn[]>;
+	/**
+	 * Note that an operator asked a working loop to stop after its current
+	 * iteration. A new run (restart) clears it. No-op once the mission ended.
+	 */
+	markLoopStopRequested(id: string, now?: () => Date): Promise<DispatchRecord | undefined>;
 	/** Record that the launching chat has been told the outcome `key`. */
 	markChatNotice(id: string, key: string): Promise<void>;
 	/**
@@ -167,7 +207,8 @@ const DISPATCH_SELECT = `SELECT
 	id, idempotency_key, project_id, dolt_database, operation, actor, payload_json,
 	status, provider, agent_id, agent_url, run_id, error_message,
 	result_summary, duration_ms, git_pr_url, chat_id, chat_notice,
-	loop_stop_reason, loop_needs_person, created_at, updated_at
+	loop_stop_reason, loop_needs_person, loop_stop_requested_at, generation,
+	created_at, updated_at
 FROM dispatch_requests`;
 
 function newId(): string {
@@ -245,6 +286,8 @@ function rowToRecord(row: Record<string, unknown>): DispatchRecord {
 		chat_id: asText(row.chat_id),
 		chat_notice: asText(row.chat_notice),
 		...rowToLoopEnd(row),
+		...(asText(row.loop_stop_requested_at) === undefined ? {} : { loop_stop_requested: true }),
+		generation: asNonNegativeInteger(row.generation) ?? 0,
 		created_at: String(row.created_at),
 		updated_at: String(row.updated_at)
 	};
@@ -369,6 +412,11 @@ export function createDispatchStore(client: Client): DispatchStore {
 				clauses.push('chat_id = ?');
 				args.push(filter.chat_id);
 			}
+			if (filter.statuses !== undefined) {
+				if (filter.statuses.length === 0) return [];
+				clauses.push(`status IN (${filter.statuses.map(() => '?').join(', ')})`);
+				args.push(...filter.statuses);
+			}
 			args.push(filter.limit);
 			const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
 			const result = await client.execute({
@@ -391,10 +439,12 @@ export function createDispatchStore(client: Client): DispatchStore {
 				duration_ms?: number;
 				git_pr_url?: string;
 				loop_end?: LoopEnd;
+				expect?: RunClaim;
 			},
 			now: () => Date = () => new Date()
 		): Promise<DispatchRecord | undefined> {
-			await client.execute({
+			const expect = patch.expect;
+			const written = await client.execute({
 				sql: `UPDATE dispatch_requests SET
 					status = ?,
 					provider = COALESCE(?, provider),
@@ -412,7 +462,7 @@ export function createDispatchStore(client: Client): DispatchStore {
 					AND (
 						status NOT IN ('succeeded', 'cancelled', 'failed')
 						OR status = ?
-					)`,
+					)${expect === undefined ? '' : ' AND generation = ? AND agent_id IS ? AND run_id IS ?'}`,
 				args: [
 					patch.status,
 					patch.provider ?? null,
@@ -428,39 +478,52 @@ export function createDispatchStore(client: Client): DispatchStore {
 					patch.loop_end === undefined ? null : patch.loop_end.needs_person ? 1 : 0,
 					now().toISOString(),
 					id,
-					patch.status
+					patch.status,
+					...(expect === undefined
+						? []
+						: [expect.generation, expect.agent_id ?? null, expect.run_id ?? null])
 				]
 			});
-			return this.get(id);
+			const record = await this.get(id);
+			// A write the terminal guard refused still reads back the row, as it
+			// always has; only a row that left the expected claim reads as stale.
+			if (
+				expect !== undefined &&
+				written.rowsAffected === 0 &&
+				record !== undefined &&
+				!onClaim(record, expect)
+			) {
+				return undefined;
+			}
+			return record;
 		},
 
 		async startFollowUp(
 			id: string,
-			patch: { run_id: string; status: 'launched' | 'running' },
+			patch: { run_id: string; status: 'launching' | 'launched' | 'running' },
 			now: () => Date = () => new Date()
 		): Promise<DispatchRecord | undefined> {
-			await client.execute({
+			const claimed = await client.execute({
 				sql: `UPDATE dispatch_requests SET
 					status = ?,
 					run_id = ?,
 					error_message = NULL,
 					loop_stop_reason = NULL,
 					loop_needs_person = NULL,
+					loop_stop_requested_at = NULL,
+					generation = generation + 1,
 					updated_at = ?
 				WHERE id = ?
 					AND agent_id IS NOT NULL
 					AND status IN ('succeeded', 'cancelled', 'failed')`,
 				args: [patch.status, patch.run_id, now().toISOString(), id]
 			});
-			const updated = await this.get(id);
-			if (
-				updated === undefined ||
-				updated.status !== patch.status ||
-				updated.run_id !== patch.run_id
-			) {
+			// The row count, not a read-back, says who won: a restart claim keeps
+			// the run id, so a loser would read the winner's row as its own.
+			if (claimed.rowsAffected === 0) {
 				return undefined;
 			}
-			return updated;
+			return this.get(id);
 		},
 
 		async appendTurn(
@@ -493,6 +556,21 @@ export function createDispatchStore(client: Client): DispatchStore {
 				args: [request_id]
 			});
 			return result.rows.map((row) => rowToTurn(row as Record<string, unknown>));
+		},
+
+		async markLoopStopRequested(
+			id: string,
+			now: () => Date = () => new Date()
+		): Promise<DispatchRecord | undefined> {
+			const at = now().toISOString();
+			await client.execute({
+				sql: `UPDATE dispatch_requests SET
+					loop_stop_requested_at = COALESCE(loop_stop_requested_at, ?),
+					updated_at = ?
+				WHERE id = ? AND status NOT IN ('succeeded', 'cancelled', 'failed')`,
+				args: [at, at, id]
+			});
+			return this.get(id);
 		},
 
 		async markChatNotice(id: string, key: string): Promise<void> {

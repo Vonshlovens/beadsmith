@@ -406,6 +406,12 @@ rows: 40 }) })` and read the body: an `open` frame, then `output` frames
    the next message to the same CLI. If the terminal is gone, it starts
    `claude --resume <id>` first. Cancel marks the run cancelled and ends the
    CLI (`terminal.kill`); during setup it stops the setup script instead.
+   With the CLI gone, it records the transcript's length as the run's `end`,
+   so replaying the cancelled run's thread stops there even after a
+   follow-up writes to the same transcript. Each start also records the
+   transcript's length as `start-line` when it claims the start, before it
+   touches the CLI; a run with no `end` (stopped before this existed, or
+   with hc unreachable) is cut at the first later `start-line`.
 6. A run still working at the time limit pauses with the sandbox and is
    reported failed. A follow-up resumes the sandbox, ends that turn's CLI
    and continues in a resumed one.
@@ -439,7 +445,17 @@ pinned version. The checkout must already be a ralph project
    ([`ralph-transport.ts`](../src/lib/server/e2b/ralph-transport.ts));
    finished iterations are copied into `state.db`. The live view follows
    ralph's event stream the same way and maps it onto the thread. If
-   `ralph serve` stops answering, the next read starts it again.
+   `ralph serve` stops answering, the next read starts it again. Each read
+   that finds ralph alive with more iterations finished than at the last
+   extension gives the sandbox `BDX_E2B_MAX_RUN_MINUTES` again from now
+   (the first read after Beadsmith starts counts too). GitHub installation
+   tokens last an hour, so a read of a running loop whose token is 45
+   minutes old mints a new one (same repository, same write scope) and
+   replaces the egress rules with it; the sandbox still sees only the
+   placeholder. Beadsmith keeps the mint time in memory, so the first read
+   after it restarts mints one too, and a refresh that fails is logged and
+   tried on the next read. Beadsmith's background follower keeps reading a
+   loop until it ends, so both happen with no browser open.
 4. When ralph's run ends, its stop reason (or, without one, the loop
    terminal's exit code) decides the mission's status, and the report's
    iteration count, duration and notes for a person become the summary. The
@@ -447,10 +463,38 @@ pinned version. The checkout must already be a ralph project
    time, after which E2B destroys it.
 5. Cancel marks the run cancelled, asks ralph to stop now, and ends the loop
    terminal. A loop takes no follow-up.
+6. A steer note from the thread goes to ralph's `POST /v1/runs/<name>/steer`
+   and Stop after iteration to its `/stop` with `graceful: true`, both over
+   the same channel; ralph reads them between iterations. Neither reaches a
+   loop still in setup or already ended (`409`).
+7. Restart on an ended loop starts the next run (`r2`, `r3`, …). While E2B
+   still has the sandbox (the idle time after the loop ended), it runs
+   there: the checkout and anything not pushed are kept, the sandbox gets a
+   fresh GitHub token and the full run limit again, `beadsmith-run r2`
+   rejoins the tailnet, and the first reader starts a terminal named
+   `ralph-loop-r2` running ralph under the name `<metadata name>-r2`, so
+   ralph's record of the earlier run and hc's finished `ralph-loop` stay
+   apart. A run the sandbox still counts as working is stopped first. Once
+   E2B has destroyed the sandbox, the run starts in a fresh one from the
+   project's current Tackle checkout, numbered on from the last run; the
+   mission follows the new sandbox id. Either way the iterations of each run
+   are stored under its own run id.
 
-A loop still running at `BDX_E2B_MAX_RUN_MINUTES` is destroyed with its
-sandbox and reported failed; anything it had not pushed is lost. Keep the
-iteration limit within the run limit until long loops can pause and resume.
+So a loop can run for longer than `BDX_E2B_MAX_RUN_MINUTES` in total, but
+each iteration has to fit in it: an iteration still going a full run limit
+after the last one finished (or after the loop started) is destroyed with
+its sandbox and reported failed, and anything it had not pushed is lost.
+Keep ralph's iteration timeout below the run limit. E2B's own cap on
+continuous running (an hour on the free plan) still ends the sandbox,
+whatever Beadsmith asks for. The reads come from a follower Beadsmith keeps
+in memory; when Beadsmith starts it follows every mission still launched or
+running again, so a restart mid-loop costs at most the reads it missed while
+it was down.
+
+Loop sandboxes are destroyed, not paused, on timeout. Pausing would keep a
+stuck loop's disk, but a resumed sandbox has lost its tailnet node and the
+agent's open model connection mid-iteration, and nothing would resume it
+unasked; extending while the loop makes progress keeps the iteration whole.
 
 Live check after a rebuild (not yet run; the steps above are unit-tested
 against a fake sandbox, hc core and ralph in
@@ -471,8 +515,28 @@ and [`ralph-transport.test.ts`](../src/lib/server/e2b/ralph-transport.test.ts)):
 5. Start another and cancel it mid-iteration: the thread says cancelled,
    `ralph show <name>` in the sandbox (before it goes) shows an operator
    stop, and `hc ls --all` shows `ralph-loop` finished.
-6. In the sandbox, `tr '\0' '\n' < /proc/<ralph's pid>/environ` lists the
+6. Start a `build` loop with `max_iterations` 3 and send a steer note from
+   the thread during iteration 1: the thread shows it as a steer turn, and
+   when iteration 2 starts the live stream shows the note and
+   `ralph show <name>` lists it consumed. Then press Stop after iteration:
+   the button reads "Stopping after this iteration" (also after a reload),
+   iteration 2 finishes, iteration 3 never starts, and the mission ends
+   cancelled with an operator stop.
+7. In the sandbox, `tr '\0' '\n' < /proc/<ralph's pid>/environ` lists the
    placeholders and `BEADS_DOLT_*`, and no real model key or GitHub token.
+8. When a `build` loop with `max_iterations` 1 ends, set Iterations to 2 and
+   press Restart within the idle time: the thread adds "Restart the loop
+   for up to 2 iterations.", the mission's sandbox id is unchanged, `hc ls
+--all` lists `ralph-loop` finished and `ralph-loop-r2` live, and the
+   iteration table shows a second run group. After that run ends, wait past
+   the idle time (the sandbox is gone from E2B) and restart again: the
+   mission moves to a new sandbox whose `~/.beadsmith/runs` holds only
+   `r3`, and the table shows a third group.
+9. With `BDX_E2B_MAX_RUN_MINUTES=10`, start a `run` loop with
+   `max_iterations` 4 whose iterations take about four minutes each, and
+   close the browser. The loop runs all four iterations (about 16 minutes)
+   and ends with `max_iterations`; E2B's sandbox info shows its end time
+   moving forward as each iteration finishes.
 
 ## How a chat runs
 

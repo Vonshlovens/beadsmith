@@ -144,7 +144,8 @@ hc (herdr-core) terminal inside its sandbox or guest
 ([ADR-0021](../specs/decisions/0021-hc-terminal-runtime.md)). Sand missions
 and First Mate chats do so today; Beadsmith and the forge runner reach each
 hc core only over the sandbox's process channel or SSH. Admins can watch or
-take over a Sand mission's or chat's terminal; the forge relay follows.
+take over a Sand mission's or chat's terminal, and a forge chat's through
+the forge runner, which attaches over its own SSH and keeps nothing.
 
 A machine that runs agents is classified by what it holds, not by where it
 runs:
@@ -207,7 +208,8 @@ service-token principal for GET/HEAD `/api` as specified in
 required). That principal is a read-only member.
 
 Roles: `admin` may use `/console`, every `/api/console/*` route (backups and
-accounts included), and File/Tackle/comment launch, cancel, and follow-up.
+accounts included), File/Tackle/comment launch, cancel, and follow-up, and
+automation changes.
 `member` may read, manage its own session and password, set the theme, and
 refresh projects. Any other API write requires admin. The last admin cannot
 be removed or demoted. The first account needs the one-time setup token from
@@ -274,6 +276,21 @@ emails, shown to admins and never logged. An upstream failure is a 503
 `unavailable` with one of the Dolt reader's four `failure_kind` classes and a
 fixed message.
 
+`POST /api/console/model-pool/accounts/:id/:action`, with `action` one of
+`refresh`, `enable`, `disable` or `reset`, runs that Underclass account
+action. The id must match `UNDERCLASS_ACCOUNT_ID` in
+`src/lib/server/underclass/client.ts` (no `/`, `.`, `?` or `%`) and is the
+only browser input that reaches Underclass. The body is empty or
+`{force: true}`, and `force` is accepted only on a reset; any other key, an
+unknown action or an unsafe id is a 400 before Underclass is called. The
+answer is the typed `ModelPoolActionResponse`: `outcome: 'done'` with the
+account's resulting state when Underclass reports it, or `outcome: 'refused'`
+(still 200) with a fixed `refusal` code and `can_force`. Underclass's own
+refusal messages are dropped, since they can carry upstream error text. An
+unknown account is 404, an unconnected pool 409 and an upstream failure a
+503 as above. Every call writes one server log line with the acting user's
+id, the action, the account id and the result, never the account's label.
+
 `/api/mate/chats/*` (admin-only, reads included, each chat visible only to
 its owner) lists, creates, reads, renames or re-scopes, and deletes First
 Mate chats; `POST .../:id/messages` `{text, message_id?}` (text capped at
@@ -282,6 +299,30 @@ Mate chats; `POST .../:id/messages` `{text, message_id?}` (text capped at
 ones as the same sanitized MissionEvent union; `POST .../:id/interrupt`
 stops the agent's current turn. `GET /api/mate/status` tells any signed-in
 viewer whether First Mate answers them.
+
+`GET /api/automations` (optionally `?project=`) lists automations to any
+signed-in viewer: name, project, schedule, time zone, overlap policy,
+runner, enabled, the next fire time and the last run. It shows what each
+launches (operation, bead, loop flags) but never the launch's text (File
+notes, a comment, a `run` prompt) or the creator's account. `GET
+/api/automations/:id` adds the next five fire times and the newest 50 runs
+(slot, trigger, outcome, mission id, message). `GET
+/api/automations/preview?cron=&time_zone=` returns the next five fire times
+of a schedule being typed, or why it would be refused. The writes need
+`dispatch:launch` and a signed-in account, since the automation acts on its
+creator's behalf: `POST /api/automations` `{project_id, name, cron,
+time_zone, overlap?, provider?, launch}` validates `launch` with the same
+schema as a dispatch body (without its idempotency key and runner) and
+refuses an unknown project or bead and a schedule with no fire time in five
+years; `PATCH /api/automations/:id` `{enabled}` pauses or resumes (resuming
+never fires the slots missed while paused), and `{name, cron, time_zone,
+overlap, loop?: {max_iterations, harness?}}` edits it in place, keeping its
+history: the schedule is checked as at creation, `loop` is refused for an
+automation that is not a loop, the project, launch text, runner and model
+and effort stay as saved, and the edit never fires a slot from before it;
+`DELETE` removes the automation
+and its history but not its missions; `POST /api/automations/:id/run`
+fires it once now through the scheduler's path.
 
 `GET /api/ready` is the cross-project Ready deck: open issues with no open
 `blocks` dependencies, merged across catalog projects the session can see,
@@ -312,7 +353,11 @@ runner fields, drops tool args/results and ANSI/PTY, and never includes
 provider credentials, the launch prompt, or raw worker logs.
 
 `POST /api/projects/:id/dispatch/:requestId/cancel` cancels the active agent
-run. `POST /api/projects/:id/dispatch/:requestId/follow-up` `{text}` starts a
+run. On a working loop, `POST .../steer` `{text}` queues a size-capped note for
+its next iteration and `POST .../stop-after-iteration` ends it once the
+current iteration finishes; on an ended loop, `POST .../restart`
+`{max_iterations?}` starts a new run of it on the same mission, armed and
+allowed like a launch ([details](./file-tackle-dispatch.md)). `POST /api/projects/:id/dispatch/:requestId/follow-up` `{text}` starts a
 new run on the same agent id. Follow-up text is the only free-form field and
 is size-capped; extra keys, repository, model, and shell are rejected. A `409`
 `conflict` means the agent is still busy. The composer is disabled while the

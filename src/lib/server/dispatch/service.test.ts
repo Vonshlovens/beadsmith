@@ -11,6 +11,11 @@ import {
 	LOOP_NOT_ALLOWED_MESSAGE,
 	TACKLE_NOT_ALLOWED_MESSAGE
 } from './policy.js';
+import {
+	EFFORT_NOT_OFFERED_MESSAGE,
+	MODEL_NOT_OFFERED_MESSAGE,
+	MODELS_NOT_SUPPORTED_MESSAGE
+} from './agent-choice.js';
 import { INVALID_FILE_CHECKOUT_MESSAGE } from './file-maps.js';
 import type { AgentLaunchInput, AgentLoopLaunchInput, AgentProvider } from './provider.js';
 import type { RalphIteration } from './ralph.js';
@@ -23,15 +28,24 @@ import {
 	listDispatchTurns,
 	listLoopIterations,
 	listMissions,
+	restartDispatch,
+	resumeDispatchFollowers,
+	steerDispatch,
+	stopDispatchAfterIteration,
 	streamDispatchMissionEvents,
 	toPublicDispatch,
 	toPublicMission,
 	AGENT_BUSY_MESSAGE,
 	LOOP_FOLLOW_UP_MESSAGE,
+	LOOP_NOT_RUNNING_MESSAGE,
 	LOOP_NOT_SUPPORTED_MESSAGE,
-	MISSION_NOT_LAUNCHED_MESSAGE
+	LOOP_STILL_RUNNING_MESSAGE,
+	RESTART_SUPERSEDED_MESSAGE,
+	MISSION_NOT_LAUNCHED_MESSAGE,
+	NOT_A_LOOP_MESSAGE,
+	RESTART_NOT_A_LOOP_MESSAGE
 } from './service.js';
-import { createDispatchStore } from './store.js';
+import { createDispatchStore, runClaimOf } from './store.js';
 import { DispatchError } from './types.js';
 import { createWebhookProvider } from './webhook-provider.js';
 
@@ -1018,6 +1032,7 @@ describe('toPublicDispatch', () => {
 			actor: 'owner@example.com',
 			payload: { operation: 'file', notes: 'private notes' },
 			status: 'queued',
+			generation: 0,
 			created_at: '2026-08-16T00:00:00.000Z',
 			updated_at: '2026-08-16T00:00:00.000Z'
 		});
@@ -1043,6 +1058,7 @@ describe('toPublicDispatch', () => {
 				title: 'Let humans add comments'
 			},
 			status: 'queued',
+			generation: 0,
 			created_at: '2026-08-16T00:00:00.000Z',
 			updated_at: '2026-08-16T00:00:00.000Z'
 		});
@@ -1066,6 +1082,7 @@ describe('toPublicMission', () => {
 				actor: 'owner@example.com',
 				payload: { operation: 'file', notes: 'private notes', title: 'Login bug' },
 				status: 'queued',
+				generation: 0,
 				created_at: '2026-08-16T00:00:00.000Z',
 				updated_at: '2026-08-16T00:00:00.000Z'
 			},
@@ -1708,6 +1725,8 @@ describe('chat notices (ADR-0020 rule 5)', () => {
 });
 
 describe('loop missions (ADR-0019 rule 5)', () => {
+	/** The operator offers the model and effort BUILD_LOOP asks for. */
+	const LOOP_CHOICES = { models: ['opus'], efforts: ['high'] };
 	const BUILD_LOOP = {
 		operation: 'loop' as const,
 		mode: 'build' as const,
@@ -1754,6 +1773,7 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 				provider,
 				configured: true,
 				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES,
 				repositories: BEADS_WEB_MAP,
 				schedule_background: NO_BACKGROUND
 			}
@@ -1789,6 +1809,38 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 		expect(missions[0]).toMatchObject({ operation: 'loop', id: result.request.id });
 	});
 
+	it('follows a loop past the one-hour poll budget until it ends', async () => {
+		// The follower's reads are what give a long loop's sandbox more time.
+		let reads = 0;
+		const provider: AgentProvider = {
+			...loopProvider(async () => ({ agent_id: 'sbx-long', run_id: 'r1' })),
+			getRun: vi.fn(async () =>
+				++reads < 200 ? { status: 'running' as const } : { status: 'succeeded' as const }
+			)
+		};
+		let background: Promise<void> | undefined;
+
+		const result = await enqueueDispatch(
+			{ idempotency_key: 'idem-loop-long', project: PROJECT, actor: 'web', payload: BUILD_LOOP },
+			{
+				store,
+				provider,
+				configured: true,
+				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES,
+				repositories: BEADS_WEB_MAP,
+				sleep: async () => {},
+				schedule_background: (task) => {
+					background = task();
+				}
+			}
+		);
+		await background;
+
+		expect(provider.getRun).toHaveBeenCalledTimes(200);
+		expect(await store.get(result.request.id)).toMatchObject({ status: 'succeeded' });
+	});
+
 	it('scopes a loop to one bead and records its title', async () => {
 		const provider = loopProvider(async () => ({ agent_id: 'sbx-2' }));
 
@@ -1805,6 +1857,7 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 				provider,
 				configured: true,
 				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES,
 				repositories: BEADS_WEB_MAP,
 				schedule_background: NO_BACKGROUND
 			}
@@ -1833,6 +1886,7 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 					provider,
 					configured: true,
 					policy: ALLOW_ALL,
+					agent_choices: LOOP_CHOICES,
 					repositories: BEADS_WEB_MAP,
 					schedule_background: NO_BACKGROUND
 				}
@@ -1860,6 +1914,7 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 					providers: [sand, webhook],
 					configured: true,
 					policy: ALLOW_ALL,
+					agent_choices: LOOP_CHOICES,
 					repositories: BEADS_WEB_MAP,
 					schedule_background: NO_BACKGROUND
 				}
@@ -1874,6 +1929,7 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 			store,
 			provider,
 			configured: true,
+			agent_choices: LOOP_CHOICES,
 			repositories: BEADS_WEB_MAP,
 			schedule_background: NO_BACKGROUND
 		};
@@ -1906,6 +1962,7 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 				provider,
 				configured: true,
 				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES,
 				repositories: {},
 				schedule_background: NO_BACKGROUND
 			}
@@ -1917,6 +1974,7 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 				provider,
 				configured: true,
 				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES,
 				repositories_invalid: true,
 				schedule_background: NO_BACKGROUND
 			}
@@ -1940,6 +1998,7 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 			provider,
 			configured: true,
 			policy: ALLOW_ALL,
+			agent_choices: LOOP_CHOICES,
 			repositories: BEADS_WEB_MAP,
 			schedule_background: NO_BACKGROUND
 		};
@@ -1991,6 +2050,7 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 				provider,
 				configured: true,
 				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES,
 				repositories: BEADS_WEB_MAP,
 				schedule_background: (task) => {
 					background = task();
@@ -2044,9 +2104,721 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 				store,
 				provider,
 				configured: true,
-				policy: ALLOW_ALL
+				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES
 			})
 		).rejects.toMatchObject({ code: 'conflict', message: LOOP_FOLLOW_UP_MESSAGE });
 		expect(provider.createRun).not.toHaveBeenCalled();
+	});
+
+	describe('loop controls: steer and stop after the iteration', () => {
+		function controlledProvider(patch: Partial<AgentProvider> = {}): AgentProvider {
+			return {
+				...loopProvider(async () => ({ agent_id: 'sbx-c', run_id: 'r1' })),
+				steerRun: vi.fn(async () => undefined),
+				stopRunAfterIteration: vi.fn(async () => undefined),
+				...patch
+			};
+		}
+
+		async function runningLoop(status: 'running' | 'succeeded' = 'running') {
+			const { record } = await store.create({
+				idempotency_key: `idem-loop-ctl-${status}`,
+				project_id: PROJECT.id,
+				dolt_database: PROJECT.dolt_database,
+				operation: 'loop',
+				actor: 'web',
+				payload: BUILD_LOOP
+			});
+			await store.updateStatus(record.id, {
+				status,
+				provider: 'e2b',
+				agent_id: 'sbx-c',
+				run_id: 'r1'
+			});
+			return record.id;
+		}
+
+		it('passes a steer note to the runner and keeps it in the transcript', async () => {
+			const provider = controlledProvider();
+			const id = await runningLoop();
+
+			const result = await steerDispatch(PROJECT.id, id, 'Fix the flaky test first.', {
+				store,
+				provider,
+				configured: true,
+				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES
+			});
+
+			expect(result).toMatchObject({ id, status: 'running' });
+			expect(provider.steerRun).toHaveBeenCalledWith('sbx-c', 'r1', 'Fix the flaky test first.');
+			const turns = await store.listTurns(id);
+			expect(turns.at(-1)).toMatchObject({
+				role: 'operator',
+				text: 'Fix the flaky test first.',
+				run_id: 'r1'
+			});
+		});
+
+		it('refuses a steer when disarmed, on a non-loop, or once the loop has ended', async () => {
+			const provider = controlledProvider();
+			const deps = {
+				store,
+				provider,
+				configured: true,
+				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES
+			};
+			const id = await runningLoop();
+
+			await expect(
+				steerDispatch(PROJECT.id, id, 'Hi.', { ...deps, policy: { ...ALLOW_ALL, armed: false } })
+			).rejects.toMatchObject({ code: 'forbidden', message: DISARMED_DISPATCH_MESSAGE });
+			await expect(
+				steerDispatch(PROJECT.id, id, 'Hi.', {
+					...deps,
+					policy: { armed: true, allow: { file: true, tackle: false } }
+				})
+			).rejects.toMatchObject({ code: 'forbidden', message: LOOP_NOT_ALLOWED_MESSAGE });
+
+			const { record: tackle } = await store.create({
+				idempotency_key: 'idem-loop-ctl-tackle',
+				project_id: PROJECT.id,
+				dolt_database: PROJECT.dolt_database,
+				operation: 'tackle',
+				actor: 'web',
+				payload: { operation: 'tackle', issue_id: ISSUE.id }
+			});
+			await expect(steerDispatch(PROJECT.id, tackle.id, 'Hi.', deps)).rejects.toMatchObject({
+				code: 'conflict',
+				message: NOT_A_LOOP_MESSAGE
+			});
+
+			const ended = await runningLoop('succeeded');
+			await expect(steerDispatch(PROJECT.id, ended, 'Hi.', deps)).rejects.toMatchObject({
+				code: 'conflict',
+				message: LOOP_NOT_RUNNING_MESSAGE
+			});
+			expect(provider.steerRun).not.toHaveBeenCalled();
+			expect(await steerDispatch('d_other', id, 'Hi.', deps)).toBeUndefined();
+		});
+
+		it('refuses a runner without steer', async () => {
+			const provider = controlledProvider({ steerRun: undefined });
+			const id = await runningLoop();
+			await expect(
+				steerDispatch(PROJECT.id, id, 'Hi.', {
+					store,
+					provider,
+					configured: true,
+					policy: ALLOW_ALL,
+					agent_choices: LOOP_CHOICES
+				})
+			).rejects.toMatchObject({ code: 'forbidden' });
+		});
+
+		it('asks for a graceful stop once and shows it on the record, even disarmed', async () => {
+			const provider = controlledProvider();
+			const id = await runningLoop();
+			const deps = {
+				store,
+				provider,
+				configured: true,
+				policy: { ...ALLOW_ALL, armed: false }
+			};
+
+			const first = await stopDispatchAfterIteration(PROJECT.id, id, deps);
+			const second = await stopDispatchAfterIteration(PROJECT.id, id, deps);
+
+			expect(first?.loop).toMatchObject({ mode: 'build', stop_requested: true });
+			expect(first?.status).toBe('running');
+			expect(second?.loop?.stop_requested).toBe(true);
+			expect(provider.stopRunAfterIteration).toHaveBeenCalledTimes(1);
+			expect(provider.stopRunAfterIteration).toHaveBeenCalledWith('sbx-c', 'r1');
+		});
+
+		it('reports how the loop ended when it finished before the stop arrived', async () => {
+			let ended = false;
+			const provider = controlledProvider({
+				getRun: vi.fn(async () =>
+					ended
+						? {
+								status: 'succeeded' as const,
+								result_summary: 'Stopped: no open plan items are left.',
+								loop_end: { stop_reason: 'plan_complete' as const, needs_person: false }
+							}
+						: { status: 'running' as const }
+				),
+				stopRunAfterIteration: vi.fn(async () => {
+					ended = true;
+					throw new DispatchError('conflict', LOOP_NOT_RUNNING_MESSAGE);
+				})
+			});
+			const id = await runningLoop();
+			const deps = {
+				store,
+				provider,
+				configured: true,
+				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES
+			};
+
+			const result = await stopDispatchAfterIteration(PROJECT.id, id, deps);
+
+			expect(result).toMatchObject({ status: 'succeeded', loop: { stop_reason: 'plan_complete' } });
+			expect(result?.loop?.stop_requested).toBeUndefined();
+			// Now it has ended: a second ask is refused before reaching the runner.
+			await expect(stopDispatchAfterIteration(PROJECT.id, id, deps)).rejects.toMatchObject({
+				code: 'conflict',
+				message: LOOP_NOT_RUNNING_MESSAGE
+			});
+			expect(provider.stopRunAfterIteration).toHaveBeenCalledTimes(1);
+		});
+
+		it('a new run clears the stop request', async () => {
+			const provider = controlledProvider();
+			const id = await runningLoop();
+			await stopDispatchAfterIteration(PROJECT.id, id, {
+				store,
+				provider,
+				configured: true,
+				policy: ALLOW_ALL,
+				agent_choices: LOOP_CHOICES
+			});
+			await store.updateStatus(id, { status: 'cancelled' });
+			await store.startFollowUp(id, { run_id: 'r2', status: 'launched' });
+			expect((await store.get(id))?.loop_stop_requested).toBeUndefined();
+		});
+	});
+
+	describe('loop restart', () => {
+		function restartableProvider(patch: Partial<AgentProvider> = {}): AgentProvider {
+			return {
+				...loopProvider(async () => ({ agent_id: 'sbx-r', run_id: 'r1' })),
+				restartLoop: vi.fn(async () => ({ agent_id: 'sbx-s', run_id: 'r2' })),
+				...patch
+			};
+		}
+
+		async function loopIn(status: 'running' | 'succeeded' | 'failed', key: string) {
+			const { record } = await store.create({
+				idempotency_key: `idem-loop-restart-${key}`,
+				project_id: PROJECT.id,
+				dolt_database: PROJECT.dolt_database,
+				operation: 'loop',
+				actor: 'web',
+				payload: BUILD_LOOP
+			});
+			await store.updateStatus(record.id, {
+				status,
+				provider: 'e2b',
+				agent_id: 'sbx-r',
+				run_id: 'r1',
+				...(status === 'running'
+					? {}
+					: { loop_end: { stop_reason: 'max_iterations' as const, needs_person: true } })
+			});
+			return record.id;
+		}
+
+		const deps = (provider: AgentProvider) => ({
+			store,
+			provider,
+			configured: true,
+			policy: ALLOW_ALL,
+			agent_choices: LOOP_CHOICES,
+			repositories: BEADS_WEB_MAP,
+			schedule_background: NO_BACKGROUND
+		});
+
+		it('starts a new run with the stored flags and a new limit, grouped apart from the first', async () => {
+			const provider = restartableProvider();
+			const id = await loopIn('succeeded', 'ok');
+			await store.recordLoopIterations(id, 'r1', [ITERATION]);
+
+			const result = await restartDispatch(PROJECT.id, id, { max_iterations: 2 }, deps(provider));
+
+			expect(result).toMatchObject({ id, status: 'launched', agent_id: 'sbx-s' });
+			expect(result?.loop?.stop_reason).toBeUndefined();
+			expect(result?.loop?.needs_person).toBeUndefined();
+			expect(provider.restartLoop).toHaveBeenCalledWith('sbx-r', 'r1', {
+				name: 'Loop build on beads_web',
+				dolt_database: 'beads_web',
+				repository: { url: 'https://github.com/example-org/beads-web', starting_ref: 'main' },
+				loop: {
+					mode: 'build',
+					harness: 'claude',
+					model: 'opus',
+					effort: 'high',
+					max_iterations: 2,
+					iteration_timeout_minutes: 30
+				}
+			});
+			const stored = await store.get(id);
+			expect(stored).toMatchObject({ agent_id: 'sbx-s', run_id: 'r2', status: 'launched' });
+			// The new limit is this run's; the launch payload stays as launched.
+			expect(stored?.payload).toEqual(BUILD_LOOP);
+			expect((await store.listTurns(id)).at(-1)).toMatchObject({
+				role: 'operator',
+				text: 'Restart the loop for up to 2 iterations.'
+			});
+			expect((await store.listTurns(id)).at(-1)?.run_id).toBeUndefined();
+
+			await store.recordLoopIterations(id, 'r2', [ITERATION]);
+			const iterations = await listLoopIterations(PROJECT.id, id, { store });
+			expect(iterations?.map((it) => [it.run_id, it.iteration])).toEqual([
+				['r1', 1],
+				['r2', 1]
+			]);
+		});
+
+		it('keeps the stored limit when none is given, and restarts a failed loop', async () => {
+			const provider = restartableProvider();
+			const id = await loopIn('failed', 'failed');
+			await restartDispatch(PROJECT.id, id, {}, deps(provider));
+			const input = vi.mocked(provider.restartLoop!).mock.calls[0][2];
+			expect(input.loop.max_iterations).toBe(5);
+			expect((await store.listTurns(id)).at(-1)?.text).toBe('Restart the loop.');
+		});
+
+		it('refuses a working loop, a one-shot mission, a disarmed service and a runner without restart', async () => {
+			const provider = restartableProvider();
+			const running = await loopIn('running', 'running');
+			await expect(restartDispatch(PROJECT.id, running, {}, deps(provider))).rejects.toMatchObject({
+				code: 'conflict',
+				message: LOOP_STILL_RUNNING_MESSAGE
+			});
+
+			const { record: tackle } = await store.create({
+				idempotency_key: 'idem-loop-restart-tackle',
+				project_id: PROJECT.id,
+				dolt_database: PROJECT.dolt_database,
+				operation: 'tackle',
+				actor: 'web',
+				payload: { operation: 'tackle', issue_id: ISSUE.id }
+			});
+			await expect(
+				restartDispatch(PROJECT.id, tackle.id, {}, deps(provider))
+			).rejects.toMatchObject({ code: 'conflict', message: RESTART_NOT_A_LOOP_MESSAGE });
+
+			const ended = await loopIn('succeeded', 'refused');
+			await expect(
+				restartDispatch(
+					PROJECT.id,
+					ended,
+					{},
+					{
+						...deps(provider),
+						policy: { ...ALLOW_ALL, armed: false }
+					}
+				)
+			).rejects.toMatchObject({ code: 'forbidden', message: DISARMED_DISPATCH_MESSAGE });
+			await expect(
+				restartDispatch(
+					PROJECT.id,
+					ended,
+					{},
+					{
+						...deps(provider),
+						policy: { armed: true, allow: { file: true, tackle: false } }
+					}
+				)
+			).rejects.toMatchObject({ code: 'forbidden', message: LOOP_NOT_ALLOWED_MESSAGE });
+			await expect(
+				restartDispatch(
+					PROJECT.id,
+					ended,
+					{},
+					deps(restartableProvider({ restartLoop: undefined }))
+				)
+			).rejects.toMatchObject({ code: 'forbidden' });
+			expect(await restartDispatch('d_other', ended, {}, deps(provider))).toBeUndefined();
+
+			expect(provider.restartLoop).not.toHaveBeenCalled();
+			expect((await store.get(ended))?.status).toBe('succeeded');
+		});
+
+		it('refuses before claiming when the project lost its Tackle checkout', async () => {
+			const provider = restartableProvider();
+			const id = await loopIn('succeeded', 'unmapped');
+			await expect(
+				restartDispatch(PROJECT.id, id, {}, { ...deps(provider), repositories: {} })
+			).rejects.toMatchObject({ code: 'conflict', message: UNMAPPED_TACKLE_MESSAGE });
+			expect((await store.get(id))?.status).toBe('succeeded');
+		});
+
+		it('records a runner refusal on the mission and passes it on', async () => {
+			const provider = restartableProvider({
+				restartLoop: vi.fn(async () => {
+					throw new DispatchError('unavailable', 'Sand could not restart the loop.');
+				})
+			});
+			const id = await loopIn('succeeded', 'refusal');
+			await expect(restartDispatch(PROJECT.id, id, {}, deps(provider))).rejects.toMatchObject({
+				code: 'unavailable',
+				message: 'Sand could not restart the loop.'
+			});
+			expect(await store.get(id)).toMatchObject({
+				status: 'failed',
+				error_message: 'Sand could not restart the loop.',
+				agent_id: 'sbx-r',
+				run_id: 'r1'
+			});
+			expect((await store.listTurns(id)).at(-1)).toMatchObject({ role: 'agent', status: 'failed' });
+		});
+
+		it('lets only one of two concurrent restarts reach the runner', async () => {
+			let release!: () => void;
+			const gate = new Promise<void>((resolve) => (release = resolve));
+			const provider = restartableProvider({
+				restartLoop: vi.fn(async () => {
+					await gate;
+					return { agent_id: 'sbx-s', run_id: 'r2' };
+				})
+			});
+			const id = await loopIn('succeeded', 'race');
+			const first = restartDispatch(PROJECT.id, id, {}, deps(provider));
+			const second = restartDispatch(PROJECT.id, id, {}, deps(provider));
+			const settled = Promise.allSettled([first, second]);
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			release();
+			const outcomes = await settled;
+			expect(outcomes.filter((o) => o.status === 'fulfilled')).toHaveLength(1);
+			expect(outcomes.find((o) => o.status === 'rejected')).toMatchObject({
+				reason: { code: 'conflict', message: LOOP_STILL_RUNNING_MESSAGE }
+			});
+			expect(provider.restartLoop).toHaveBeenCalledTimes(1);
+		});
+
+		/**
+		 * An old run's follower whose provider read is still out when a restart
+		 * claims the mission. `release` lets that read answer r1's result.
+		 */
+		function staleFollowerProvider(restartLoop: AgentProvider['restartLoop']) {
+			let release!: () => void;
+			const gate = new Promise<void>((resolve) => (release = resolve));
+			let reading!: () => void;
+			const read_started = new Promise<void>((resolve) => (reading = resolve));
+			const provider = restartableProvider({
+				restartLoop,
+				getRun: vi.fn(async (_agent_id: string, run_id: string) => {
+					if (run_id !== 'r1') return { status: 'running' as const };
+					reading();
+					await gate;
+					return {
+						status: 'succeeded' as const,
+						result_summary: 'r1 finished',
+						loop_end: { stop_reason: 'max_iterations' as const, needs_person: true }
+					};
+				})
+			});
+			return { provider, release, read_started };
+		}
+
+		async function followOldRun(provider: AgentProvider, tasks: Promise<void>[]) {
+			await resumeDispatchFollowers({
+				store,
+				provider,
+				sleep: async () => {},
+				max_poll_attempts: 1,
+				schedule_background: (task) => {
+					tasks.push(task());
+				}
+			});
+		}
+
+		const followingDeps = (provider: AgentProvider, tasks: Promise<void>[]) => ({
+			...deps(provider),
+			sleep: async () => {},
+			max_poll_attempts: 1,
+			schedule_background: (task: () => Promise<void>) => {
+				tasks.push(task());
+			}
+		});
+
+		it('keeps the new run when the old follower writes between the claim and the save', async () => {
+			const tasks: Promise<void>[] = [];
+			const restarted = staleFollowerProvider(
+				vi.fn(async () => {
+					// The claim is in; now the old follower's read lands.
+					restarted.release();
+					await Promise.all(tasks);
+					return { agent_id: 'sbx-s', run_id: 'r2' };
+				})
+			);
+			const { provider } = restarted;
+			const id = await loopIn('running', 'stale-claim');
+			await followOldRun(provider, tasks);
+			await restarted.read_started;
+			// A page refresh saw r1 end while the follower's read was still out.
+			await store.updateStatus(id, {
+				status: 'succeeded',
+				loop_end: { stop_reason: 'max_iterations', needs_person: true }
+			});
+
+			const result = await restartDispatch(PROJECT.id, id, {}, followingDeps(provider, tasks));
+			await Promise.all(tasks);
+
+			expect(result).toMatchObject({ status: 'launched', agent_id: 'sbx-s' });
+			expect(await store.get(id)).toMatchObject({
+				status: 'running',
+				agent_id: 'sbx-s',
+				run_id: 'r2'
+			});
+			// The new run has its own follower.
+			expect(provider.getRun).toHaveBeenCalledWith('sbx-s', 'r2');
+		});
+
+		it('follows the new run and keeps it when the old follower writes after the save', async () => {
+			const tasks: Promise<void>[] = [];
+			const restarted = staleFollowerProvider(
+				vi.fn(async () => ({ agent_id: 'sbx-s', run_id: 'r2' }))
+			);
+			const { provider } = restarted;
+			const id = await loopIn('running', 'stale-save');
+			await followOldRun(provider, tasks);
+			await restarted.read_started;
+			await store.updateStatus(id, {
+				status: 'succeeded',
+				loop_end: { stop_reason: 'max_iterations', needs_person: true }
+			});
+
+			await restartDispatch(PROJECT.id, id, {}, followingDeps(provider, tasks));
+			// r1's follower is still out, yet r2 is followed.
+			await vi.waitFor(() => expect(provider.getRun).toHaveBeenCalledWith('sbx-s', 'r2'));
+			restarted.release();
+			await Promise.all(tasks);
+
+			const stored = await store.get(id);
+			expect(stored).toMatchObject({ status: 'running', agent_id: 'sbx-s', run_id: 'r2' });
+			expect(stored?.result_summary).toBeUndefined();
+			expect(stored?.loop_end).toBeUndefined();
+		});
+
+		it('stops the new run and says so when the claim was lost before the save', async () => {
+			const provider = restartableProvider({
+				restartLoop: vi.fn(async () => {
+					// A cancel lands on the claimed mission while the runner works.
+					await store.updateStatus(id, { status: 'cancelled' });
+					return { agent_id: 'sbx-s', run_id: 'r2' };
+				})
+			});
+			const id = await loopIn('succeeded', 'claim-lost');
+			await expect(restartDispatch(PROJECT.id, id, {}, deps(provider))).rejects.toMatchObject({
+				code: 'conflict',
+				message: RESTART_SUPERSEDED_MESSAGE
+			});
+			expect(provider.cancelRun).toHaveBeenCalledWith('sbx-s', 'r2');
+			expect(await store.get(id)).toMatchObject({ status: 'cancelled', run_id: 'r1' });
+		});
+
+		it('keeps the new run when a poll moves it to running between the save and its read-back', async () => {
+			const provider = restartableProvider();
+			const id = await loopIn('succeeded', 'poll-progress');
+			// The save lands; before the store reads the row back, a browser
+			// poll sees r2 running and records it for the same generation.
+			const save = store.updateStatus.bind(store);
+			const polled: typeof store = Object.assign(Object.create(store), {
+				updateStatus: async (...args: Parameters<typeof store.updateStatus>) => {
+					const [, patch] = args;
+					const result = await save(...args);
+					if (patch.status === 'launched' && patch.run_id === 'r2') {
+						const current = await store.get(id);
+						return save(id, { status: 'running', expect: runClaimOf(current!) });
+					}
+					return result;
+				}
+			});
+
+			const result = await restartDispatch(
+				PROJECT.id,
+				id,
+				{},
+				{ ...deps(provider), store: polled }
+			);
+
+			expect(result).toMatchObject({ agent_id: 'sbx-s', status: 'running' });
+			expect(provider.cancelRun).not.toHaveBeenCalled();
+			expect(await store.get(id)).toMatchObject({ status: 'running', run_id: 'r2' });
+		});
+	});
+});
+
+describe('model and effort per launch', () => {
+	const CHOICES = { models: ['opus', 'sonnet'], efforts: ['medium', 'high'] };
+
+	function sandProvider(launch: AgentProvider['launch']): AgentProvider {
+		return { ...providerWithLaunch(launch), id: 'e2b', label: 'Sand' };
+	}
+
+	function fileLaunch(key: string, choice: { model?: string; effort?: string }) {
+		return {
+			idempotency_key: key,
+			project: PROJECT,
+			actor: 'web',
+			payload: { operation: 'file' as const, notes: 'notes', ...choice }
+		};
+	}
+
+	it('passes an offered model and effort to the runner and shows them on the record', async () => {
+		const launch = vi.fn(async (_input: AgentLaunchInput) => ({ agent_id: 'sbx-1' }));
+		const result = await enqueueDispatch(
+			fileLaunch('idem-choice-01', { model: 'opus', effort: 'medium' }),
+			{
+				store,
+				provider: sandProvider(launch),
+				configured: true,
+				policy: ALLOW_ALL,
+				agent_choices: CHOICES,
+				schedule_background: NO_BACKGROUND
+			}
+		);
+
+		expect(launch).toHaveBeenCalledWith(
+			expect.objectContaining({ model: 'opus', effort: 'medium' })
+		);
+		expect(result.request).toMatchObject({ model: 'opus', effort: 'medium' });
+	});
+
+	it('leaves the runner its default when the launch asks for nothing', async () => {
+		const launch = vi.fn(async (_input: AgentLaunchInput) => ({ agent_id: 'sbx-2' }));
+		// No choices offered at all: a launch that does not ask still goes.
+		const result = await enqueueDispatch(fileLaunch('idem-choice-02', {}), {
+			store,
+			provider: providerWithLaunch(launch),
+			configured: true,
+			policy: ALLOW_ALL,
+			agent_choices: { models: [], efforts: [] },
+			schedule_background: NO_BACKGROUND
+		});
+
+		const input = launch.mock.calls[0]![0];
+		expect(input).not.toHaveProperty('model');
+		expect(input).not.toHaveProperty('effort');
+		expect(result.request.model).toBeUndefined();
+		expect(result.request.effort).toBeUndefined();
+	});
+
+	it.each([
+		[{ model: 'claude-mythos' }, MODEL_NOT_OFFERED_MESSAGE],
+		[{ effort: 'max' }, EFFORT_NOT_OFFERED_MESSAGE],
+		[{ model: 'opus', effort: 'max' }, EFFORT_NOT_OFFERED_MESSAGE]
+	])(
+		'refuses %o when the operator does not offer it, before recording',
+		async (choice, message) => {
+			const launch = vi.fn(async () => ({ agent_id: 'never' }));
+			await expect(
+				enqueueDispatch(fileLaunch('idem-choice-03', choice), {
+					store,
+					provider: sandProvider(launch),
+					configured: true,
+					policy: ALLOW_ALL,
+					agent_choices: CHOICES,
+					schedule_background: NO_BACKGROUND
+				})
+			).rejects.toMatchObject({ code: 'bad_request', message });
+			expect(launch).not.toHaveBeenCalled();
+			expect(await store.list({ limit: 10 })).toEqual([]);
+		}
+	);
+
+	it('refuses a choice on a runner that cannot honour it', async () => {
+		const launch = vi.fn(async () => ({ agent_id: 'never' }));
+		await expect(
+			enqueueDispatch(fileLaunch('idem-choice-04', { model: 'opus' }), {
+				store,
+				provider: providerWithLaunch(launch),
+				configured: true,
+				policy: ALLOW_ALL,
+				agent_choices: CHOICES,
+				schedule_background: NO_BACKGROUND
+			})
+		).rejects.toMatchObject({ code: 'forbidden', message: MODELS_NOT_SUPPORTED_MESSAGE });
+		expect(launch).not.toHaveBeenCalled();
+		expect(await store.list({ limit: 10 })).toEqual([]);
+	});
+});
+
+describe('resumeDispatchFollowers', () => {
+	async function recordWith(
+		key: string,
+		status: 'launched' | 'running' | 'succeeded',
+		provider: 'webhook' | 'e2b'
+	): Promise<string> {
+		const { record } = await store.create({
+			idempotency_key: key,
+			project_id: PROJECT.id,
+			dolt_database: PROJECT.dolt_database,
+			operation: 'loop',
+			actor: 'web',
+			payload: {
+				operation: 'loop',
+				mode: 'build',
+				harness: 'claude',
+				max_iterations: 5,
+				iteration_timeout_minutes: 30
+			}
+		});
+		await store.updateStatus(record.id, {
+			status,
+			provider,
+			agent_id: `sbx-${key}`,
+			run_id: 'r1'
+		});
+		return record.id;
+	}
+
+	it('follows a running loop after a restart without any request', async () => {
+		// A fresh store and an empty follower set stand in for a restarted server.
+		const running = await recordWith('idem-resume-01', 'running', 'webhook');
+		const launched = await recordWith('idem-resume-02', 'launched', 'webhook');
+		const finished = await recordWith('idem-resume-03', 'succeeded', 'webhook');
+		const gone = await recordWith('idem-resume-04', 'running', 'e2b');
+		const provider: AgentProvider = {
+			...providerWithLaunch(vi.fn()),
+			getRun: vi.fn(async () => ({ status: 'succeeded' as const }))
+		};
+		const tasks: Promise<void>[] = [];
+
+		const scheduled = await resumeDispatchFollowers({
+			store,
+			provider,
+			sleep: async () => {},
+			schedule_background: (task) => {
+				tasks.push(task());
+			}
+		});
+		await Promise.all(tasks);
+
+		expect(scheduled).toBe(2);
+		expect(provider.getRun).toHaveBeenCalledWith(`sbx-idem-resume-01`, 'r1');
+		expect(provider.getRun).toHaveBeenCalledWith(`sbx-idem-resume-02`, 'r1');
+		expect(provider.getRun).toHaveBeenCalledTimes(2);
+		expect(await store.get(running)).toMatchObject({ status: 'succeeded' });
+		expect(await store.get(launched)).toMatchObject({ status: 'succeeded' });
+		expect(await store.get(finished)).toMatchObject({ status: 'succeeded' });
+		// Its provider is no longer configured, so nothing can read it.
+		expect(await store.get(gone)).toMatchObject({ status: 'running' });
+	});
+
+	it('does not start a second follower for a mission already followed', async () => {
+		await recordWith('idem-resume-05', 'running', 'webhook');
+		const provider = providerWithLaunch(vi.fn());
+		const pending: Array<() => Promise<void>> = [];
+		const deps = {
+			store,
+			provider,
+			schedule_background: (task: () => Promise<void>) => {
+				pending.push(task);
+			}
+		};
+
+		expect(await resumeDispatchFollowers(deps)).toBe(1);
+		expect(await resumeDispatchFollowers(deps)).toBe(0);
+		// Let the held follower end so it leaves the in-memory set.
+		provider.getRun = vi.fn(async () => ({ status: 'succeeded' as const }));
+		provider.streamRun = vi.fn(async () => 'disconnected' as const);
+		await Promise.all(pending.map((task) => task()));
 	});
 });

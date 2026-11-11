@@ -35,7 +35,10 @@ See the official [pipe semantics](https://www.freedesktop.org/software/systemd/m
 and [SSH client-alive settings](https://man.openbsd.org/sshd_config#ClientAliveInterval).
 This is lifecycle containment within one scope, not security isolation between
 chats sharing the guest user. A deliberately hostile process that controls that
-user's service manager is outside this cleanup guarantee.
+user's service manager is outside this cleanup guarantee. (Superseded by
+[0021](0021-hc-terminal-runtime.md): the CLI runs in a terminal of one hc
+core, a user service in the guest, and ending a chat kills its terminal;
+the per-launch transient service and supervisor are gone.)
 
 The runner binds loopback and accepts contract-v1 HMAC requests. Tailnet HTTPS
 is the external transport; TLS certificate enablement is an operational gate.

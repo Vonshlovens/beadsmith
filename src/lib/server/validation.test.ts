@@ -15,6 +15,7 @@ import {
 	parseTackleMapBody,
 	parseValue,
 	project_id_schema,
+	restart_schema,
 	tackle_map_schema,
 	file_map_schema,
 	theme_schema
@@ -82,6 +83,29 @@ describe('theme settings', () => {
 });
 
 describe('dispatch body', () => {
+	it('takes a model and effort on every operation, never one shaped like a flag', () => {
+		const tackle = {
+			operation: 'tackle',
+			idempotency_key: 'idem-aaaaaaaa',
+			issue_id: 'beads-web-1'
+		};
+		expect(parseValue(dispatch_schema, { ...tackle, model: 'opus', effort: 'medium' }).ok).toBe(
+			true
+		);
+		expect(
+			parseValue(dispatch_schema, {
+				operation: 'discuss',
+				idempotency_key: 'idem-aaaaaaaa',
+				issue_id: 'beads-web-1',
+				intent: 'discuss',
+				model: 'claude-opus-5-5[1m]'
+			}).ok
+		).toBe(true);
+		expect(parseValue(dispatch_schema, { ...tackle, model: '--print' }).ok).toBe(false);
+		expect(parseValue(dispatch_schema, { ...tackle, effort: '-x' }).ok).toBe(false);
+		expect(parseValue(dispatch_schema, { ...tackle, model: '' }).ok).toBe(false);
+	});
+
 	it('accepts file, tackle, and comment payloads and rejects other operations', () => {
 		expect(
 			parseValue(dispatch_schema, {
@@ -224,6 +248,17 @@ describe('discuss dispatch body', () => {
 		expect(parseValue(dispatch_schema, { ...base, intent: 'discuss', issue_id: '../x' }).ok).toBe(
 			false
 		);
+	});
+});
+
+describe('loop restart body', () => {
+	it('takes an optional iteration limit within the launch bounds, and nothing else', () => {
+		expect(parseValue(restart_schema, {}).ok).toBe(true);
+		expect(parseValue(restart_schema, { max_iterations: 3 }).ok).toBe(true);
+		expect(parseValue(restart_schema, { max_iterations: 0 }).ok).toBe(false);
+		expect(parseValue(restart_schema, { max_iterations: 201 }).ok).toBe(false);
+		expect(parseValue(restart_schema, { max_iterations: 1.5 }).ok).toBe(false);
+		expect(parseValue(restart_schema, { mode: 'plan' }).ok).toBe(false);
 	});
 });
 

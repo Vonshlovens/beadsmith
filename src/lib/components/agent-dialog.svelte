@@ -20,6 +20,9 @@
 	import AgentThread from '#lib/components/agent-thread.svelte';
 	import IssueId from '#lib/components/issue-id.svelte';
 	import MissionStatus from '#lib/components/mission-status.svelte';
+	import AgentChoiceSelect from '#lib/components/agent-choice-select.svelte';
+	import { agent_choice } from '#lib/client/agent-choice.svelte.js';
+	import { launchTakesChoice } from '#lib/client/agent-choice.js';
 	import { api, errorMessage } from '#lib/client/api.js';
 	import {
 		AGENT_INTENTS,
@@ -51,6 +54,10 @@
 	const availability = $derived(agentAvailability(statusSnapshot(), project?.allow));
 	const loop_visible = $derived(
 		loopAvailability(statusSnapshot(), project?.allow, run_place.launchField().provider).visible
+	);
+
+	const choice_takes = $derived(
+		launchTakesChoice(statusSnapshot(), run_place.launchField().provider)
 	);
 
 	let intent = $state<AgentIntent>('discuss');
@@ -120,18 +127,21 @@
 		}
 		submitting = true;
 		const note = message.trim();
+		const choice = agent_choice.forLaunch(statusSnapshot(), run_place.launchField().provider);
 		try {
 			const result =
 				intent === 'tackle'
 					? await api.tackleIssue(target.project_id, {
 							idempotency_key: crypto.randomUUID(),
-							issue_id: target.issue_id
+							issue_id: target.issue_id,
+							...choice
 						})
 					: await api.discussIssue(target.project_id, {
 							idempotency_key: crypto.randomUUID(),
 							issue_id: target.issue_id,
 							intent,
-							...(note.length > 0 ? { message: note } : {})
+							...(note.length > 0 ? { message: note } : {}),
+							...choice
 						});
 			if (result.request.status === 'failed') {
 				toast.error('The agent did not start', {
@@ -299,6 +309,11 @@
 							aria-label="Message for the agent"
 							placeholder={info.placeholder}
 							onkeydown={onMessageKeydown}></textarea>
+					{/if}
+					{#if choice_takes}
+						<div class="mt-3">
+							<AgentChoiceSelect takes={choice_takes} disabled={submitting} />
+						</div>
 					{/if}
 
 					{#if history.length > 0}

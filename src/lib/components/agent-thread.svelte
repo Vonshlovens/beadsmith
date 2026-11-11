@@ -5,15 +5,21 @@
 	 * provider. With live events the current run streams in; without them the
 	 * thread polls status and the reply lands when the run finishes. A runner
 	 * that cannot take follow-ups gets a disabled composer that says so. A
-	 * loop mission adds its iteration table above the conversation. Admins get
+	 * loop mission adds its iteration table above the conversation; while it
+	 * works, the composer steers it (a note for its next iteration) and it can
+	 * stop after the current iteration or now (ADR-0019); once it has ended it
+	 * can be restarted as a new run, optionally with a new iteration limit,
+	 * from the same footer. Admins get
 	 * the agent's live terminal above it too, on runners that relay one
 	 * (ADR-0021).
 	 */
 	import { tip } from '#lib/client/tooltip.js';
 	import { untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
+	import ArrowClockwiseIcon from 'phosphor-svelte/lib/ArrowClockwiseIcon';
 	import ArrowSquareOutIcon from 'phosphor-svelte/lib/ArrowSquareOutIcon';
 	import GitPullRequestIcon from 'phosphor-svelte/lib/GitPullRequestIcon';
+	import SkipForwardIcon from 'phosphor-svelte/lib/SkipForwardIcon';
 	import SquareIcon from 'phosphor-svelte/lib/SquareIcon';
 	import ChatComposer from '#lib/components/chat-composer.svelte';
 	import LoopIterations from '#lib/components/loop-iterations.svelte';
@@ -23,6 +29,7 @@
 	import TerminalView from '#lib/components/terminal-view.svelte';
 	import { api, errorMessage } from '#lib/client/api.js';
 	import {
+		canRestartLoop,
 		composerState,
 		formatElapsed,
 		isBusyStatus,
@@ -33,6 +40,8 @@
 		THREAD_POLL_MS
 	} from '#lib/client/agent.js';
 	import { absoluteStamp, relativeShort } from '#lib/client/format.js';
+	import { iterationLimitError } from '#lib/client/loop.js';
+	import { agentChoiceLine } from '#lib/client/agent-choice.js';
 	import { currentViewer, statusSnapshot } from '#lib/client/projects.svelte.js';
 	import type { DispatchRequest, DispatchTurn, LoopIteration } from '#lib/types.js';
 
@@ -64,6 +73,10 @@
 	let text = $state('');
 	let sending = $state(false);
 	let cancelling = $state(false);
+	let winding_down = $state(false);
+	let restarting = $state(false);
+	/** The new run's iteration limit, as typed; starts at the loop's stored one. */
+	let restart_limit = $state('');
 	let now = $state(Date.now());
 	let composer_el = $state<HTMLTextAreaElement | null>(null);
 	let list_el = $state<HTMLDivElement | null>(null);
@@ -94,11 +107,27 @@
 	const can_cancel = $derived(
 		busy && capabilities?.cancel === true && mission?.agent_id !== undefined
 	);
-	const started_at = $derived.by(() => {
-		const last_operator = [...turns].reverse().find((turn) => turn.role === 'operator');
-		return Date.parse(last_operator?.created_at ?? mission?.updated_at ?? '') || now;
-	});
 	const is_loop = $derived(mission?.operation === 'loop');
+	/** A loop shows its model and effort among its flags (LoopIterations). */
+	const choice_line = $derived(
+		mission === undefined || is_loop ? undefined : agentChoiceLine(mission)
+	);
+	// A loop's steer notes carry the run they steer; the turns that start a
+	// run (the launch, a restart) carry none, so the latest of those is when
+	// the current run began.
+	const started_at = $derived.by(() => {
+		const operator = turns.filter((turn) => turn.role === 'operator');
+		const start = is_loop
+			? operator.findLast((turn) => turn.run_id === undefined)
+			: operator.at(-1);
+		return Date.parse(start?.created_at ?? mission?.updated_at ?? '') || now;
+	});
+	const stop_requested = $derived(is_loop && mission?.loop?.stop_requested === true);
+	const can_wind_down = $derived(is_loop && can_cancel && capabilities?.loop === true);
+	const can_restart = $derived(mission !== undefined && canRestartLoop(mission, dispatch));
+	const restart_error = $derived(
+		restart_limit.trim() === '' ? undefined : iterationLimitError(restart_limit)
+	);
 	// The relay names the mission; the server finds its sandbox. A mission that
 	// never started an agent has no terminal to open.
 	const show_terminal = $derived(
@@ -161,6 +190,7 @@
 	// Load on mount and whenever the thread changes.
 	$effect(() => {
 		void request_id;
+		restart_limit = '';
 		const ac = new AbortController();
 		loaded = false;
 		turns = [];
@@ -196,6 +226,14 @@
 		return () => clearInterval(poll);
 	});
 
+	// Offer the loop's own limit until the operator types another.
+	$effect(() => {
+		const stored = mission?.loop?.max_iterations;
+		if (restart_limit === '' && stored !== undefined) {
+			untrack(() => (restart_limit = String(stored)));
+		}
+	});
+
 	// Keep the newest turn in view.
 	$effect(() => {
 		void turns.length;
@@ -218,16 +256,89 @@
 		}
 		sending = true;
 		try {
-			const result = await api.followUpDispatch(project_id, request_id, { text: message });
+			if (is_loop) {
+				// A steer joins the running loop: the live stream keeps going.
+				const result = await api.steerDispatch(project_id, request_id, { text: message });
+				mission = result.request;
+				text = '';
+				onupdated?.(result.request);
+				toast.success('Steer note queued', {
+					description: 'The loop reads it at the start of its next iteration.'
+				});
+			} else {
+				const result = await api.followUpDispatch(project_id, request_id, { text: message });
+				mission = result.request;
+				text = '';
+				run_generation += 1;
+				onupdated?.(result.request);
+			}
+			await refresh();
+		} catch (error) {
+			toast.error(is_loop ? 'Could not steer the loop' : 'Could not send the message', {
+				description: errorMessage(error)
+			});
+		} finally {
+			sending = false;
+		}
+	}
+
+	async function windDown() {
+		if (!can_wind_down || stop_requested || winding_down) {
+			return;
+		}
+		winding_down = true;
+		try {
+			const result = await api.stopDispatchAfterIteration(project_id, request_id);
 			mission = result.request;
-			text = '';
+			onupdated?.(result.request);
+			await refresh();
+		} catch (error) {
+			toast.error('Could not stop the loop', { description: errorMessage(error) });
+		} finally {
+			winding_down = false;
+		}
+	}
+
+	/**
+	 * Start a new run of the ended loop. The limit is sent only when it
+	 * differs from the loop's own, so the transcript says when it changed.
+	 */
+	async function restart() {
+		if (!can_restart || restarting) {
+			return;
+		}
+		const text = restart_limit.trim();
+		if (text !== '' && iterationLimitError(text) !== undefined) {
+			return;
+		}
+		const limit = text === '' ? undefined : Number(text);
+		restarting = true;
+		try {
+			const result = await api.restartDispatch(
+				project_id,
+				request_id,
+				limit === undefined || limit === mission?.loop?.max_iterations
+					? {}
+					: { max_iterations: limit }
+			);
+			mission = result.request;
 			run_generation += 1;
 			onupdated?.(result.request);
 			await refresh();
 		} catch (error) {
-			toast.error('Could not send the message', { description: errorMessage(error) });
+			toast.error('Could not restart the loop', { description: errorMessage(error) });
+			// The mission may have recorded why; show it.
+			await refresh();
 		} finally {
-			sending = false;
+			restarting = false;
+		}
+	}
+
+	function onLimitKeydown(event: KeyboardEvent) {
+		// The field sits inside the composer's form: Enter restarts, never sends.
+		if (event.key === 'Enter') {
+			event.preventDefault();
+			void restart();
 		}
 	}
 
@@ -258,6 +369,9 @@
 				<span class="faint mono-num" {@attach tip('Run time')}
 					>{formatElapsed(mission.duration_ms)}</span
 				>
+			{/if}
+			{#if choice_line}
+				<span class="faint choice" {@attach tip('Model · effort')}>{choice_line}</span>
 			{/if}
 			<span class="spacer"></span>
 			{#if mission.git_pr_url}
@@ -319,6 +433,9 @@
 				>
 					<div class="chat-role">
 						<span>{turn.role === 'operator' ? 'You' : 'Agent'}</span>
+						{#if is_loop && turn.role === 'operator' && turn.run_id !== undefined}
+							<span class="st" {@attach tip('A note for the next iteration')}>steer</span>
+						{/if}
 						{#if turn.status && turn.status !== 'succeeded'}
 							<span class="st">{turn.status}</span>
 						{/if}
@@ -363,8 +480,9 @@
 	<ChatComposer
 		bind:value={text}
 		bind:textarea={composer_el}
-		label="Message the agent"
-		placeholder="Reply to the agent…"
+		label={is_loop ? 'Steer the loop' : 'Message the agent'}
+		placeholder={is_loop ? 'A note for the next iteration…' : 'Reply to the agent…'}
+		submit_label={is_loop ? 'Steer' : 'Send'}
 		rows={2}
 		disabled={!composer.can_send}
 		reason={composer.reason}
@@ -372,16 +490,69 @@
 		onsend={() => void send()}
 	>
 		{#snippet actions()}
+			{#if can_restart}
+				<span class="restart">
+					<label class="restart-limit">
+						<span class="lbl">Iterations</span>
+						<input
+							class="input mono-num"
+							class:is-invalid={restart_error !== undefined}
+							type="text"
+							inputmode="numeric"
+							autocomplete="off"
+							size="3"
+							bind:value={restart_limit}
+							disabled={restarting}
+							aria-invalid={restart_error !== undefined}
+							aria-describedby={restart_error === undefined ? undefined : 'restart-limit-err'}
+							onkeydown={onLimitKeydown}
+						/>
+					</label>
+					<button
+						class="btn btn-sm"
+						type="button"
+						disabled={restarting || restart_error !== undefined}
+						onclick={restart}
+						{@attach tip('Run the loop again on this mission, with its settings')}
+					>
+						<ArrowClockwiseIcon size={12} aria-hidden="true" />
+						{restarting ? 'Restarting…' : 'Restart'}
+					</button>
+					{#if restart_error}
+						<span class="err restart-err" id="restart-limit-err" role="alert">{restart_error}</span>
+					{/if}
+				</span>
+			{/if}
+			{#if can_wind_down}
+				<button
+					class="btn btn-sm"
+					type="button"
+					disabled={stop_requested || winding_down || cancelling}
+					onclick={windDown}
+					{@attach tip(
+						stop_requested
+							? 'The loop stops when its current iteration ends'
+							: 'Let the current iteration finish, then stop'
+					)}
+				>
+					<SkipForwardIcon size={12} aria-hidden="true" />
+					{stop_requested
+						? 'Stopping after this iteration'
+						: winding_down
+							? 'Asking…'
+							: 'Stop after iteration'}
+				</button>
+			{/if}
 			{#if can_cancel}
 				<button
 					class="btn btn-sm btn-danger"
 					type="button"
 					disabled={cancelling}
 					onclick={cancel}
-					{@attach tip('Stop the run')}
+					{@attach tip(is_loop ? 'End the loop now, mid-iteration' : 'Stop the run')}
 				>
-					<SquareIcon size={12} />
-					{cancelling ? 'Stopping…' : 'Stop'}
+					<SquareIcon size={12} aria-hidden="true" />
+					{cancelling ? 'Stopping…' : is_loop ? 'Stop now' : 'Stop'}
 				</button>
 			{/if}
 		{/snippet}
@@ -401,6 +572,13 @@
 		align-items: center;
 		gap: var(--s-2);
 		min-height: 28px;
+	}
+	.choice {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: var(--t-xs);
 	}
 	.verb {
 		font-weight: 600;
@@ -423,5 +601,35 @@
 	.err {
 		font-size: var(--t-xs);
 		color: var(--danger-tx);
+	}
+	.restart {
+		display: inline-flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--s-2);
+	}
+	.restart-limit {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--s-1);
+	}
+	.restart-limit .lbl {
+		font-size: var(--t-xs);
+		color: var(--tx-dim);
+	}
+	/* Sized to the footer's small buttons; three digits fit. */
+	.restart-limit .input {
+		width: calc(4ch + 20px);
+		height: 28px;
+		font-size: var(--t-xs);
+		text-align: right;
+	}
+	@media (pointer: coarse) {
+		.restart-limit .input {
+			height: 44px;
+		}
+	}
+	.restart-err {
+		flex-basis: 100%;
 	}
 </style>

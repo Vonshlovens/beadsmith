@@ -6,6 +6,10 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SESSION_LABEL } from '#lib/agent-session/session.js';
 import { connectHc } from '#lib/hc/client.js';
+import {
+	RELAY_FINISHED_MESSAGE,
+	RELAY_NOT_STARTED_MESSAGE
+} from '#lib/server/terminal-relay/relay.js';
 import { FakeClaude } from '#lib/test/fake-claude.js';
 import type { FakeTerminal } from '#lib/test/fake-hc.js';
 import { ChatStore } from './event-log.js';
@@ -104,9 +108,15 @@ function signed(method: string, target: string, body = ''): RequestInit {
 	};
 }
 
-async function post(chat: string, prompt: string, message_id: string, session_id = SESSION) {
+async function post(
+	chat: string,
+	prompt: string,
+	message_id: string,
+	session_id = SESSION,
+	extra: Record<string, unknown> = {}
+) {
 	const target = `/v1/mate/chats/${chat}/messages`;
-	const body = JSON.stringify({ session_id, prompt, scope: 'beads-web', message_id });
+	const body = JSON.stringify({ session_id, prompt, scope: 'beads-web', message_id, ...extra });
 	return fetch(`${base}${target}`, signed('POST', target, body));
 }
 
@@ -191,6 +201,9 @@ describe('mate runner', () => {
 			SESSION
 		]);
 		expect(t.argv).toContain('--append-system-prompt');
+		// No model or effort asked for: the CLI's defaults.
+		expect(t.argv).not.toContain('--model');
+		expect(t.argv).not.toContain('--effort');
 		expect(t.cwd).toBe(WORKDIR);
 		expect(t.labels).toEqual({ [CHAT_LABEL]: 'chat1', [SESSION_LABEL]: SESSION });
 		// The prompt is pasted into the running CLI, never put on its command line.
@@ -418,6 +431,38 @@ describe('mate runner', () => {
 		expect((await post('chat2', 'hello', 'm2', OTHER)).status).toBe(503);
 	});
 
+	it('launches with the chat model and effort, and keeps them across a resume', async () => {
+		const choice = { model: 'claude-opus-5-5', effort: 'high' };
+		expect((await post('chat1', 'one', 'm1', SESSION, choice)).status).toBe(202);
+		await readEvents('chat1', 3);
+		const argv = terminalOf().argv.join(' ');
+		expect(argv).toContain('--model claude-opus-5-5');
+		expect(argv).toContain('--effort high');
+
+		await shutdown(true);
+		await start();
+		expect((await post('chat1', 'two', 'm2', SESSION, choice)).status).toBe(202);
+		await readEvents('chat1', 6);
+		const resumed = terminalOf().argv;
+		expect(resumed).toContain('--resume');
+		expect(resumed.join(' ')).toContain('--model claude-opus-5-5');
+		expect(resumed.join(' ')).toContain('--effort high');
+	});
+
+	it('refuses a model or effort that is not a name, or that changes mid-chat', async () => {
+		expect((await post('chat1', 'hi', 'm1', SESSION, { model: '--dangerous' })).status).toBe(400);
+		expect((await post('chat1', 'hi', 'm1', SESSION, { model: 7 })).status).toBe(400);
+		expect((await post('chat1', 'hi', 'm1', SESSION, { effort: 'High Effort' })).status).toBe(400);
+		// Nothing was recorded for the refused messages.
+		expect((await post('chat1', 'hi', 'm1', SESSION, { model: 'sonnet' })).status).toBe(202);
+		expect((await post('chat1', 'next', 'm2', SESSION, { model: 'opus' })).status).toBe(409);
+		expect((await post('chat1', 'next', 'm2', SESSION)).status).toBe(409);
+		expect(
+			(await post('chat1', 'next', 'm2', SESSION, { effort: 'low', model: 'sonnet' })).status
+		).toBe(409);
+		expect((await post('chat1', 'next', 'm2', SESSION, { model: 'sonnet' })).status).toBe(202);
+	});
+
 	it('rejects reuse of an id for a different message', async () => {
 		await post('chat1', 'one', 'm1');
 		expect((await post('chat1', 'two', 'm1')).status).toBe(409);
@@ -430,5 +475,175 @@ describe('mate runner', () => {
 		expect((await post('chat1', 'hi', 'm1', SESSION.toUpperCase())).status).toBe(400);
 		const target = '/v1/mate/chats/bad.id/messages';
 		expect((await fetch(`${base}${target}`, signed('POST', target, '{}'))).status).toBe(400);
+	});
+});
+
+describe('terminal attach', () => {
+	interface Frame {
+		event: string;
+		data: string;
+	}
+
+	/** Open the chat's terminal and read its SSE frames as they come. */
+	async function attach(chat: string, mode: 'watch' | 'take_over', body?: string) {
+		const target = `/v1/mate/chats/${chat}/terminal`;
+		const controller = new AbortController();
+		const res = await fetch(`${base}${target}`, {
+			...signed('POST', target, body ?? JSON.stringify({ mode, cols: 80, rows: 24 })),
+			signal: controller.signal
+		});
+		const frames: Frame[] = [];
+		let ended = false;
+		if (res.ok) {
+			void (async () => {
+				const reader = res.body!.getReader();
+				const decoder = new TextDecoder();
+				let buffer = '';
+				try {
+					for (;;) {
+						const { value, done } = await reader.read();
+						if (done) break;
+						buffer += decoder.decode(value, { stream: true });
+						let index: number;
+						while ((index = buffer.indexOf('\n\n')) >= 0) {
+							const lines = buffer.slice(0, index).split('\n');
+							buffer = buffer.slice(index + 2);
+							const event = lines.find((l) => l.startsWith('event: '))?.slice(7);
+							const data = lines.find((l) => l.startsWith('data: '))?.slice(6);
+							if (event !== undefined) frames.push({ event, data: data ?? '' });
+						}
+					}
+				} catch {
+					// Aborted.
+				}
+				ended = true;
+			})();
+		}
+		return { res, frames, ended: () => ended, close: () => controller.abort() };
+	}
+
+	const output = (frames: Frame[]) =>
+		frames
+			.filter((f) => f.event === 'output')
+			.map((f) => Buffer.from(f.data, 'base64').toString())
+			.join('');
+
+	async function input(chat: string, attach_id: string, body: unknown) {
+		const target = `/v1/mate/chats/${chat}/terminal/${attach_id}`;
+		return fetch(`${base}${target}`, signed('POST', target, JSON.stringify(body)));
+	}
+
+	async function started(): Promise<FakeTerminal> {
+		await post('chat1', 'hello', 'm1');
+		await readEvents('chat1', 3);
+		return terminalOf();
+	}
+
+	it('refuses unsigned attaches and input', async () => {
+		await started();
+		const res = await fetch(`${base}/v1/mate/chats/chat1/terminal`, {
+			method: 'POST',
+			body: JSON.stringify({ mode: 'watch', cols: 80, rows: 24 })
+		});
+		expect(res.status).toBe(401);
+		const typed = await fetch(`${base}/v1/mate/chats/chat1/terminal/ta_${'0'.repeat(32)}`, {
+			method: 'POST',
+			body: JSON.stringify({ data: 'eQ==' })
+		});
+		expect(typed.status).toBe(401);
+	});
+
+	it('watches the chat terminal over its own hc connection, and refuses input', async () => {
+		const t = await started();
+		const before = connects;
+		const channels = fake.core.connections.size;
+		const watch = await attach('chat1', 'watch');
+		expect(watch.res.status).toBe(200);
+		expect(watch.res.headers.get('content-type')).toBe('text/event-stream');
+		await expect.poll(() => watch.frames.length).toBeGreaterThan(0);
+		const open = JSON.parse(watch.frames[0]!.data) as { attach: string; mode: string };
+		expect(watch.frames[0]!.event).toBe('open');
+		expect(open).toMatchObject({ mode: 'watch' });
+		expect(open.attach).toMatch(/^ta_[a-f0-9]{32}$/);
+		expect(connects).toBe(before + 1);
+		const call = fake.core.calls.findLast((c) => c.method === 'terminal.attach');
+		expect(call?.params).toMatchObject({ terminal: t.address, observe: true });
+
+		fake.core.output(t.address, 'thinking…');
+		await expect.poll(() => output(watch.frames)).toContain('thinking…');
+		const refused = await input('chat1', open.attach, { data: 'eQ==' });
+		expect(refused.status).toBe(409);
+		expect(t.typed).toEqual([]);
+		// Another chat cannot name this attach.
+		expect((await input('chat2', open.attach, { data: 'eQ==' })).status).toBe(404);
+
+		watch.close();
+		// The attach's own connection goes; the chat keeps its channel.
+		await expect.poll(() => fake.core.connections.size).toBe(channels);
+		// The chat itself still works.
+		expect((await post('chat1', 'again', 'm2')).status).toBe(202);
+	});
+
+	it('takes over: types and resizes the terminal from the attach it opened', async () => {
+		const t = await started();
+		const take = await attach('chat1', 'take_over');
+		await expect.poll(() => take.frames.length).toBeGreaterThan(0);
+		const { attach: id } = JSON.parse(take.frames[0]!.data) as { attach: string };
+		const res = await input('chat1', id, {
+			data: Buffer.from('y\r').toString('base64'),
+			cols: 100,
+			rows: 30
+		});
+		expect(res.status).toBe(204);
+		await expect.poll(() => t.typed.length).toBeGreaterThan(0);
+		expect(Buffer.from(t.typed).toString()).toBe('y\r');
+		expect(t.viewer_size).toEqual({ cols: 100, rows: 30 });
+		expect((await input('chat1', id, { data: 'not base64!' })).status).toBe(400);
+		expect((await input('chat1', id, { cols: 100 })).status).toBe(400);
+		take.close();
+	});
+
+	it('ends with the program and closes the stream', async () => {
+		const t = await started();
+		const watch = await attach('chat1', 'watch');
+		await expect.poll(() => watch.frames.length).toBeGreaterThan(0);
+		fake.core.exit(t.address, 0);
+		await expect.poll(() => watch.ended()).toBe(true);
+		expect(watch.frames.at(-1)).toEqual({
+			event: 'end',
+			data: JSON.stringify({ reason: 'exited' })
+		});
+	});
+
+	it('refuses a chat with no agent, a finished terminal, a lost guest and bad input', async () => {
+		const none = await attach('chat9', 'watch');
+		expect(none.res.status).toBe(409);
+		expect(await none.res.json()).toEqual({ error: RELAY_NOT_STARTED_MESSAGE });
+
+		const t = await started();
+		fake.core.exit(t.address, 0);
+		const finished = await attach('chat1', 'watch');
+		expect(finished.res.status).toBe(409);
+		expect(await finished.res.json()).toEqual({ error: RELAY_FINISHED_MESSAGE });
+
+		failConnect = true;
+		const lost = await attach('chat1', 'watch');
+		expect(lost.res.status).toBe(503);
+
+		expect((await attach('chat1', 'watch', '{"mode":"peek","cols":80,"rows":24}')).res.status).toBe(
+			400
+		);
+		expect((await attach('chat1', 'watch', '{"mode":"watch","cols":0,"rows":24}')).res.status).toBe(
+			400
+		);
+		expect((await input('chat1', `ta_${'0'.repeat(32)}`, { data: '' })).status).toBe(404);
+	});
+
+	it('closes open attaches on shutdown', async () => {
+		await started();
+		const watch = await attach('chat1', 'watch');
+		await expect.poll(() => watch.frames.length).toBeGreaterThan(0);
+		await handler.close();
+		await expect.poll(() => watch.ended()).toBe(true);
 	});
 });

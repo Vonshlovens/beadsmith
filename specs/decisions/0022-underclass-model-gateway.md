@@ -199,9 +199,23 @@ Planned, each in its own change:
   `BDX_UNDERCLASS_URL` and `BDX_UNDERCLASS_UI_TOKEN_FILE` in
   `src/lib/server/env.ts` and `docs/configuration.md`;
 - the console's model pool page;
-- the console's account actions (refresh, enable, disable, reset);
+- the console's account actions (refresh, enable, disable, reset):
+  shipped as `POST /api/console/model-pool/accounts/:id/:action`
+  (contract in [`docs/contract.md`](../../docs/contract.md)). The account
+  id is the one browser value that reaches Underclass, behind a pattern
+  that admits no path characters, and the log line names the acting user's
+  id, not their email. Underclass's refusals become fixed codes, since its
+  messages can carry upstream text; a refused reset Underclass would accept
+  with `force` offers a second, forced confirmation;
 - forge's tailnet HTTPS route to Underclass for the Beadsmith host, the
   production secrets by name, and the operator check in
-  `docs/operations/host-forge.md`.
+  `docs/operations/host-forge.md`: shipped as
+  `underclass-tailnet-serve.service` in
+  [`runtime.nix`](../../fleet/hosts/forge/runtime.nix), Serve on tailnet
+  HTTPS port 10000 (8443 is already the guest filter's port on the host
+  link). The secrets are named in
+  [`fleet/secrets/README.md`](../../fleet/secrets/README.md); host beads
+  reads them in a later change, once the operator has added them;
+- host beads' `BDX_UNDERCLASS_URL` and token file from those secrets.
 
 The current architecture bullet is in [`specs/README.md`](../README.md).

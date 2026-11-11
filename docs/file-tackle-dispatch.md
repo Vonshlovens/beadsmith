@@ -208,6 +208,33 @@ instead of on the default provider. It must be one the server lists in
 `GET /api/status` → `dispatch.providers`; anything else is refused before a
 record is written. It is not part of the idempotent payload.
 
+Every body may also carry `model` and `effort`: the model and reasoning
+effort the agent runs with instead of the runner's default. Each must be one
+the operator offers (`BDX_AGENT_MODELS`, `BDX_AGENT_EFFORTS`, listed in
+`GET /api/status` → `dispatch.models` / `dispatch.efforts`); anything else is
+refused with `400` before a record is written, so the browser cannot name a
+model the operator has not chosen to pay for. Only a runner whose
+`capabilities.models` is true takes them (Sand); any other refuses a launch
+that asks with `403`. They are part of the idempotent payload, and the check
+runs at every launch, an automation's included, so a choice the operator has
+since withdrawn fails rather than runs. On Sand the choice is kept on the
+sandbox, so a follow-up that has to relaunch the CLI (`--resume`) runs the
+same model.
+
+In the browser, the File, agent (Discuss, Elaborate, Close, Tackle), board
+drop, loop and automation dialogs show a Model and an Effort picker when the server
+lists at least one of either and the launch's runner (the "Runs on" pick, else
+the default) has `capabilities.models`; otherwise the picker is hidden rather
+than offered and refused. "Runner default" leaves the field out. The pick is
+remembered per viewer (localStorage) for the next dialog, and a remembered
+name the operator has since withdrawn is dropped rather than sent. Launches
+without a picker (a comment from the composer) use the runner's default. A
+mission's thread header shows what it asked for; a loop shows it among its
+flags. An automation keeps the pick inside its saved `launch` (not beside it),
+so every fire repeats it; `POST /api/automations` also refuses a model or
+effort the operator does not offer when it is saved, rather than recording a
+failed run at each fire.
+
 - `{ operation: "file", idempotency_key, notes, title?, issue_type?, priority?, labels?, status? }`
 - `{ operation: "tackle", idempotency_key, issue_id }`
 - `{ operation: "comment", idempotency_key, issue_id, text }`
@@ -238,7 +265,30 @@ spends without a bound; `iteration_timeout_minutes` is 1 to 240. Only a
 runner whose `capabilities.loop` is true takes a loop (Sand; see
 [How a loop runs](sand-e2b.md#how-a-loop-runs)); any other, such as a
 webhook runner, refuses it with `403` before a record is written. A loop takes no follow-up (`409`):
-steer, stop and restart are its controls. Each finished iteration (number,
+steer, stop and restart are its controls.
+`POST .../steer` with `{text}` (max 4000 characters, extra keys fail closed)
+queues a note that ralph adds to the next iteration's prompt; it needs the
+global arm and Tackle allowed, like a follow-up, and is kept in the thread as
+an operator turn. `POST .../stop-after-iteration` (no body) lets the current
+iteration finish and then ends the loop with ralph's graceful stop; the
+record's `loop.stop_requested` stays true until a new run, so the thread says
+the stop is on its way. Like cancel it is taken while disarmed. Cancel is
+"stop now". Both answer `409` when the loop is not running (still in setup,
+or ended), and stop-after-iteration answers with the ended record when the
+loop finished first. `POST .../restart` with `{max_iterations?}` (1 to 200,
+extra keys fail closed) starts a new run of an ended loop (succeeded,
+cancelled or failed) on the same mission, with the flags it was launched
+with; `max_iterations` replaces the limit for that run only, and the stored
+launch payload is unchanged. Like a launch it needs the global arm, Tackle
+allowed and the project's Tackle map, and it answers `409` while the loop
+is still working, for a mission that is not a loop or never launched, and
+when the map is gone. The mission is claimed as `launching` before the
+runner is asked, so only one of two restarts starts a run; a runner that
+refuses leaves the mission `failed` with its reason. The thread records the
+restart as an operator turn without a `run_id` (steer notes carry one). On
+Sand the run starts in the loop's sandbox while E2B still has it, otherwise
+in a fresh one, and `agent_id` follows it
+([How a loop runs](sand-e2b.md#how-a-loop-runs)). Each finished iteration (number,
 outcome, duration, tokens, cost, commit range, validation, open plan items)
 is copied into `state.db` as the runner reports it, because a Sand sandbox
 and ralph's own database go when the loop ends.
@@ -267,6 +317,9 @@ these terminal result fields when the provider supplies them:
 - `duration_ms` — the runner's terminal run duration; and
 - `git_pr_url` — a validated `https://github.com/.../pull/:number` URL.
 
+Every record also carries `model` and `effort` when the launch asked for
+them; absent means the runner's default.
+
 A loop mission also carries `loop`: its `mode`, optional `issue_id`,
 `harness`, `model`, `effort`, `max_iterations` and
 `iteration_timeout_minutes`, and, once its current run has ended,
@@ -294,7 +347,9 @@ the agent's words and errors stay in the sandbox. A loop's mission thread
 shows these rows above its conversation, grouped by run once it has been
 restarted, with its stop reason and a needs-person badge after it ends.
 Live events carry no iteration boundaries, so the thread re-reads this list
-every few seconds while the loop runs. A loop thread takes no replies.
+every few seconds while the loop runs. A loop thread takes no replies; an
+ended loop's footer offers Restart with its iteration limit, editable, when
+dispatch is armed and its runner runs loops.
 
 `GET /api/status` reports `dispatch.capabilities` for the default provider
 and `dispatch.providers` (`id`, `label`, `capabilities`) for every configured

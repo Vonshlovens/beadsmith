@@ -27,6 +27,13 @@ const EVENT_ID = /^e(\d{9})$/;
 export interface ChatMeta {
 	session_id: string;
 	scope: string | null;
+	/**
+	 * Model and effort the CLI runs with, from the chat's first message and
+	 * fixed for its life, so every relaunch (`--resume`) keeps them. Absent:
+	 * the CLI's default.
+	 */
+	model?: string;
+	effort?: string;
 	/** Messages accepted whose turn has not ended (queued or running). */
 	pending?: number;
 	created_at: string;

@@ -106,6 +106,17 @@ describe('deliverCrewNotice', () => {
 		expect((await dispatch.get(record.id))!.chat_notice).toBe('succeeded:run-1');
 	});
 
+	it('sends the chat model and effort, which the runner holds the chat to', async () => {
+		const chat = await mate.createChat('u1', {
+			title: 't',
+			scope: null,
+			model: 'claude-opus-5-5',
+			effort: 'high'
+		});
+		expect(await deliverCrewNotice(await chatMission(chat.id), deps)).toBe('sent');
+		expect(sent[0].input).toMatchObject({ model: 'claude-opus-5-5', effort: 'high' });
+	});
+
 	it('sends nothing after a restart once the outcome was told', async () => {
 		const chat = await mate.createChat('u1', { title: 't', scope: null });
 		const record = await chatMission(chat.id);

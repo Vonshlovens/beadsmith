@@ -166,6 +166,8 @@ export class AgentSession {
 	/** Next transcript line to read (from 1). */
 	#next_line = 1;
 	#last_line = 0;
+	/** Last transcript line to read: a {@link replay}'s end bound. */
+	#until = Infinity;
 	#next_synthetic = SYNTHETIC_INDEX;
 	#drain_chain: Promise<void> = Promise.resolve();
 	/** A turn being closed or the session being ended, for {@link settled}. */
@@ -348,6 +350,34 @@ export class AgentSession {
 			this.#seek((lines ?? 0) + 1);
 		}
 		await this.#follow(client, lines !== undefined, options.relaunch ?? true);
+	}
+
+	/**
+	 * Emit a finished turn's transcript events again: lines `turn.first_line`
+	 * through `last_line` (to the transcript's current end when undefined),
+	 * mapped as they were live, so ids match and `after` filters what the
+	 * client has. Reads the file only: no subscription, no terminal, nothing
+	 * started; the session's own events (the turn's `result`) are the
+	 * caller's, since only it knows how the turn ended. Returns the last line
+	 * read (`turn.first_line - 1` when none was).
+	 *
+	 * The bound matters because the CLI keeps one transcript across turns: a
+	 * replay without it would run on into later turns' events.
+	 */
+	async replay(client: HcClient, turn: TurnMark, last_line?: number): Promise<number> {
+		if (this.#client !== undefined || this.#terminal !== undefined || this.#state === 'ended') {
+			throw new SessionError('conflict', 'session already started');
+		}
+		this.#seek(turn.first_line);
+		this.#until = last_line ?? Infinity;
+		this.#client = client;
+		try {
+			await this.#drain();
+		} finally {
+			this.#client = undefined;
+			this.#until = Infinity;
+		}
+		return this.#next_line - 1;
 	}
 
 	/**
@@ -672,12 +702,12 @@ export class AgentSession {
 	async #readTranscript(): Promise<void> {
 		for (;;) {
 			const client = this.#client;
-			if (client === undefined) return;
+			if (client === undefined || this.#next_line > this.#until) return;
 			let chunk;
 			try {
 				chunk = await client.readFile(this.#transcript, {
 					offset: this.#next_line,
-					limit: READ_LIMIT
+					limit: Math.min(READ_LIMIT, this.#until - this.#next_line + 1)
 				});
 			} catch {
 				// Not written yet, or the channel is going away: the next poll retries.
@@ -697,7 +727,7 @@ export class AgentSession {
 				this.#emitLine(line, line_number);
 				this.#next_line = line_number + 1;
 			}
-			if (chunk.last >= chunk.lines) return;
+			if (chunk.last >= chunk.lines || this.#next_line > this.#until) return;
 		}
 	}
 

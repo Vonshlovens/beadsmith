@@ -247,7 +247,12 @@ Shipped:
   (`attach` with `relaunch: false` for reads, so a lost terminal fails the
   turn instead of starting the CLI). The CLI session id is sandbox
   metadata; a follow-up is the next message to the running CLI. A stream of
-  a finished run sends its stored result only. The dispatch stream-json
+  a finished run replays its turn's transcript lines (`AgentSession.replay`,
+  file reads only) from the turn mark's first line to the line the stored
+  result's event id names (for a run cancelled before it stored a result,
+  its `end`: the transcript's length when it was stopped, cut at the
+  `start-line` a later run records as it claims its start), then the stored
+  result, so a follow-up's events never appear in an earlier run's thread. The dispatch stream-json
   mapping is gone.
 - First Mate chats run on the session core on both runners
   (`src/lib/mate-runner/session.ts`, `ChatAgent`), and the mate runner's
@@ -290,7 +295,7 @@ Shipped:
   stream instead of growing a buffer.
 - The terminal view (`src/lib/components/terminal-view.svelte`, xterm.js
   loaded on first open) in mission threads and First Mate chats, for admins
-  on runners whose `terminal` capability is set (Sand; the provider and
+  on runners whose `terminal` capability is set (Sand, and forge chats; the provider and
   chat-runner tables say which implement `attachTerminal`). Closed until
   asked; Watch follows the agent's grid; Take over is behind a confirm and
   hands back by re-attaching as a watcher. While taken over every key goes
@@ -299,12 +304,35 @@ Shipped:
   the same mode; a refusal or an exited program does not. State, SSE
   parsing and ordered input are `src/lib/client/terminal-relay.ts`.
 
-Planned, each in its own change:
+- The forge guest's hc (`fleet/hosts/forge/guests/mate.nix`): the
+  overlay's `beadsmith-hc` from the shared pin, and one core per guest as
+  `hc-core.service`, a user service of the lingering `agent` account,
+  rather than the core `hc connect` would start inside the runner's SSH
+  session and lose with it. The runner's `MATE_AGENT_HC` points at it and
+  its terminals run `mate-claude` (Claude Code with the model gateway)
+  directly. This replaces ADR-0016's per-launch transient service and its
+  supervisor, which exited on stdin EOF: a CLI in a terminal has no pipe
+  to watch and must outlive its channel. Cleanup is now hc's terminal kill,
+  which ends the CLI and everything in its session; a descendant that
+  detaches into its own session lives until the core service stops (its
+  cgroup holds every agent process). `agent-claude-first-run` merges the
+  first-run answers into the agent's state on the volume. The live check
+  is `fleet/hosts/forge/guest-lifecycle.test.mjs`
+  ([host-forge.md](../../docs/operations/host-forge.md#guest-lifecycle-smoke-test)).
 
-- the forge guest's hc and the runner wired to it;
-- the relay on forge: the mate runner's signed contract gains an attach
-  endpoint the host runner serves over its SSH `hc connect` (forge chats
-  answer 409 until then).
+- The relay on forge (rule 4's last point): mate runner contract v1 gains
+  a terminal attach (`POST /v1/mate/chats/{chat}/terminal`, an SSE stream
+  of `open`, `output`, `resize` and `end`, and
+  `POST …/terminal/{attach}` for a take-over's keystrokes and size;
+  [first-mate.md](../../docs/first-mate.md#terminal-attach)). The host
+  runner opens a new `hc connect` over its SSH for each attach and finds
+  the chat's terminal by its session label, through the same
+  `attachHcTerminal` the Sand relay uses
+  (`src/lib/server/terminal-relay/relay.ts`). It keeps nothing; Beadsmith
+  authorizes and audits as for Sand, and the HTTP `MateRunner` implements
+  `attachTerminal` against it, so forge chats show the terminal view. The
+  contract stays version 1: the routes are additive, and an older runner's
+  404 reads as unreachable.
 
 The current architecture bullet is in [`specs/README.md`](../README.md); the
 contract's rules are in

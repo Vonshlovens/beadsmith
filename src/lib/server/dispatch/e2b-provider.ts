@@ -25,7 +25,9 @@
  *   `turn.json`. The CLI runs on in its terminal with nobody connected.
  * - Status and live events attach a session core to that mark; it says when
  *   the turn ended and how. The first to see the end writes `result.json`,
- *   which later reads return without touching hc. A finished run gets a short
+ *   which later status reads return without touching hc. A stream of a
+ *   finished run replays the turn's transcript lines (from the mark to the
+ *   line the result's event id names) and then that result. A finished run gets a short
  *   idle timeout, after which the sandbox pauses (not billed); a follow-up
  *   resumes it with the CLI still in its terminal.
  *
@@ -37,10 +39,15 @@
  * two hc terminals in the checkout: `ralph serve --no-web` (loopback only)
  * and `ralph <mode>` with the loop's flags, then writes `started`. Status,
  * iterations, events and stop go to ralph's `/v1` as curl commands over the
- * process channel (`../e2b/ralph-transport.ts`). When the loop ends, its
+ * process channel (`../e2b/ralph-transport.ts`). Each read that finds more
+ * iterations finished gives the sandbox the full run limit again, so a loop
+ * may outlast the limit as long as each iteration fits in it; the same reads
+ * replace the egress's GitHub token before its hour runs out. When the loop ends, its
  * result is written to `result.json` and the sandbox gets a short timeout
  * after which E2B destroys it: a loop takes no follow-up, so nothing would
- * resume it.
+ * resume it. A restart in that window is run `r2` (and so on) in the same
+ * sandbox, with a terminal and a ralph name of its own; after it, the next
+ * run starts in a fresh sandbox.
  *
  * Keys stay outside the sandbox (ADR-0015, rule 6): the Anthropic key and the
  * GitHub token are added to outbound requests by E2B's egress proxy; inside,
@@ -50,7 +57,7 @@
 import { randomUUID } from 'node:crypto';
 import { HcError, type HcClient, type HcTerminal } from '#lib/hc/client.js';
 import type { MissionEvent, MissionResultEvent, MissionResultStatus } from '#lib/mission-events.js';
-import { claudeCode } from '#lib/agent-session/claude-code.js';
+import { claudeCode, EFFORT_PATTERN, MODEL_PATTERN } from '#lib/agent-session/claude-code.js';
 import {
 	AgentSession,
 	parseSessionEventId,
@@ -64,11 +71,15 @@ import type { E2bSettings } from '../env.js';
 import { RALPH_STOP_REASONS, type RalphStopReason } from '#lib/ralph.js';
 import {
 	AGENT_BUSY_MESSAGE,
+	LOOP_ALREADY_RESTARTED_MESSAGE,
+	LOOP_NOT_RUNNING_MESSAGE,
+	NOT_A_LOOP_SANDBOX_MESSAGE,
 	RUN_NOT_CANCELLABLE_MESSAGE,
 	type AgentFollowUpRun,
 	type AgentLaunch,
 	type AgentLaunchInput,
 	type AgentLoopLaunchInput,
+	type AgentLoopRestart,
 	type AgentProvider,
 	type AgentRunUpdate,
 	type AgentStreamOptions,
@@ -128,20 +139,58 @@ const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
 const DEFAULT_DOLT_LOCAL_PORT = '3306';
 /** Sandbox metadata key holding the CLI's session id. */
 export const SESSION_METADATA = 'beadsmith_session';
+/**
+ * Sandbox metadata keys holding the model and effort the mission was launched
+ * with, so every relaunch of its CLI (a `--resume` after the terminal went)
+ * runs the same ones. Absent = the CLI's default.
+ */
+export const MODEL_METADATA = 'beadsmith_model';
+export const EFFORT_METADATA = 'beadsmith_effort';
 /** Sandbox metadata key holding a loop's ralph run name; only loop sandboxes have it. */
 export const LOOP_METADATA = 'beadsmith_loop';
 /** hc terminal names in a loop sandbox. */
 export const LOOP_TERMINAL = 'ralph-loop';
 export const SERVE_TERMINAL = 'ralph-serve';
 const LOOP_NAME_PATTERN = /^bdx-(run|plan|build|reverse)-[0-9a-f]{8}$/;
+const LOOP_TERMINAL_PATTERN = /^ralph-loop(-r[1-9][0-9]{0,5})?$/;
+
+/**
+ * A loop run's hc terminal. A restart is a new terminal in the same sandbox
+ * (ADR-0019 rule 2), and hc keeps a finished terminal's record, so each run
+ * after the first gets a name of its own rather than sharing a name with
+ * the run it follows.
+ */
+export function loopTerminalName(run_id: string): string {
+	return run_id === 'r1' ? LOOP_TERMINAL : `${LOOP_TERMINAL}-${run_id}`;
+}
+
+/**
+ * A loop run's ralph name, how `/v1` addresses it. The sandbox metadata
+ * holds the first run's; a restarted run adds its run id, so ralph's record
+ * of the earlier run stays apart.
+ */
+export function loopRunName(base: string, run_id: string): string {
+	return run_id === 'r1' ? base : `${base}-${run_id}`;
+}
 
 /**
  * A start claimed this long ago with no turn written means the Beadsmith
  * process that claimed it died: the CLI's startup limit (2 min) plus room.
  */
 const START_STALE_S = 300;
+/**
+ * A starter acts on the CLI only this long after its claim: a minute short
+ * of START_STALE_S, after which the next run may start without waiting for it.
+ */
+const START_ACT_LIMIT_MS = (START_STALE_S - 60) * 1000;
 /** How long a stream waits for setup and the start before handing back to polling. */
 const STREAM_START_WAIT_MS = 15 * 60_000;
+/**
+ * GitHub installation tokens last an hour. A running loop's egress gets a
+ * new one this long after the last was minted, so the follower's next read
+ * (seconds apart) lands well before the old one expires.
+ */
+const GITHUB_TOKEN_REFRESH_MS = 45 * 60_000;
 /** Characters of the setup log kept for the server log when setup fails. */
 const FAILURE_TAIL_BYTES = 2_000;
 
@@ -191,6 +240,13 @@ export interface RunFiles {
 	ready: boolean;
 	/** Seconds since a Beadsmith process claimed the start. */
 	claim_age_s?: number;
+	/**
+	 * Seconds since the newest start claimed by any earlier run whose starter
+	 * has not finished (no `start-done`, no result). Every earlier run counts,
+	 * not just the previous one: a run cancelled before it claimed a start
+	 * leaves no claim, and an older starter behind it may still be going.
+	 */
+	previous_start_age_s?: number;
 	turn?: TurnMark;
 	/** A loop's ralph terminals are running (loops write this instead of a turn). */
 	started?: boolean;
@@ -213,9 +269,30 @@ function statusCommand(run_id: string): string {
 		`printf 'ready=%s\\n' "$([ -f "$d/ready" ] && echo 1)"`,
 		`printf 'claimed=%s\\n' "$(stat -c %Y "$d/claim" 2>/dev/null)"`,
 		`printf 'started=%s\\n' "$([ -f "$d/started" ] && echo 1)"`,
+		`pc=; for e in $(ls -1 '${RUNS_DIR}' 2>/dev/null | grep -E '^r[0-9]+$' | cut -c2-); do ` +
+			`[ "$e" -lt ${runNumber(run_id)} ] || continue; q='${RUNS_DIR}'/r$e; ` +
+			`{ [ -f "$q/start-done" ] || [ -f "$q/result.json" ]; } && continue; ` +
+			`t=$(stat -c %Y "$q/claim" 2>/dev/null) || continue; ` +
+			`{ [ -z "$pc" ] || [ "$t" -gt "$pc" ]; } && pc=$t; ` +
+			`done`,
+		`printf 'prev_claimed=%s\\n' "$pc"`,
 		`printf 'now=%s\\n' "$(date +%s)"`,
 		`printf 'turn=%s\\n' "$(head -c 4096 "$d/turn.json" 2>/dev/null)"`,
 		`printf 'result=%s\\n' "$(head -c 16384 "$d/result.json" 2>/dev/null)"`
+	].join('; ');
+}
+
+/**
+ * `startFence`'s files: `cancelled=1` when the run is cancelled, `later=1`
+ * when a later run has claimed its start.
+ */
+function startFenceCommand(run_id: string): string {
+	return [
+		`[ -f '${RUNS_DIR}/${run_id}/cancelled' ] && echo cancelled=1`,
+		`for m in $(ls -1 '${RUNS_DIR}' 2>/dev/null | grep -E '^r[0-9]+$' | cut -c2-); do ` +
+			`[ "$m" -gt ${runNumber(run_id)} ] && [ -d '${RUNS_DIR}'/r$m/claim ] && { echo later=1; break; }; ` +
+			`done`,
+		`true`
 	].join('; ');
 }
 
@@ -229,6 +306,64 @@ function cancelCommand(run_id: string): string {
 		`d='${RUNS_DIR}/${run_id}'; [ -d "$d" ] && [ ! -f "$d/exit" ] || exit 3; touch "$d/cancelled"; ` +
 		`[ -f "$d/ready" ] || kill -TERM -- "-$(cat "$d/pid")" 2>/dev/null || kill -TERM "$(cat "$d/pid")" 2>/dev/null; true`
 	);
+}
+
+/**
+ * Claim a run's start (an atomic `mkdir`; exit 1: someone else has it) and
+ * record the transcript's line count as `start-line`, in the same command
+ * and so before this run attaches to the CLI: every line after it is this
+ * run's or later. `transcriptEndCommand` bounds earlier runs by it.
+ */
+function claimTurnCommand(run_id: string, transcript: string): string {
+	return (
+		`d='${RUNS_DIR}/${run_id}'; mkdir "$d/claim" 2>/dev/null || exit 1; ` +
+		`if [ -e '${transcript}' ]; then wc -l < '${transcript}'; else echo 0; fi > "$d/start-line" 2>/dev/null; true`
+	);
+}
+
+/**
+ * Where a finished run's turn ends in the transcript, as one snapshot: the
+ * run's stored `end` if it has one; otherwise the transcript's line count,
+ * then each later run's `start-line` and `turn.json` in run order. The count
+ * comes first, so a later run without a start line had not yet claimed its
+ * start when it was taken, and wrote nothing before it.
+ */
+function transcriptEndCommand(run_id: string, transcript: string): string {
+	const n = runNumber(run_id);
+	return [
+		`d='${RUNS_DIR}/${run_id}'`,
+		`if [ -f "$d/end" ]; then printf 'end=%s\\n' "$(cat "$d/end")"; exit 0; fi`,
+		`printf 'lines=%s\\n' "$(if [ -e '${transcript}' ]; then wc -l < '${transcript}'; else echo 0; fi)"`,
+		`for m in $(ls -1 '${RUNS_DIR}' 2>/dev/null | grep -E '^r[0-9]+$' | cut -c2- | sort -n); do ` +
+			`[ "$m" -gt ${n} ] || continue; ` +
+			`printf 'later=%s|%s\\n' "$(cat '${RUNS_DIR}'/r$m/start-line 2>/dev/null)" "$(head -c 4096 '${RUNS_DIR}'/r$m/turn.json 2>/dev/null)"; ` +
+			`done`
+	].join('; ');
+}
+
+/**
+ * The bound `transcriptEndCommand` reports: the stored end, or the smaller
+ * of the transcript's count and the first later run's start (its start line,
+ * or for a run from before start lines, its turn's first line less one).
+ * Undefined when nothing bounds it: the transcript could not be counted and
+ * no later run started.
+ */
+export function parseTranscriptEnd(stdout: string): number | undefined {
+	let lines: number | undefined;
+	for (const line of stdout.split('\n')) {
+		if (line.startsWith('end=')) return readInt(line.slice(4).trim());
+		if (line.startsWith('lines=')) lines = readInt(line.slice(6).trim());
+		if (!line.startsWith('later=')) continue;
+		const bar = line.indexOf('|');
+		const start =
+			readInt(line.slice(6, bar).trim()) ??
+			(() => {
+				const turn = parseTurn(parseJson(line.slice(bar + 1).trim()));
+				return turn === undefined ? undefined : turn.first_line - 1;
+			})();
+		if (start !== undefined) return lines === undefined ? start : Math.min(lines, start);
+	}
+	return lines;
 }
 
 function readInt(value: string | undefined): number | undefined {
@@ -309,6 +444,10 @@ export function parseRunFiles(stdout: string): RunFiles {
 		ready: fields.get('ready') === '1'
 	};
 	if (claimed !== undefined && now !== undefined) files.claim_age_s = Math.max(0, now - claimed);
+	const prev_claimed = readInt(fields.get('prev_claimed'));
+	if (prev_claimed !== undefined && now !== undefined) {
+		files.previous_start_age_s = Math.max(0, now - prev_claimed);
+	}
 	if (fields.get('started') === '1') files.started = true;
 	const turn = parseTurn(parseJson(fields.get('turn')));
 	if (turn !== undefined) files.turn = turn;
@@ -434,6 +573,14 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 	const wait_ms = deps.timing?.wait_ms ?? 2_000;
 	/** Terminal results already read, so a paused sandbox is not resumed to re-read them. */
 	const finished = new Map<string, AgentRunUpdate>();
+	/** Per running loop run: how many iterations had finished when its sandbox last got more time. */
+	const extended = new Map<string, number>();
+	/**
+	 * Per loop sandbox with a checkout: when the GitHub token now at its
+	 * egress was minted (taken before the request, so it errs early). Lost on
+	 * a server restart, which makes the next read of a running loop mint again.
+	 */
+	const github_minted = new Map<string, number>();
 	const sink = deps.log ?? ((message: string) => console.warn(message));
 	// E2B errors can echo request headers; strip credential shapes first.
 	const log = (message: string) => sink(sanitizeResultSummary(message, '') ?? message);
@@ -504,15 +651,31 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		return id !== undefined && SESSION_ID_PATTERN.test(id) ? id : undefined;
 	}
 
+	/** The model and effort a mission's sandbox was launched with, when well-formed. */
+	function choiceOf(info: SandboxInfo): { model?: string; effort?: string } {
+		const model = info.metadata[MODEL_METADATA];
+		const effort = info.metadata[EFFORT_METADATA];
+		return {
+			...(model !== undefined && MODEL_PATTERN.test(model) ? { model } : {}),
+			...(effort !== undefined && EFFORT_PATTERN.test(effort) ? { effort } : {})
+		};
+	}
+
+	/** A session on the mission's CLI; `info` must be a mission sandbox (it has a session id). */
 	function newSession(
-		session_id: string,
+		info: SandboxInfo,
 		redact: string,
 		on_event: (event: MissionEvent) => void,
 		options: { after?: string; on_state?: (state: string) => void } = {}
 	): AgentSession {
 		return new AgentSession({
 			harness: claudeCode,
-			launch: { session_id, cwd: WORK_DIR, config_dir: CLAUDE_CONFIG_DIR },
+			launch: {
+				session_id: sessionIdOf(info)!,
+				cwd: WORK_DIR,
+				config_dir: CLAUDE_CONFIG_DIR,
+				...choiceOf(info)
+			},
 			redact,
 			after: options.after,
 			onEvent: on_event,
@@ -611,6 +774,20 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		return parseRunFiles(stdout);
 	}
 
+	/**
+	 * A starter's check before it acts on the CLI: whether its run is
+	 * cancelled, and whether any later run has claimed its start, after which
+	 * the one CLI session is that run's.
+	 */
+	async function startFence(
+		sandbox: SandboxRef,
+		run_id: string
+	): Promise<{ cancelled: boolean; superseded: boolean }> {
+		const { stdout } = await sandbox.exec(startFenceCommand(run_id));
+		const fields = stdout.split('\n').map((line) => line.trim());
+		return { cancelled: fields.includes('cancelled=1'), superseded: fields.includes('later=1') };
+	}
+
 	async function writeResult(sandbox: SandboxRef, run_id: string, result: StoredResult) {
 		await sandbox.writeFile(`${RUNS_DIR}/${run_id}/result.json`, JSON.stringify(result));
 	}
@@ -620,6 +797,21 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 	 * attach the session core (it follows the live CLI or launches one),
 	 * send the prompt, record the turn's mark. A start that fails records a
 	 * failed result instead.
+	 *
+	 * A cancel can land while this runs (the launch alone may take the CLI's
+	 * whole startup limit) and find no terminal to end yet; the cancelled mark
+	 * is all it leaves. So the mark is read before attaching, again once the
+	 * CLI is attached, before the prompt goes, and once more after: whichever
+	 * check sees it ends the CLI, and the run reads cancelled from the mark.
+	 *
+	 * Every run of a mission shares one CLI session, so a cancelled run's
+	 * starter that resumed after a follow-up started would attach to the
+	 * follow-up's CLI and end it. Two guards keep them apart: a later run's
+	 * turn waits until every earlier starter writes `start-done` (see
+	 * `advance`; a cancelled run in between may never have claimed, so the
+	 * previous run alone is not enough), and a starter leaves the CLI alone
+	 * once a later run has claimed its start or once it has stalled past
+	 * START_ACT_LIMIT_MS, when later runs stop waiting for it.
 	 */
 	async function startTurn(
 		sandbox: SandboxRef,
@@ -628,18 +820,38 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		redact: string
 	): Promise<void> {
 		const dir = `${RUNS_DIR}/${run_id}`;
-		const claim = await sandbox.exec(`mkdir '${dir}/claim' 2>/dev/null`);
+		const claim = await sandbox.exec(claimTurnCommand(run_id, transcriptOf(info)));
 		if (claim.exit_code !== 0) return;
-		const session_id = sessionIdOf(info)!;
+		const claimed_at = Date.now();
+		/**
+		 * Whether the run is cancelled, and whether the CLI is still this
+		 * run's to act on: false once a later run claimed its start, or may
+		 * have stopped waiting for this one.
+		 */
+		const check = async () => {
+			const fence = await startFence(sandbox, run_id);
+			const mine = !fence.superseded && Date.now() - claimed_at < START_ACT_LIMIT_MS;
+			return { cancelled: fence.cancelled, mine };
+		};
 		let client: HcClient | undefined;
 		let session: AgentSession | undefined;
 		try {
 			const { stdout: prompt } = await sandbox.exec(`cat '${dir}/prompt'`);
+			let state = await check();
+			if (state.cancelled || !state.mine) return;
 			client = await connectHc(sandbox);
-			session = newSession(session_id, redact, () => {});
+			session = newSession(info, redact, () => {});
 			await session.attach(client);
+			state = await check();
+			if (!state.mine) return;
+			if (state.cancelled) {
+				await session.cancel();
+				return;
+			}
 			const mark = await session.send(prompt);
 			await sandbox.writeFile(`${dir}/turn.json`, JSON.stringify(mark));
+			state = await check();
+			if (state.cancelled && state.mine) await session.cancel();
 		} catch (error) {
 			log(`Sand mission ${sandbox.id}/${run_id}: the agent could not start: ${String(error)}`);
 			const message =
@@ -654,6 +866,8 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		} finally {
 			session?.close();
 			client?.close();
+			// The next run's turn waits for this (see `advance`).
+			await sandbox.writeFile(`${dir}/start-done`, '').catch(() => undefined);
 		}
 	}
 
@@ -663,7 +877,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 	 */
 	async function observeTurn(
 		sandbox: SandboxRef,
-		session_id: string,
+		info: SandboxInfo,
 		run_id: string,
 		turn: TurnMark,
 		redact: string
@@ -671,7 +885,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		let result: MissionResultEvent | undefined;
 		let error_message: string | undefined;
 		const client = await connectHc(sandbox);
-		const session = newSession(session_id, redact, (event) => {
+		const session = newSession(info, redact, (event) => {
 			if (event.type === 'result') result ??= event;
 			else if (event.type === 'error') error_message ??= event.message;
 		});
@@ -717,10 +931,12 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 	): Promise<boolean> {
 		const { exit_code } = await sandbox.exec(cancelCommand(run_id));
 		if (exit_code === 3) return false;
-		const session_id = sessionIdOf(info);
-		if (session_id !== undefined && (files.turn !== undefined || files.claim_age_s !== undefined)) {
+		if (
+			sessionIdOf(info) !== undefined &&
+			(files.turn !== undefined || files.claim_age_s !== undefined)
+		) {
 			const client = await connectHc(sandbox);
-			const session = newSession(session_id, '', () => {});
+			const session = newSession(info, '', () => {});
 			try {
 				await session.attach(client, { turn: files.turn, relaunch: false });
 				await session.cancel();
@@ -728,6 +944,10 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 				session.close();
 				client.close();
 			}
+			// The CLI is gone, so the transcript's end is this turn's: keep it
+			// before a follow-up writes past it (see `turnEndLine`).
+			if (files.turn !== undefined)
+				await transcriptEnd(sandbox, info, run_id).catch(() => undefined);
 		}
 		return true;
 	}
@@ -759,7 +979,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		info: SandboxInfo,
 		run_id: string,
 		redact: string
-	): Promise<{ done?: StoredResult; turn?: TurnMark }> {
+	): Promise<{ done?: StoredResult; turn?: TurnMark; files?: RunFiles }> {
 		let files = await readRun(sandbox, run_id);
 		if (sessionIdOf(info) === undefined && settledUpdate(files) === undefined) {
 			return {
@@ -769,8 +989,11 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 				}
 			};
 		}
+		// An earlier run's starter, if still going, could act on the one CLI
+		// session this turn is about to use (see `startTurn`): wait for it.
+		const previous_starting = (files.previous_start_age_s ?? Infinity) <= START_STALE_S;
 		if (files.ready && files.turn === undefined && files.claim_age_s === undefined) {
-			if (!files.cancelled && files.result === undefined) {
+			if (!files.cancelled && files.result === undefined && !previous_starting) {
 				await startTurn(sandbox, info, run_id, redact);
 				files = await readRun(sandbox, run_id);
 			}
@@ -780,9 +1003,97 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			if (done.status === 'failed' && files.exit_code !== undefined && files.result === undefined) {
 				await logSetupFailure(sandbox, run_id, files.exit_code, redact);
 			}
-			return { done };
+			return { done, files };
 		}
 		return { turn: files.turn };
+	}
+
+	/** The CLI session's transcript in the sandbox. */
+	function transcriptOf(info: SandboxInfo): string {
+		return claudeCode.transcriptPath({
+			session_id: sessionIdOf(info)!,
+			cwd: WORK_DIR,
+			config_dir: CLAUDE_CONFIG_DIR
+		});
+	}
+
+	/**
+	 * A finished run's transcript end, kept in its `end` file: read once
+	 * (see `transcriptEndCommand`), then stored if no other reader stored
+	 * one first, so every replay of the run reads the same range.
+	 */
+	async function transcriptEnd(
+		sandbox: SandboxRef,
+		info: SandboxInfo,
+		run_id: string
+	): Promise<number | undefined> {
+		const { stdout } = await sandbox.exec(transcriptEndCommand(run_id, transcriptOf(info)));
+		const end = parseTranscriptEnd(stdout);
+		if (end === undefined || stdout.startsWith('end=')) return end;
+		const stored = await sandbox
+			.exec(
+				`d='${RUNS_DIR}/${run_id}'; (set -C; printf '%s\\n' ${end} > "$d/end") 2>/dev/null; cat "$d/end"`
+			)
+			.catch(() => undefined);
+		return readInt(stored?.stdout.trim()) ?? end;
+	}
+
+	/**
+	 * The last transcript line of a finished run's turn. The result's event
+	 * id names it (the session core gives its own events the last line it
+	 * read). A run cancelled before a result was stored has none: then its
+	 * stored `end`, which `stopRun` writes once the CLI is gone. A run
+	 * without one (an older run, or a stop that could not reach hc) takes
+	 * the bound now, in one command before anything is awaited: the
+	 * transcript's current end, cut at the first later run that claimed its
+	 * start. Later runs that never started wrote nothing to the transcript,
+	 * so they are skipped. Undefined: no bound could be taken, and nothing is
+	 * replayed rather than running on into a follow-up's turn.
+	 */
+	async function turnEndLine(
+		sandbox: SandboxRef,
+		info: SandboxInfo,
+		run_id: string,
+		files: RunFiles
+	): Promise<number | undefined> {
+		const stored = parseSessionEventId(files.result?.event_id);
+		if (stored !== undefined) return stored.line;
+		return transcriptEnd(sandbox, info, run_id);
+	}
+
+	/**
+	 * Emit a finished run's transcript events (those after `after`) by
+	 * reading the transcript between its turn's first and last lines. Returns
+	 * the last line read, or undefined when the run had no turn to replay.
+	 * A transcript that cannot be read leaves the stream with its result only.
+	 */
+	async function replayTurn(
+		sandbox: SandboxRef,
+		info: SandboxInfo,
+		run_id: string,
+		files: RunFiles,
+		redact: string,
+		on_event: (event: MissionEvent) => Promise<void>,
+		after: string | undefined
+	): Promise<number | undefined> {
+		if (files.turn === undefined || sessionIdOf(info) === undefined) return undefined;
+		const events: MissionEvent[] = [];
+		let client: HcClient | undefined;
+		let last: number;
+		try {
+			const end = await turnEndLine(sandbox, info, run_id, files);
+			if (end === undefined) throw new Error('no transcript bound for this run');
+			client = await connectHc(sandbox);
+			const session = newSession(info, redact, (event) => void events.push(event), { after });
+			last = await session.replay(client, files.turn, end);
+		} catch (error) {
+			log(`Sand mission ${sandbox.id}/${run_id}: transcript replay failed: ${String(error)}`);
+			return undefined;
+		} finally {
+			client?.close();
+		}
+		for (const event of events) await on_event(event);
+		return last;
 	}
 
 	// ---------------------------------------------------------------- loops
@@ -830,7 +1141,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			await client.run({
 				argv,
 				cwd: WORK_DIR,
-				name: LOOP_TERMINAL,
+				name: loopTerminalName(run_id),
 				labels: { beadsmith: 'loop' }
 			});
 			await sandbox.writeFile(`${dir}/started`, '');
@@ -845,12 +1156,15 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		}
 	}
 
-	/** The loop terminal's record, or undefined when hc cannot say. */
-	async function loopTerminal(sandbox: SandboxRef): Promise<HcTerminal | undefined> {
+	/** A loop run's terminal record, or undefined when hc cannot say. */
+	async function loopTerminal(
+		sandbox: SandboxRef,
+		run_id: string
+	): Promise<HcTerminal | undefined> {
 		let client: HcClient | undefined;
 		try {
 			client = await connectHc(sandbox);
-			return await client.get(LOOP_TERMINAL);
+			return await client.get(loopTerminalName(run_id));
 		} catch {
 			return undefined;
 		} finally {
@@ -916,7 +1230,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			detail = await ralph.getRun(name);
 		} catch (error) {
 			if (!(error instanceof RalphError)) throw error;
-			const terminal = await loopTerminal(sandbox);
+			const terminal = await loopTerminal(sandbox, run_id);
 			if (error.status === 404 && terminal?.state === 'finished') {
 				// ralph ended without recording the loop (not installed, bad flags).
 				const done: StoredResult = {
@@ -932,7 +1246,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		}
 		const { run, iterations } = detail;
 		if (run.status === 'running' && run.alive) return { running: true, iterations };
-		const terminal = await loopTerminal(sandbox);
+		const terminal = await loopTerminal(sandbox, run_id);
 		const report = await ralph.getReport(name).catch(() => undefined);
 		const outcome = ralphOutcome({ stop_reason: run.stop_reason, exit_code: terminal?.exit_code });
 		const summary = [
@@ -956,7 +1270,64 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 
 	/** A loop has ended: E2B destroys its sandbox after the idle window. */
 	async function retireLoop(sandbox: SandboxRef): Promise<void> {
+		for (const key of extended.keys()) {
+			if (key.startsWith(`${sandbox.id}/`)) extended.delete(key);
+		}
+		github_minted.delete(sandbox.id);
 		await sandbox.setTimeout(idle_ms).catch(() => undefined);
+	}
+
+	/**
+	 * A loop may run for longer than the run limit, as long as it keeps
+	 * finishing iterations: each time a reader sees ralph alive with more
+	 * finished iterations than at the last extension, the sandbox gets the
+	 * full run limit again from now. One iteration still has to fit in the
+	 * run limit, so a loop stuck in an iteration (or a dead ralph) is cut off
+	 * there rather than kept alive and billed. ralph's own iteration limit
+	 * and iteration timeout bound an honest loop; E2B's longest sandbox
+	 * session bounds the rest. The first sight of a run after Beadsmith
+	 * starts counts as progress, so a restart costs at most one extension.
+	 *
+	 * Extension, not pause and resume: a paused sandbox loses its tailnet
+	 * node and the agent's open model connection mid-iteration, and nothing
+	 * would resume it unasked. The dispatch follower keeps reading a loop
+	 * until it ends (`dispatch/service.ts`), so the extension happens even
+	 * with no browser open.
+	 */
+	async function extendLoop(sandbox: SandboxRef, run_id: string, finished_count: number) {
+		const key = `${sandbox.id}/${run_id}`;
+		const last = extended.get(key);
+		if (last !== undefined && finished_count <= last) return;
+		try {
+			await sandbox.setTimeout(max_run_ms);
+			extended.set(key, finished_count);
+		} catch (error) {
+			log(`Sand loop ${sandbox.id}: could not extend the run limit: ${String(error)}`);
+		}
+	}
+
+	/**
+	 * Keep a running loop's GitHub token fresh. The token minted at launch or
+	 * restart lasts an hour and a loop may run for many, so once it is
+	 * GITHUB_TOKEN_REFRESH_MS old the egress rules are replaced with a new
+	 * one of the same scope (one repository, write). The token stays at the
+	 * egress (ADR-0015 rule 6); the sandbox keeps its placeholder. A loop
+	 * this process has not minted for (Beadsmith restarted since) gets one
+	 * on its first read. A failed refresh is logged and tried again on the
+	 * next read; the old token still works until its hour is up.
+	 */
+	async function refreshLoopGithub(sandbox: SandboxRef, info: SandboxInfo): Promise<void> {
+		const repository = info.metadata.beadsmith_repository;
+		if (repository === undefined || repository === '') return;
+		const minted = github_minted.get(sandbox.id);
+		if (minted !== undefined && Date.now() - minted < GITHUB_TOKEN_REFRESH_MS) return;
+		const at = Date.now();
+		try {
+			await sandbox.updateNetwork(await networkFor(info.metadata));
+			github_minted.set(sandbox.id, at);
+		} catch (error) {
+			log(`Sand loop ${sandbox.id}: could not refresh the GitHub token: ${String(error)}`);
+		}
 	}
 
 	/** Stop a loop now: ralph records the operator stop, then its terminal goes. */
@@ -975,7 +1346,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			let client: HcClient | undefined;
 			try {
 				client = await connectHc(sandbox);
-				await client.kill(LOOP_TERMINAL);
+				await client.kill(loopTerminalName(run_id));
 			} catch {
 				// Already finished, or never started: the cancelled mark decides.
 			} finally {
@@ -984,6 +1355,123 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		}
 		await retireLoop(sandbox);
 		return true;
+	}
+
+	/**
+	 * A started, unsettled loop's sandbox and ralph client, for steer and
+	 * graceful stop. Anything else (gone, not a loop, still in setup, ended)
+	 * is a conflict: the control has nothing to act on.
+	 */
+	async function runningLoop(
+		agent_id: string,
+		run_id: string
+	): Promise<{ ralph: RalphClient; name: string }> {
+		requireRunId(run_id);
+		const info = await driver.info(requireSandboxId(agent_id));
+		const base = info === undefined ? undefined : loopNameOf(info);
+		if (info === undefined || base === undefined || info.state === 'paused') {
+			throw new DispatchError('conflict', LOOP_NOT_RUNNING_MESSAGE);
+		}
+		const sandbox = await connectOrGone(agent_id, idle_ms);
+		const files = await readRun(sandbox, run_id);
+		if (files.started !== true || settledUpdate(files) !== undefined) {
+			throw new DispatchError('conflict', LOOP_NOT_RUNNING_MESSAGE);
+		}
+		return { ralph: new RalphClient(ralphFetch(sandbox), ''), name: loopRunName(base, run_id) };
+	}
+
+	/** ralph refused a control: 404/409 mean the run is not running; anything else, unreachable. */
+	function loopControlError(error: unknown, what: string): DispatchError {
+		if (error instanceof DispatchError) return error;
+		if (error instanceof RalphError && (error.status === 404 || error.status === 409)) {
+			return new DispatchError('conflict', LOOP_NOT_RUNNING_MESSAGE);
+		}
+		log(`Sand loop ${what} failed: ${String(error)}`);
+		return new DispatchError('unavailable', `${deps.label} could not reach the loop.`);
+	}
+
+	/** Write a loop run's command line and start its setup; the first reader then starts ralph. */
+	async function startLoopRun(
+		sandbox: SandboxRef,
+		run_id: string,
+		base: string,
+		loop: AgentLoopLaunchInput['loop']
+	): Promise<void> {
+		const dir = `${RUNS_DIR}/${run_id}`;
+		await sandbox.exec(`mkdir -p '${dir}'`);
+		await sandbox.writeFile(
+			`${dir}/loop.json`,
+			JSON.stringify(ralphArgv(loopRunName(base, run_id), loop))
+		);
+		await sandbox.start(`beadsmith-run ${run_id}`, { BEADSMITH_TS_AUTHKEY: await mintTailscale() });
+	}
+
+	/** A loop in a sandbox of its own, starting at `run_id` (r1, or the next run of a restart). */
+	async function launchLoopSandbox(
+		input: AgentLoopLaunchInput,
+		run_id: string
+	): Promise<AgentLoopRestart> {
+		const base = `bdx-${input.loop.mode}-${randomUUID().slice(0, 8)}`;
+		const minted = Date.now();
+		// Every loop mode writes Beads or code, so its checkout can push.
+		const sandbox = await createSandbox({
+			name: input.name,
+			dolt_database: input.dolt_database,
+			repository: input.repository,
+			write: true,
+			metadata: { [LOOP_METADATA]: base },
+			// Nothing resumes a loop's sandbox, so its timeout destroys it.
+			on_timeout: 'kill'
+		});
+		try {
+			await startLoopRun(sandbox, run_id, base, input.loop);
+		} catch (error) {
+			await sandbox.kill().catch(() => undefined);
+			if (error instanceof DispatchError) throw error;
+			log(`Sand loop ${sandbox.id}: setup could not start: ${String(error)}`);
+			throw new DispatchError('unavailable', `${deps.label} could not start the loop.`);
+		}
+		if (input.repository !== undefined) github_minted.set(sandbox.id, minted);
+		return { agent_id: sandbox.id, run_id };
+	}
+
+	/**
+	 * Start run `run_id` in a loop's live sandbox. The checkout is already
+	 * there, so `beadsmith-run` only rejoins the tailnet and readies hc. The
+	 * sandbox gets a fresh GitHub token (they last an hour) and the full run
+	 * limit back. A previous run the sandbox still counts as working was
+	 * already reported ended (the service restarts only an ended mission), so
+	 * it is stopped first rather than left running beside the new one.
+	 */
+	async function restartInSandbox(
+		sandbox: SandboxRef,
+		info: SandboxInfo,
+		base: string,
+		run_id: string,
+		loop: AgentLoopLaunchInput['loop']
+	): Promise<void> {
+		const latest = await latestRunId(sandbox);
+		if (latest !== undefined && runNumber(latest) >= runNumber(run_id)) {
+			throw new DispatchError('conflict', LOOP_ALREADY_RESTARTED_MESSAGE);
+		}
+		if (latest !== undefined) {
+			const files = await readRun(sandbox, latest);
+			if (settledUpdate(files) === undefined) {
+				await stopLoop(sandbox, latest, loopRunName(base, latest), files);
+			}
+		}
+		try {
+			const minted = Date.now();
+			await sandbox.updateNetwork(await networkFor(info.metadata));
+			github_minted.set(sandbox.id, minted);
+			await sandbox.setTimeout(max_run_ms);
+			await startLoopRun(sandbox, run_id, base, loop);
+		} catch (error) {
+			await retireLoop(sandbox);
+			if (error instanceof DispatchError) throw error;
+			log(`Sand loop ${sandbox.id}: restart could not start: ${String(error)}`);
+			throw new DispatchError('unavailable', `${deps.label} could not restart the loop.`);
+		}
 	}
 
 	/** getRun for a loop sandbox. */
@@ -1005,7 +1493,14 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			observed.iterations === undefined || observed.iterations.length === 0
 				? {}
 				: { iterations: observed.iterations };
-		if ('running' in observed) return { status: 'running', ...iterations };
+		if ('running' in observed) {
+			// Iterations come back only when ralph reports the run alive.
+			if (observed.iterations !== undefined) {
+				await extendLoop(sandbox, run_id, observed.iterations.length);
+			}
+			await refreshLoopGithub(sandbox, info);
+			return { status: 'running', ...iterations };
+		}
 		await retireLoop(sandbox);
 		return { ...publicUpdate(observed.done), ...iterations };
 	}
@@ -1097,7 +1592,8 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 				requireSandboxId(agent_id),
 				(live, info) => {
 					if (loopNameOf(info) !== undefined) {
-						return live.find((terminal) => terminal.name === LOOP_TERMINAL);
+						// Only the current run's terminal is live; earlier runs' have finished.
+						return live.findLast((terminal) => LOOP_TERMINAL_PATTERN.test(terminal.name ?? ''));
 					}
 					const session_id = sessionIdOf(info);
 					if (session_id === undefined) return undefined;
@@ -1113,7 +1609,11 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 				dolt_database: input.dolt_database,
 				repository: input.repository,
 				write: input.auto_create_pr,
-				metadata: { [SESSION_METADATA]: randomUUID() },
+				metadata: {
+					[SESSION_METADATA]: randomUUID(),
+					...(input.model === undefined ? {} : { [MODEL_METADATA]: input.model }),
+					...(input.effort === undefined ? {} : { [EFFORT_METADATA]: input.effort })
+				},
 				on_timeout: 'pause'
 			});
 			try {
@@ -1128,30 +1628,39 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			return { agent_id: sandbox.id, run_id: 'r1' };
 		},
 
-		async launchLoop(input: AgentLoopLaunchInput): Promise<AgentLaunch> {
-			const name = `bdx-${input.loop.mode}-${randomUUID().slice(0, 8)}`;
-			// Every loop mode writes Beads or code, so its checkout can push.
-			const sandbox = await createSandbox({
-				name: input.name,
-				dolt_database: input.dolt_database,
-				repository: input.repository,
-				write: true,
-				metadata: { [LOOP_METADATA]: name },
-				// Nothing resumes a loop's sandbox, so its timeout destroys it.
-				on_timeout: 'kill'
-			});
-			try {
-				const dir = `${RUNS_DIR}/r1`;
-				await sandbox.exec(`mkdir -p '${dir}'`);
-				await sandbox.writeFile(`${dir}/loop.json`, JSON.stringify(ralphArgv(name, input.loop)));
-				await sandbox.start('beadsmith-run r1', { BEADSMITH_TS_AUTHKEY: await mintTailscale() });
-			} catch (error) {
-				await sandbox.kill().catch(() => undefined);
-				if (error instanceof DispatchError) throw error;
-				log(`Sand loop ${sandbox.id}: setup could not start: ${String(error)}`);
-				throw new DispatchError('unavailable', `${deps.label} could not start the loop.`);
+		launchLoop(input: AgentLoopLaunchInput): Promise<AgentLaunch> {
+			return launchLoopSandbox(input, 'r1');
+		},
+
+		/**
+		 * A new run of an ended loop (ADR-0019 rules 2 and 5). In its own
+		 * sandbox while E2B still has it (the idle window after the loop
+		 * ended), keeping the checkout and anything not pushed; once E2B has
+		 * destroyed it, in a fresh sandbox from the project's checkout, under
+		 * the same mission with the run numbering carried on.
+		 */
+		async restartLoop(
+			agent_id: string,
+			after_run_id: string,
+			input: AgentLoopLaunchInput
+		): Promise<AgentLoopRestart> {
+			const run_id = `r${runNumber(requireRunId(after_run_id)) + 1}`;
+			const info = await driver.info(requireSandboxId(agent_id));
+			if (info !== undefined) {
+				const base = loopNameOf(info);
+				if (base === undefined) throw new DispatchError('conflict', NOT_A_LOOP_SANDBOX_MESSAGE);
+				let sandbox: SandboxRef | undefined;
+				try {
+					sandbox = await driver.connect(agent_id, max_run_ms);
+				} catch {
+					// Destroyed between the two calls: start fresh below.
+				}
+				if (sandbox !== undefined) {
+					await restartInSandbox(sandbox, info, base, run_id, input.loop);
+					return { agent_id, run_id };
+				}
 			}
-			return { agent_id: sandbox.id, run_id: 'r1' };
+			return launchLoopSandbox(input, run_id);
 		},
 
 		async getLatestRunId(agent_id: string): Promise<string | undefined> {
@@ -1189,7 +1698,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			}
 			const loop = loopNameOf(info);
 			if (loop !== undefined) {
-				const update = await getLoopRun(sandbox, info, run_id, loop);
+				const update = await getLoopRun(sandbox, info, run_id, loopRunName(loop, run_id));
 				if (update.status !== 'running') finished.set(key, update);
 				return update;
 			}
@@ -1199,7 +1708,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 				step.done ??
 				(step.turn === undefined
 					? undefined
-					: await observeTurn(sandbox, sessionIdOf(info)!, run_id, step.turn, redact));
+					: await observeTurn(sandbox, info, run_id, step.turn, redact));
 			if (done === undefined) return { status: 'running' };
 			const update = publicUpdate(done);
 			finished.set(key, update);
@@ -1250,7 +1759,8 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			const files = await readRun(sandbox, run_id);
 			const loop = loopNameOf(info);
 			if (loop !== undefined) {
-				if (settledUpdate(files) !== undefined || !(await stopLoop(sandbox, run_id, loop, files))) {
+				const name = loopRunName(loop, run_id);
+				if (settledUpdate(files) !== undefined || !(await stopLoop(sandbox, run_id, name, files))) {
 					throw new DispatchError('conflict', RUN_NOT_CANCELLABLE_MESSAGE);
 				}
 				return;
@@ -1259,6 +1769,27 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 				throw new DispatchError('conflict', RUN_NOT_CANCELLABLE_MESSAGE);
 			}
 			await sandbox.setTimeout(idle_ms).catch(() => undefined);
+		},
+
+		async steerRun(agent_id: string, run_id: string, text: string): Promise<void> {
+			try {
+				const { ralph, name } = await runningLoop(agent_id, run_id);
+				await ralph.steer(name, text);
+			} catch (error) {
+				throw loopControlError(error, 'steer');
+			}
+		},
+
+		async stopRunAfterIteration(agent_id: string, run_id: string): Promise<void> {
+			let state: Awaited<ReturnType<RalphClient['stop']>>;
+			try {
+				const { ralph, name } = await runningLoop(agent_id, run_id);
+				state = await ralph.stop(name, { graceful: true });
+			} catch (error) {
+				throw loopControlError(error, 'graceful stop');
+			}
+			// not_running / already_gone: it ended on its own; the next status read says how.
+			if (state !== 'stopping') throw new DispatchError('conflict', LOOP_NOT_RUNNING_MESSAGE);
 		},
 
 		async streamMissionEvents(
@@ -1272,18 +1803,38 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			if (info === undefined || info.state === 'paused') return 'stream_expired';
 			const sandbox = await connectOrGone(agent_id, idle_ms);
 			const loop = loopNameOf(info);
-			if (loop !== undefined) return streamLoop(sandbox, info, run_id, loop, on_event, options);
+			if (loop !== undefined) {
+				return streamLoop(sandbox, info, run_id, loopRunName(loop, run_id), on_event, options);
+			}
 			const redact = await redactionFor(info);
 			const signal = options.signal;
 			const seen = parseSessionEventId(options.last_event_id);
 
-			/** A run that ended before (or without) a turn to follow: its stored result. */
-			const finish = async (done: StoredResult): Promise<AgentStreamOutcome> => {
+			/**
+			 * A run that ended before the stream got to follow it: its turn's
+			 * transcript replayed, then its stored result.
+			 */
+			const finish = async (done: StoredResult, files?: RunFiles): Promise<AgentStreamOutcome> => {
+				const replayed =
+					files === undefined
+						? undefined
+						: await replayTurn(
+								sandbox,
+								info,
+								run_id,
+								files,
+								redact,
+								on_event,
+								options.last_event_id
+							);
 				const stored = parseSessionEventId(done.event_id);
+				// Without a stored id, the result sorts after the replayed lines and the client's last id.
+				const line = Math.max(seen?.line ?? 0, replayed ?? 0);
+				const index = seen?.line === line ? seen.index + 1 : 0;
 				const id =
 					done.event_id !== undefined && stored !== undefined
 						? done.event_id
-						: `${seen?.line ?? 0}.${Math.max(SYNTHETIC_INDEX, (seen?.index ?? 0) + 1)}`;
+						: `${line}.${Math.max(SYNTHETIC_INDEX, index)}`;
 				const already =
 					stored !== undefined &&
 					seen !== undefined &&
@@ -1306,7 +1857,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			for (;;) {
 				if (signal?.aborted === true) return 'disconnected';
 				const step = await advance(sandbox, info, run_id, redact);
-				if (step.done !== undefined) return finish(step.done);
+				if (step.done !== undefined) return finish(step.done, step.files);
 				if (step.turn !== undefined) {
 					turn = step.turn;
 					break;
@@ -1323,7 +1874,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			const stopped = new Promise<void>((resolve) => (stop = resolve));
 			const client = await connectHc(sandbox);
 			const session = newSession(
-				sessionIdOf(info)!,
+				info,
 				redact,
 				(event) => {
 					if (event.type === 'error') error_message ??= event.message;

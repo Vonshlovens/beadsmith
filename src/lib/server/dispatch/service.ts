@@ -20,6 +20,8 @@ import {
 import {
 	AGENT_BUSY_MESSAGE,
 	getAgentProvider,
+	LOOP_NOT_RUNNING_MESSAGE,
+	PROVIDER_CAPABILITIES,
 	RUN_NOT_CANCELLABLE_MESSAGE,
 	type AgentLaunch,
 	type AgentLaunchInput,
@@ -29,6 +31,13 @@ import {
 	type AgentRunUpdate,
 	type AgentStreamOutcome
 } from './provider.js';
+import {
+	agentChoiceProblem,
+	asksForAgentChoice,
+	configuredAgentChoices,
+	MODELS_NOT_SUPPORTED_MESSAGE,
+	type AgentChoices
+} from './agent-choice.js';
 import { buildDispatchAgentName, buildDispatchPrompt } from './prompts.js';
 import {
 	deniedOperationMessage,
@@ -54,7 +63,13 @@ import {
 	type TerminalRelay
 } from '../terminal-relay/relay.js';
 import { DispatchError, type DispatchPayload, type DispatchRecord } from './types.js';
-import { chatNoticeKey, type DispatchStore, type ListDispatchFilter } from './store.js';
+import {
+	chatNoticeKey,
+	runClaimOf,
+	type DispatchStore,
+	type ListDispatchFilter,
+	type RunClaim
+} from './store.js';
 
 export interface EnqueueDispatchInput {
 	idempotency_key: string;
@@ -90,11 +105,18 @@ export interface DispatchDeps {
 	 * defaults to `deliverCrewNotice`, which skips outcomes already told.
 	 */
 	notify_chat?: (record: DispatchRecord) => Promise<unknown>;
+	/** Models and efforts a launch may ask for; defaults to the server's. */
+	agent_choices?: AgentChoices;
 }
 
 const NOT_CONFIGURED_MESSAGE = 'Agent dispatch is not configured on this service.';
 export const LOOP_NOT_SUPPORTED_MESSAGE = 'That agent runner cannot run loops.';
-export const LOOP_FOLLOW_UP_MESSAGE = 'A loop takes steer, stop or restart, not a follow-up.';
+export const LOOP_FOLLOW_UP_MESSAGE = 'A loop takes steer notes and stops, not a follow-up.';
+export const NOT_A_LOOP_MESSAGE = 'Only a loop takes steer notes and stops after an iteration.';
+export const RESTART_NOT_A_LOOP_MESSAGE = 'Only a loop can be restarted.';
+export const LOOP_STILL_RUNNING_MESSAGE = 'The loop is still running. Stop it before restarting.';
+export const RESTART_SUPERSEDED_MESSAGE =
+	'The mission changed while the loop restarted, so the new run was stopped. Reload and try again.';
 export const MISSION_NOT_LAUNCHED_MESSAGE = 'This mission has not launched an agent yet.';
 
 export const UNKNOWN_PROVIDER_MESSAGE = 'That agent runner is not configured on this service.';
@@ -143,9 +165,28 @@ function requireRecordProvider(record: DispatchRecord, deps: DispatchDeps): Agen
 	}
 	return provider;
 }
-export { AGENT_BUSY_MESSAGE, RUN_NOT_CANCELLABLE_MESSAGE };
+export { AGENT_BUSY_MESSAGE, LOOP_NOT_RUNNING_MESSAGE, RUN_NOT_CANCELLABLE_MESSAGE };
 const DEFAULT_MAX_POLL_ATTEMPTS = 120;
+/**
+ * A loop is followed for as long as it can run: its sandbox gets more time
+ * only when a read sees an iteration finish (`e2b-provider.ts`), so the
+ * follower must not stop after the hour the default allows. At the 30-second
+ * poll ceiling this is about 25 hours, past E2B's longest sandbox session.
+ */
+const LOOP_MAX_POLL_ATTEMPTS = 3_000;
+/**
+ * Followers in this process, by mission and run claim (`followerKey`). A
+ * follow-up or restart bumps the claim, so the new run gets its own follower
+ * while the old one, whose writes the store now refuses, winds down.
+ */
 const active_followers = new Set<string>();
+
+function followerKey(record: DispatchRecord): string {
+	return `${record.id}:${record.generation}`;
+}
+
+/** Thrown out of a stream callback to end a follower whose run claim was replaced. */
+class StaleFollower extends Error {}
 
 function isFollowableStatus(status: DispatchRecord['status']): boolean {
 	return status === 'launched' || status === 'running';
@@ -175,21 +216,31 @@ function pollDelay(attempt: number): number {
 	return Math.min(2_000 * 2 ** attempt, 30_000);
 }
 
+/**
+ * Store what the provider said about the run `claim` names. Undefined when
+ * the mission has moved to another run claim since (a follow-up or loop
+ * restart): nothing is written, so a stale read cannot finish the new run.
+ */
 async function persistRunUpdate(
 	store: DispatchStore,
 	request_id: string,
-	run_id: string,
+	claim: RunClaim & { run_id: string },
 	update: AgentRunUpdate,
 	deps: DispatchDeps
 ): Promise<DispatchRecord | undefined> {
+	const run_id = claim.run_id;
 	const saved = await store.updateStatus(request_id, {
 		status: update.status,
 		result_summary: update.result_summary,
 		duration_ms: update.duration_ms,
 		git_pr_url: update.git_pr_url,
 		error_message: update.error_message,
-		loop_end: update.loop_end
+		loop_end: update.loop_end,
+		expect: claim
 	});
+	if (saved === undefined) {
+		return undefined;
+	}
 	if (update.iterations !== undefined && update.iterations.length > 0) {
 		try {
 			await store.recordLoopIterations(request_id, run_id, update.iterations);
@@ -350,13 +401,15 @@ async function resolveRunId(
 	if (run_id === undefined) {
 		return record;
 	}
-	return (
-		(await store.updateStatus(record.id, {
-			status: record.status,
-			run_id: run_id,
-			error_message: record.error_message
-		})) ?? { ...record, run_id: run_id }
-	);
+	const saved = await store.updateStatus(record.id, {
+		status: record.status,
+		run_id: run_id,
+		error_message: record.error_message,
+		expect: runClaimOf(record)
+	});
+	// Undefined: another claim took the mission while the runner was asked,
+	// so report the mission as it is now rather than this caller's old view.
+	return saved ?? (await store.get(record.id)) ?? record;
 }
 
 async function refreshDispatchRecord(
@@ -369,13 +422,20 @@ async function refreshDispatchRecord(
 	if (resolved.agent_id === undefined || resolved.run_id === undefined) {
 		return resolved;
 	}
-	const update = await provider.getRun(resolved.agent_id, resolved.run_id);
-	return (
-		(await persistRunUpdate(store, resolved.id, resolved.run_id, update, deps)) ?? {
-			...resolved,
-			...update
-		}
+	const run_id = resolved.run_id;
+	const update = await provider.getRun(resolved.agent_id, run_id);
+	const saved = await persistRunUpdate(
+		store,
+		resolved.id,
+		{ ...runClaimOf(resolved), run_id },
+		update,
+		deps
 	);
+	if (saved !== undefined) {
+		return saved;
+	}
+	// The mission moved on while the provider was read: report what it is now.
+	return (await store.get(resolved.id)) ?? resolved;
 }
 
 async function followDispatchRecord(
@@ -390,10 +450,15 @@ async function followDispatchRecord(
 	} catch {
 		return;
 	}
-	if (resolved.agent_id === undefined || resolved.run_id === undefined) {
+	if (
+		resolved.generation !== record.generation ||
+		resolved.agent_id === undefined ||
+		resolved.run_id === undefined
+	) {
 		return;
 	}
 	const run_id = resolved.run_id;
+	const claim = { ...runClaimOf(resolved), run_id };
 
 	if (provider.streamRun !== undefined) {
 		try {
@@ -401,23 +466,31 @@ async function followDispatchRecord(
 				resolved.agent_id,
 				resolved.run_id,
 				async (update) => {
-					await persistRunUpdate(store, resolved.id, run_id, update, deps);
+					if ((await persistRunUpdate(store, resolved.id, claim, update, deps)) === undefined) {
+						throw new StaleFollower();
+					}
 				}
 			);
 			if (stream_outcome === 'terminal') {
 				return;
 			}
-		} catch {
+		} catch (error) {
+			if (error instanceof StaleFollower) return;
 			// A disconnected/expired stream falls through to authoritative GET polling.
 		}
 	}
 
 	const sleep = deps.sleep ?? defaultSleep;
-	const attempts = deps.max_poll_attempts ?? DEFAULT_MAX_POLL_ATTEMPTS;
+	const attempts =
+		deps.max_poll_attempts ??
+		(resolved.payload.operation === 'loop' ? LOOP_MAX_POLL_ATTEMPTS : DEFAULT_MAX_POLL_ATTEMPTS);
 	for (let attempt = 0; attempt < attempts; attempt += 1) {
 		try {
 			const update = await provider.getRun(resolved.agent_id, run_id);
-			await persistRunUpdate(store, resolved.id, run_id, update, deps);
+			if ((await persistRunUpdate(store, resolved.id, claim, update, deps)) === undefined) {
+				// A follow-up or restart claimed the mission; its own follower reads it.
+				return;
+			}
 			if (isTerminalRunStatus(update.status)) {
 				return;
 			}
@@ -436,23 +509,52 @@ function scheduleFollower(
 	provider: AgentProvider,
 	deps: DispatchDeps
 ): void {
-	if (!isFollowableStatus(record.status) || active_followers.has(record.id)) {
+	const key = followerKey(record);
+	if (!isFollowableStatus(record.status) || active_followers.has(key)) {
 		return;
 	}
-	active_followers.add(record.id);
+	active_followers.add(key);
 	const schedule = deps.schedule_background ?? defaultScheduleBackground;
 	try {
 		schedule(async () => {
 			try {
 				await followDispatchRecord(record, store, provider, deps);
 			} finally {
-				active_followers.delete(record.id);
+				active_followers.delete(key);
 			}
 		});
 	} catch (error) {
-		active_followers.delete(record.id);
+		active_followers.delete(key);
 		throw error;
 	}
+}
+
+/** More running missions than one Beadsmith ever has; a bound, not a quota. */
+const RESUME_FOLLOWERS_LIMIT = 500;
+
+/**
+ * Follow every launched or running mission again, for the server's `init`
+ * hook. Followers live in memory, so after a restart nothing reads a running
+ * mission until someone opens it, and a Sand loop gets more sandbox time only
+ * when a read sees an iteration finish (`e2b-provider.ts`): without this, a
+ * loop whose iteration ends while nobody watches is cut off at the run limit.
+ * Missions whose provider is no longer configured are left as they are.
+ * Returns how many followers it scheduled.
+ */
+export async function resumeDispatchFollowers(deps: DispatchDeps = {}): Promise<number> {
+	const store = deps.store ?? (await getDispatchStore());
+	const records = await store.list({
+		statuses: ['launched', 'running'],
+		limit: RESUME_FOLLOWERS_LIMIT
+	});
+	let scheduled = 0;
+	for (const record of records) {
+		const provider = providerForRecord(record, deps);
+		if (provider === undefined || active_followers.has(followerKey(record))) continue;
+		scheduleFollower(record, store, provider, deps);
+		scheduled += 1;
+	}
+	return scheduled;
 }
 
 function publicIssueId(record: DispatchRecord): string | undefined {
@@ -486,13 +588,21 @@ export function toPublicDispatch(record: DispatchRecord) {
 		created_at: record.created_at,
 		updated_at: record.updated_at,
 		error_message: record.status === 'failed' ? record.error_message : undefined,
-		loop: publicLoop(record)
+		model: record.payload.model,
+		effort: record.payload.effort,
+		loop: publicLoop(record.payload, record.loop_end, record.loop_stop_requested)
 	};
 }
 
-/** A loop's flags and how it ended; never its `run` prompt. */
-function publicLoop(record: DispatchRecord): DispatchLoop | undefined {
-	const payload = record.payload;
+/**
+ * A loop's flags and how it ended; never its `run` prompt. Automations show
+ * their template's flags with it too.
+ */
+export function publicLoop(
+	payload: DispatchPayload,
+	loop_end?: DispatchRecord['loop_end'],
+	stop_requested?: boolean
+): DispatchLoop | undefined {
 	if (payload.operation !== 'loop') return undefined;
 	const loop: DispatchLoop = { mode: payload.mode };
 	if (payload.issue_id !== undefined) loop.issue_id = payload.issue_id;
@@ -503,10 +613,11 @@ function publicLoop(record: DispatchRecord): DispatchLoop | undefined {
 	if (payload.iteration_timeout_minutes !== undefined) {
 		loop.iteration_timeout_minutes = payload.iteration_timeout_minutes;
 	}
-	if (record.loop_end !== undefined) {
-		if (record.loop_end.stop_reason !== null) loop.stop_reason = record.loop_end.stop_reason;
-		loop.needs_person = record.loop_end.needs_person;
+	if (loop_end !== undefined) {
+		if (loop_end.stop_reason !== null) loop.stop_reason = loop_end.stop_reason;
+		loop.needs_person = loop_end.needs_person;
 	}
+	if (stop_requested === true) loop.stop_requested = true;
 	return loop;
 }
 
@@ -544,6 +655,19 @@ export async function enqueueDispatch(
 		const runner = resolveProvider(deps, input.provider);
 		if (runner !== undefined && runner.launchLoop === undefined) {
 			throw new DispatchError('forbidden', LOOP_NOT_SUPPORTED_MESSAGE);
+		}
+	}
+	if (asksForAgentChoice(input.payload)) {
+		// Checked at every launch, an automation's too, so a choice the
+		// operator has since withdrawn is refused rather than run.
+		const problem = agentChoiceProblem(
+			input.payload,
+			deps.agent_choices ?? configuredAgentChoices()
+		);
+		if (problem !== undefined) throw new DispatchError('bad_request', problem);
+		const runner = resolveProvider(deps, input.provider);
+		if (runner !== undefined && !PROVIDER_CAPABILITIES[runner.id].models) {
+			throw new DispatchError('forbidden', MODELS_NOT_SUPPORTED_MESSAGE);
 		}
 	}
 
@@ -733,6 +857,24 @@ function launchPlanned(provider: AgentProvider, plan: LaunchPlan): Promise<Agent
 }
 
 async function planLaunch(
+	record: DispatchRecord,
+	deps: DispatchDeps
+): Promise<LaunchPlan | { ok: false; error_message: string }> {
+	const plan = await planOperation(record, deps);
+	if (!plan.ok || plan.input === undefined) return plan;
+	// A loop carries its model and effort among its ralph flags.
+	const { model, effort } = record.payload;
+	return {
+		ok: true,
+		input: {
+			...plan.input,
+			...(model === undefined ? {} : { model }),
+			...(effort === undefined ? {} : { effort })
+		}
+	};
+}
+
+async function planOperation(
 	record: DispatchRecord,
 	deps: DispatchDeps
 ): Promise<LaunchPlan | { ok: false; error_message: string }> {
@@ -1106,6 +1248,281 @@ export async function followUpDispatch(
 		// Follow-up remains durable if this process cannot schedule.
 	}
 	return toPublicDispatch(resumed);
+}
+
+/**
+ * A working loop mission, refreshed and with its run id, for a loop control.
+ * Refuses a mission that is not a loop, has not launched, or has ended.
+ */
+async function workingLoop(
+	project_id: string,
+	request_id: string,
+	store: DispatchStore,
+	deps: DispatchDeps
+): Promise<{ record: DispatchRecord; provider: AgentProvider } | undefined> {
+	const record = await loadOwnedRecord(project_id, request_id, store);
+	if (record === undefined) {
+		return undefined;
+	}
+	if (record.operation !== 'loop') {
+		throw new DispatchError('conflict', NOT_A_LOOP_MESSAGE);
+	}
+	if (record.agent_id === undefined) {
+		throw new DispatchError('conflict', MISSION_NOT_LAUNCHED_MESSAGE);
+	}
+	const provider = requireRecordProvider(record, deps);
+	let current = record;
+	if (isFollowableStatus(current.status)) {
+		try {
+			current = await refreshDispatchRecord(current, store, provider, deps);
+		} catch {
+			current = record;
+		}
+	}
+	if (!isFollowableStatus(current.status)) {
+		throw new DispatchError('conflict', LOOP_NOT_RUNNING_MESSAGE);
+	}
+	current = await resolveRunId(current, store, provider);
+	if (current.agent_id === undefined || current.run_id === undefined) {
+		throw new DispatchError('conflict', LOOP_NOT_RUNNING_MESSAGE);
+	}
+	return { record: current, provider };
+}
+
+/**
+ * Steer a working loop (ADR-0019 rules 3 and 5): queue a note that ralph
+ * adds to its next iteration's prompt. The note is the only thing the
+ * browser sends; it is kept in the transcript as an operator turn. Like a
+ * follow-up it puts words in front of an agent, so it needs dispatch armed
+ * and the loop's operation still allowed for the project.
+ */
+export async function steerDispatch(
+	project_id: string,
+	request_id: string,
+	text: string,
+	deps: DispatchDeps = {}
+): Promise<ReturnType<typeof toPublicDispatch> | undefined> {
+	await requireConfigured(deps);
+	const store = deps.store ?? (await getDispatchStore());
+	const found = await workingLoop(project_id, request_id, store, deps);
+	if (found === undefined) {
+		return undefined;
+	}
+	const { record, provider } = found;
+	const policy = await resolvePolicy(record.project_id, deps);
+	if (!policy.armed) {
+		throw new DispatchError('forbidden', DISARMED_DISPATCH_MESSAGE);
+	}
+	if (!operationAllowed(policy.allow, record.operation, payloadIntent(record.payload))) {
+		throw new DispatchError('forbidden', deniedOperationMessage(record.operation));
+	}
+	const steerRun = provider.steerRun;
+	if (steerRun === undefined) {
+		throw new DispatchError('forbidden', `${provider.label} cannot steer loops.`);
+	}
+	await steerRun(record.agent_id!, record.run_id!, text);
+	try {
+		await store.appendTurn(record.id, { role: 'operator', text, run_id: record.run_id });
+	} catch {
+		// ralph has the note; only the transcript misses it.
+	}
+	return toPublicDispatch((await store.get(record.id)) ?? record);
+}
+
+/**
+ * Ask a working loop to stop once its current iteration ends (ralph's
+ * graceful stop). Like cancel it only ever ends work, so a disarmed service
+ * still takes it. Stopping now is `cancelDispatch`.
+ */
+export async function stopDispatchAfterIteration(
+	project_id: string,
+	request_id: string,
+	deps: DispatchDeps = {}
+): Promise<ReturnType<typeof toPublicDispatch> | undefined> {
+	await requireConfigured(deps);
+	const store = deps.store ?? (await getDispatchStore());
+	const found = await workingLoop(project_id, request_id, store, deps);
+	if (found === undefined) {
+		return undefined;
+	}
+	const { record, provider } = found;
+	if (record.loop_stop_requested === true) {
+		return toPublicDispatch(record);
+	}
+	const stopRunAfterIteration = provider.stopRunAfterIteration;
+	if (stopRunAfterIteration === undefined) {
+		throw new DispatchError('forbidden', `${provider.label} cannot stop loops gracefully.`);
+	}
+	try {
+		await stopRunAfterIteration(record.agent_id!, record.run_id!);
+	} catch (error) {
+		if (error instanceof DispatchError && error.code === 'conflict') {
+			// It ended on its own meanwhile: report how, not a refusal.
+			const refreshed = await refreshDispatchRecord(record, store, provider, deps).catch(
+				() => undefined
+			);
+			if (refreshed !== undefined && isTerminalDispatchStatus(refreshed.status)) {
+				return toPublicDispatch(refreshed);
+			}
+		}
+		throw error;
+	}
+	const marked = await store.markLoopStopRequested(record.id);
+	return toPublicDispatch(marked ?? { ...record, loop_stop_requested: true });
+}
+
+/**
+ * The operator turn a restart adds: what it asked for, so the transcript
+ * shows where one run ends and the next begins.
+ */
+export function restartTurnText(max_iterations: number | undefined): string {
+	return max_iterations === undefined
+		? 'Restart the loop.'
+		: `Restart the loop for up to ${max_iterations} ${max_iterations === 1 ? 'iteration' : 'iterations'}.`;
+}
+
+/**
+ * Start a new run of an ended loop on the same mission (ADR-0019 rules 2
+ * and 5): the loop's stored flags, with an optional new iteration limit for
+ * this run only (the launch payload stays as launched, so a replayed launch
+ * still matches its idempotency key). Like a launch it starts work, so it
+ * needs dispatch armed and Tackle allowed, and it reads the project's
+ * current Tackle checkout in case the runner needs a fresh sandbox.
+ *
+ * The mission is claimed (`launching`) before the runner is asked, so two
+ * restarts cannot both start one, and no status read follows the old run's
+ * ids while the new run's are not known yet. A refusal from the runner
+ * leaves the mission failed with its reason, and is rethrown.
+ */
+export async function restartDispatch(
+	project_id: string,
+	request_id: string,
+	options: { max_iterations?: number },
+	deps: DispatchDeps = {}
+): Promise<ReturnType<typeof toPublicDispatch> | undefined> {
+	await requireConfigured(deps);
+	const store = deps.store ?? (await getDispatchStore());
+	const record = await loadOwnedRecord(project_id, request_id, store);
+	if (record === undefined) {
+		return undefined;
+	}
+	if (record.payload.operation !== 'loop') {
+		throw new DispatchError('conflict', RESTART_NOT_A_LOOP_MESSAGE);
+	}
+	const policy = await resolvePolicy(record.project_id, deps);
+	if (!policy.armed) {
+		throw new DispatchError('forbidden', DISARMED_DISPATCH_MESSAGE);
+	}
+	if (!operationAllowed(policy.allow, record.operation, payloadIntent(record.payload))) {
+		throw new DispatchError('forbidden', deniedOperationMessage(record.operation));
+	}
+	if (record.agent_id === undefined) {
+		throw new DispatchError('conflict', MISSION_NOT_LAUNCHED_MESSAGE);
+	}
+	const provider = requireRecordProvider(record, deps);
+	const restartLoop = provider.restartLoop;
+	if (restartLoop === undefined) {
+		throw new DispatchError('forbidden', `${provider.label} cannot restart loops.`);
+	}
+
+	let current = record;
+	if (isFollowableStatus(current.status)) {
+		try {
+			current = await refreshDispatchRecord(current, store, provider, deps);
+		} catch {
+			current = record;
+		}
+	}
+	if (!isTerminalDispatchStatus(current.status)) {
+		throw new DispatchError('conflict', LOOP_STILL_RUNNING_MESSAGE);
+	}
+	current = await resolveRunId(current, store, provider);
+	const agent_id = current.agent_id;
+	const after_run_id = current.run_id;
+	if (agent_id === undefined || after_run_id === undefined) {
+		throw new DispatchError('conflict', MISSION_NOT_LAUNCHED_MESSAGE);
+	}
+
+	const plan = await planLaunch(current, deps);
+	if (!plan.ok) {
+		throw new DispatchError('conflict', plan.error_message);
+	}
+	if (plan.loop === undefined) {
+		throw new DispatchError('conflict', RESTART_NOT_A_LOOP_MESSAGE);
+	}
+	const input =
+		options.max_iterations === undefined
+			? plan.loop
+			: { ...plan.loop, loop: { ...plan.loop.loop, max_iterations: options.max_iterations } };
+
+	const claimed = await store.startFollowUp(current.id, {
+		run_id: after_run_id,
+		status: 'launching'
+	});
+	if (claimed === undefined) {
+		throw new DispatchError('conflict', LOOP_STILL_RUNNING_MESSAGE);
+	}
+	try {
+		await store.appendTurn(claimed.id, {
+			role: 'operator',
+			text: restartTurnText(options.max_iterations)
+		});
+	} catch {
+		// The transcript is display state; the restart does not depend on it.
+	}
+
+	let restarted;
+	try {
+		restarted = await restartLoop(agent_id, after_run_id, input);
+	} catch (error) {
+		const message =
+			error instanceof DispatchError
+				? error.message
+				: `${provider.label} could not restart the loop.`;
+		const failed = await store.updateStatus(claimed.id, {
+			status: 'failed',
+			error_message: message,
+			expect: runClaimOf(claimed)
+		});
+		await appendAgentTurn(store, claimed.id, undefined, 'failed', { error_message: message });
+		await markChatToldAtLaunch(store, failed);
+		throw error instanceof DispatchError ? error : new DispatchError('unavailable', message);
+	}
+
+	// Compare-and-set on the claim: the new run is recorded only if the row is
+	// still the one this restart claimed. Anything else (a stale write the claim
+	// should have fenced off, a cancel that landed meanwhile) would leave the new
+	// run with no durable pointer and no follower, so it is stopped and the
+	// operator told, never answered with an unrelated read-back. The read-back
+	// is judged by identity, not status: once the save lands, a poll may move
+	// this same run to running (or past it) before the row is read, and that
+	// is the new run making progress, not a lost claim.
+	const saved = await store.updateStatus(claimed.id, {
+		status: 'launched',
+		agent_id: restarted.agent_id,
+		run_id: restarted.run_id,
+		expect: runClaimOf(claimed)
+	});
+	if (
+		saved === undefined ||
+		saved.generation !== claimed.generation ||
+		saved.agent_id !== restarted.agent_id ||
+		saved.run_id !== restarted.run_id
+	) {
+		try {
+			await provider.cancelRun?.(restarted.agent_id, restarted.run_id);
+		} catch {
+			// The runner's own limits end a run nobody follows.
+		}
+		throw new DispatchError('conflict', RESTART_SUPERSEDED_MESSAGE);
+	}
+	const launched = saved;
+	try {
+		scheduleFollower(launched, store, provider, deps);
+	} catch {
+		// The new run is durable even if this process cannot schedule.
+	}
+	return toPublicDispatch(launched);
 }
 
 function storedMissionEvent(record: DispatchRecord): MissionEvent | undefined {

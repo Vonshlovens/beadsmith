@@ -3,7 +3,8 @@
  * stand-in, for tests. Nothing opens a socket: requests become `Response`
  * objects. It checks every signature, keeps each chat's event log with
  * ordered ids (`e000001`, …), replays after `?after=`, follows live until the
- * request aborts, and dedupes messages on `message_id`.
+ * request aborts, and dedupes messages on `message_id`. Its terminal attach
+ * serves a scripted terminal: tests write its output and read the input.
  */
 import type { MissionEvent } from '#lib/mission-events.js';
 import { signWebhookRequest } from '#lib/server/dispatch/webhook-provider.js';
@@ -32,6 +33,24 @@ export interface FakeRequest {
 	body: string;
 }
 
+/** One attach Beadsmith opened on the fake runner's terminal route. */
+export interface FakeRunnerAttach {
+	id: string;
+	chat_id: string;
+	mode: 'watch' | 'take_over';
+	/** Bodies of the input requests, parsed. */
+	inputs: Array<{ data?: string; cols?: number; rows?: number }>;
+	/** Beadsmith closed the stream. */
+	closed: boolean;
+	output(text: string): void;
+	resize(cols: number, rows: number): void;
+	/** The program ended: an `end` frame, then the stream closes. */
+	end(reason: string): void;
+}
+
+/** The grid the fake terminal reports when attached. */
+export const FAKE_TERMINAL_SIZE = { cols: 120, rows: 40 };
+
 export interface FakeMateRunner {
 	fetch: typeof fetch;
 	requests: FakeRequest[];
@@ -47,6 +66,8 @@ export interface FakeMateRunner {
 	end_after_replay: boolean;
 	interrupts: string[];
 	deleted: string[];
+	/** Terminal attaches in the order they were opened. */
+	attaches: FakeRunnerAttach[];
 }
 
 export function createFakeMateRunner(secret = FAKE_RUNNER_SECRET): FakeMateRunner {
@@ -79,12 +100,62 @@ export function createFakeMateRunner(secret = FAKE_RUNNER_SECRET): FakeMateRunne
 			headers: body === undefined ? {} : { 'content-type': 'application/json' }
 		});
 
+	const encoder = new TextEncoder();
+	const sse = (event: string, data: string) => encoder.encode(`event: ${event}\ndata: ${data}\n\n`);
+
+	const openTerminal = (chat_id: string, body: string, signal: AbortSignal | undefined) => {
+		const { mode } = JSON.parse(body) as { mode: 'watch' | 'take_over' };
+		let controller!: ReadableStreamDefaultController<Uint8Array>;
+		const attach: FakeRunnerAttach = {
+			id: `ta_${String(fake.attaches.length + 1).padStart(32, '0')}`,
+			chat_id,
+			mode,
+			inputs: [],
+			closed: false,
+			output: (text) => push(sse('output', Buffer.from(text).toString('base64'))),
+			resize: (cols, rows) => push(sse('resize', JSON.stringify({ cols, rows }))),
+			end(reason) {
+				push(sse('end', JSON.stringify({ reason })));
+				attach.closed = true;
+				controller.close();
+			}
+		};
+		const push = (bytes: Uint8Array) => {
+			if (!attach.closed) controller.enqueue(bytes);
+		};
+		fake.attaches.push(attach);
+		const stream = new ReadableStream<Uint8Array>({
+			start(c) {
+				controller = c;
+				c.enqueue(encoder.encode(': connected\n\n'));
+				c.enqueue(sse('open', JSON.stringify({ attach: attach.id, mode, ...FAKE_TERMINAL_SIZE })));
+				signal?.addEventListener(
+					'abort',
+					() => {
+						attach.closed = true;
+						try {
+							controller.error(signal.reason);
+						} catch {
+							// Already closed.
+						}
+					},
+					{ once: true }
+				);
+			},
+			cancel() {
+				attach.closed = true;
+			}
+		});
+		return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+	};
+
 	const frame = (event: MissionEvent) => `id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`;
 
 	const fake: FakeMateRunner = {
 		requests: [],
 		interrupts: [],
 		deleted: [],
+		attaches: [],
 		end_after_replay: false,
 
 		async fetch(input, init) {
@@ -113,12 +184,26 @@ export function createFakeMateRunner(secret = FAKE_RUNNER_SECRET): FakeMateRunne
 			if (method === 'GET' && path === '/v1/health') {
 				return json(200, { ok: true });
 			}
-			const match = /^\/v1\/mate\/chats\/([^/]+)(\/messages|\/events|\/interrupt)?$/.exec(path);
+			const match =
+				/^\/v1\/mate\/chats\/([^/]+)(\/messages|\/events|\/interrupt|\/terminal(?:\/([^/]+))?)?$/.exec(
+					path
+				);
 			if (match === null) {
 				return json(404, { error: 'no route' });
 			}
 			const chat_id = decodeURIComponent(match[1]!);
-			const action = match[2];
+			const action = match[3] === undefined ? match[2] : '/terminal/:attach';
+
+			if (method === 'POST' && action === '/terminal') {
+				return openTerminal(chat_id, body, init?.signal ?? undefined);
+			}
+			if (method === 'POST' && action === '/terminal/:attach') {
+				const attach = fake.attaches.find((a) => a.id === match[3] && a.chat_id === chat_id);
+				if (attach === undefined || attach.closed) return json(404, { error: 'not open' });
+				if (attach.mode !== 'take_over') return json(409, { error: 'watching' });
+				attach.inputs.push(JSON.parse(body) as FakeRunnerAttach['inputs'][number]);
+				return new Response(null, { status: 204 });
+			}
 
 			if (method === 'POST' && action === '/messages') {
 				const payload = JSON.parse(body) as {
@@ -154,7 +239,6 @@ export function createFakeMateRunner(secret = FAKE_RUNNER_SECRET): FakeMateRunne
 				const after = url.searchParams.get('after');
 				const chat = chatOf(chat_id);
 				const signal = init?.signal ?? undefined;
-				const encoder = new TextEncoder();
 				let listener: ((event: MissionEvent) => void) | undefined;
 				const stream = new ReadableStream<Uint8Array>({
 					start(controller) {

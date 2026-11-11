@@ -114,6 +114,18 @@ const DISPATCH_COLUMN_MIGRATIONS = [
 	{
 		name: 'loop_needs_person',
 		sql: 'ALTER TABLE dispatch_requests ADD COLUMN loop_needs_person INTEGER'
+	},
+	// When an operator asked the current loop run to stop after its iteration
+	// (ADR-0019 rule 5), so a reload still shows the stop is on its way.
+	{
+		name: 'loop_stop_requested_at',
+		sql: 'ALTER TABLE dispatch_requests ADD COLUMN loop_stop_requested_at TEXT'
+	},
+	// Which run claim the row is on: a follow-up or loop restart bumps it, so a
+	// follower still reading the previous run cannot write over the new one.
+	{
+		name: 'generation',
+		sql: 'ALTER TABLE dispatch_requests ADD COLUMN generation INTEGER NOT NULL DEFAULT 0'
 	}
 ] as const;
 
@@ -134,8 +146,10 @@ export async function initStateSchema(client: Client): Promise<void> {
 		await client.execute('ALTER TABLE mate_events ADD COLUMN message_id TEXT');
 	}
 	const chatColumns = await client.execute('PRAGMA table_info(mate_chats)');
-	if (!chatColumns.rows.some((row) => row.name === 'runner')) {
-		await client.execute('ALTER TABLE mate_chats ADD COLUMN runner TEXT');
+	for (const column of ['runner', 'model', 'effort']) {
+		if (!chatColumns.rows.some((row) => row.name === column)) {
+			await client.execute(`ALTER TABLE mate_chats ADD COLUMN ${column} TEXT`);
+		}
 	}
 	const columns = await client.execute('PRAGMA table_info(dispatch_requests)');
 	const existing = new Set(

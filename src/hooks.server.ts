@@ -1,6 +1,7 @@
 import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit/hooks';
 import { startAutomationScheduler } from '#lib/server/automations/runtime.js';
 import { startBackupScheduler } from '#lib/server/backup/runtime.js';
+import { resumeDispatchFollowers } from '#lib/server/dispatch/service.js';
 import {
 	checkConfig,
 	getEnv,
@@ -280,6 +281,11 @@ function applySecurityHeaders(response: Response, is_api: boolean): Response {
 export const init: ServerInit = () => {
 	startBackupScheduler();
 	startAutomationScheduler();
+	// Followers live in memory: pick up missions still running from before the
+	// restart, so a long loop keeps earning sandbox time (docs/sand-e2b.md).
+	void resumeDispatchFollowers().catch(() => {
+		// State may be unavailable; opening a mission still follows it.
+	});
 	// Generate the auth secret and, on a fresh install, write the first-admin
 	// setup token now so the operator sees where it is.
 	void getAuthService()
