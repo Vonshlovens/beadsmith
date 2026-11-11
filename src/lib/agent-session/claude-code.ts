@@ -82,8 +82,9 @@ const TOOL_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const CALL_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 /** Model names and aliases (`opus`, `claude-opus-5-5`, `claude-opus-5-5[1m]`); never a flag. */
-const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:[\]-]{0,127}$/;
-const EFFORT_PATTERN = /^[a-z][a-z0-9-]{0,15}$/;
+export const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:[\]-]{0,127}$/;
+/** Reasoning effort levels (`low` … `max`); never a flag. */
+export const EFFORT_PATTERN = /^[a-z][a-z0-9-]{0,15}$/;
 
 type EventWithoutId = MissionEvent extends infer E
 	? E extends MissionEvent

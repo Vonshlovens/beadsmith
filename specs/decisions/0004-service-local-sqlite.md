@@ -37,7 +37,7 @@ sqlite-core). The runtime does not run drizzle-kit push or migrate.
 `src/lib/server/state/db.ts` opens `file:${stateDir}/state.db` and applies
 `CREATE TABLE IF NOT EXISTS` for the known tables.
 
-Today the database has twelve application tables plus four account tables:
+Today the database has fourteen application tables plus four account tables:
 
 - `settings` — key/value application preferences. The shipped key is
   `ui.theme` (`system` | `light` | `dark`); `dispatch.armed` is the global
@@ -52,6 +52,11 @@ Today the database has twelve application tables plus four account tables:
   request id, role (`operator` | `agent`), sanitized display text, optional
   run id and terminal status, timestamp. Never the launch prompt or worker
   logs ([0006](./0006-durable-agent-dispatch.md)).
+- `dispatch_loop_iterations` — a loop mission's finished ralph iterations,
+  keyed by request id, run id and iteration number: outcome, start and end,
+  duration, token counts, cost, commit range (head before and after),
+  validation result and open plan items. Never the agent's words or errors
+  ([0019](./0019-ralph-loops-and-automations.md) rule 5).
 - `tackle_repository_maps` — operator-edited project-to-GitHub checkout
   mapping (`url`, optional ref normalized to an empty string, and automatic-PR
   preference). Environment/file maps remain the higher-precedence override.

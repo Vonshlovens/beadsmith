@@ -5,6 +5,7 @@ import { getEnv } from '../env.js';
 import { createDispatchPolicyStore, type DispatchPolicyStore } from '../dispatch/policy.js';
 import {
 	createDispatchStore,
+	DISPATCH_ITERATIONS_SCHEMA_SQL,
 	DISPATCH_TURNS_SCHEMA_SQL,
 	type DispatchStore
 } from '../dispatch/store.js';
@@ -129,7 +130,7 @@ export async function initStateSchema(client: Client): Promise<void> {
 	await client.execute(
 		'CREATE INDEX IF NOT EXISTS dispatch_requests_chat ON dispatch_requests (chat_id, created_at) WHERE chat_id IS NOT NULL'
 	);
-	for (const statement of DISPATCH_TURNS_SCHEMA_SQL) {
+	for (const statement of [...DISPATCH_TURNS_SCHEMA_SQL, ...DISPATCH_ITERATIONS_SCHEMA_SQL]) {
 		await client.execute(statement);
 	}
 }

@@ -19,7 +19,9 @@ import {
 	AGENT_BUSY_MESSAGE,
 	getAgentProvider,
 	RUN_NOT_CANCELLABLE_MESSAGE,
+	type AgentLaunch,
 	type AgentLaunchInput,
+	type AgentLoopLaunchInput,
 	type AgentProvider,
 	type AgentRunStatus,
 	type AgentRunUpdate,
@@ -83,6 +85,8 @@ export interface DispatchDeps {
 }
 
 const NOT_CONFIGURED_MESSAGE = 'Agent dispatch is not configured on this service.';
+export const LOOP_NOT_SUPPORTED_MESSAGE = 'That agent runner cannot run loops.';
+export const LOOP_FOLLOW_UP_MESSAGE = 'A loop takes steer, stop or restart, not a follow-up.';
 export const MISSION_NOT_LAUNCHED_MESSAGE = 'This mission has not launched an agent yet.';
 
 export const UNKNOWN_PROVIDER_MESSAGE = 'That agent runner is not configured on this service.';
@@ -177,6 +181,13 @@ async function persistRunUpdate(
 		git_pr_url: update.git_pr_url,
 		error_message: update.error_message
 	});
+	if (update.iterations !== undefined && update.iterations.length > 0) {
+		try {
+			await store.recordLoopIterations(request_id, run_id, update.iterations);
+		} catch {
+			// The next update carries the same iterations and tries again.
+		}
+	}
 	if (update.issue_id !== undefined) {
 		try {
 			// A routed todo learns its bead here; others have no match.
@@ -282,8 +293,23 @@ const DISCUSS_TURN_TEXT: Record<string, string> = {
 	close: 'Close this issue.'
 };
 
+const LOOP_MODE_TEXT: Record<string, string> = {
+	build: 'Run a build loop',
+	plan: 'Run a planning loop',
+	reverse: 'Run a reverse-engineering loop'
+};
+
 /** What the operator asked for, in words, as the first turn of a mission. */
 export function operatorTurnText(payload: DispatchPayload): string {
+	if (payload.operation === 'loop') {
+		if (payload.prompt !== undefined) {
+			return payload.prompt;
+		}
+		const what = LOOP_MODE_TEXT[payload.mode] ?? 'Run a loop';
+		return payload.issue_id === undefined
+			? `${what} on the project's plan.`
+			: `${what} on ${payload.issue_id}.`;
+	}
 	if (payload.operation === 'file') {
 		return payload.notes;
 	}
@@ -424,6 +450,7 @@ function publicIssueId(record: DispatchRecord): string | undefined {
 	if (record.payload.operation === 'file') {
 		return undefined;
 	}
+	// A loop on the whole plan has none.
 	return record.payload.issue_id;
 }
 
@@ -467,7 +494,7 @@ export function toPublicMission(record: DispatchRecord, project_name: string): M
 }
 
 /**
- * Persist a File/Tackle/comment/discuss intent, then launch an agent.
+ * Persist a File/Tackle/comment/discuss/loop intent, then launch an agent.
  *
  * Idempotent replays return the original record without launching a second agent.
  */
@@ -480,6 +507,14 @@ export async function enqueueDispatch(
 	}
 	if (input.provider !== undefined && resolveProvider(deps, input.provider) === undefined) {
 		throw new DispatchError('forbidden', UNKNOWN_PROVIDER_MESSAGE);
+	}
+	if (input.payload.operation === 'loop') {
+		// Refused before a record exists, so no sandbox ever starts for it
+		// (ADR-0019 rule 1).
+		const runner = resolveProvider(deps, input.provider);
+		if (runner !== undefined && runner.launchLoop === undefined) {
+			throw new DispatchError('forbidden', LOOP_NOT_SUPPORTED_MESSAGE);
+		}
 	}
 
 	const policy = await resolvePolicy(input.project.id, deps);
@@ -544,7 +579,7 @@ export async function enqueueDispatch(
 	let provider: AgentProvider | undefined;
 	try {
 		provider = requireProvider(deps, input.provider);
-		const launched = await provider.launch(plan.input);
+		const launched = await launchPlanned(provider, plan);
 		const saved = await store.updateStatus(working.id, {
 			status: 'launched',
 			provider: provider.id,
@@ -652,13 +687,51 @@ async function resolveFileCheckout(
 	}
 }
 
+/** What to launch: a one-shot agent, or a ralph loop. */
+type LaunchPlan =
+	| { ok: true; input: AgentLaunchInput; loop?: undefined }
+	| { ok: true; loop: AgentLoopLaunchInput; input?: undefined };
+
+function launchPlanned(provider: AgentProvider, plan: LaunchPlan): Promise<AgentLaunch> {
+	if (plan.loop === undefined) {
+		return provider.launch(plan.input);
+	}
+	if (provider.launchLoop === undefined) {
+		throw new DispatchError('forbidden', LOOP_NOT_SUPPORTED_MESSAGE);
+	}
+	return provider.launchLoop(plan.loop);
+}
+
 async function planLaunch(
 	record: DispatchRecord,
 	deps: DispatchDeps
-): Promise<{ ok: true; input: AgentLaunchInput } | { ok: false; error_message: string }> {
+): Promise<LaunchPlan | { ok: false; error_message: string }> {
 	const name = buildDispatchAgentName(record);
-	const prompt = buildDispatchPrompt(record);
 	const dolt_database = record.dolt_database;
+	if (record.payload.operation === 'loop') {
+		// A loop writes code and Beads like a Tackle, so it runs in the
+		// project's Tackle checkout; loops add no repository map of their own
+		// (ADR-0019 rule 5).
+		const resolved = await resolveLaunchMaps(deps);
+		if (resolved.invalid) {
+			return { ok: false, error_message: INVALID_TACKLE_MAPPING_MESSAGE };
+		}
+		const mapping = resolved.mappings[record.project_id];
+		if (mapping === undefined) {
+			return { ok: false, error_message: UNMAPPED_TACKLE_MESSAGE };
+		}
+		const { operation: _operation, title: _title, ...loop } = record.payload;
+		return {
+			ok: true,
+			loop: {
+				name,
+				dolt_database,
+				repository: { url: mapping.url, starting_ref: mapping.ref },
+				loop
+			}
+		};
+	}
+	const prompt = buildDispatchPrompt(record);
 	if (record.operation === 'file') {
 		const checkout = await resolveFileCheckout(record.project_id, deps);
 		if (checkout.kind === 'invalid') {
@@ -777,6 +850,12 @@ function enrichPayload(payload: DispatchPayload, issue: IssueDetail | undefined)
 			...payload,
 			title: issue.title,
 			description: issue.description
+		};
+	}
+	if (payload.operation === 'loop') {
+		return {
+			...payload,
+			title: issue.title
 		};
 	}
 	return payload;
@@ -948,6 +1027,11 @@ export async function followUpDispatch(
 	const intent = payloadIntent(record.payload);
 	if (!operationAllowed(policy.allow, record.operation, intent)) {
 		throw new DispatchError('forbidden', deniedOperationMessage(record.operation, intent));
+	}
+	if (record.operation === 'loop') {
+		// A follow-up would start a one-shot agent in the loop's checkout,
+		// outside ralph. Loops have their own controls (ADR-0019 rule 5).
+		throw new DispatchError('conflict', LOOP_FOLLOW_UP_MESSAGE);
 	}
 	if (record.agent_id === undefined) {
 		throw new DispatchError('conflict', MISSION_NOT_LAUNCHED_MESSAGE);

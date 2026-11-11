@@ -1,6 +1,7 @@
 import { type Client, createClient } from '@libsql/client';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { initStateSchema } from '../state/db.js';
+import type { RalphIteration } from './ralph.js';
 import { createDispatchStore } from './store.js';
 import { DispatchError } from './types.js';
 
@@ -251,5 +252,43 @@ describe('dispatch turns', () => {
 		await store.appendTurn(record.id, { role: 'operator', text: 'x'.repeat(20_000) });
 		const [turn] = await store.listTurns(record.id);
 		expect(turn!.text).toHaveLength(8000);
+	});
+});
+
+describe('loop iterations', () => {
+	const FIRST: RalphIteration = {
+		iteration: 1,
+		outcome: 'completed',
+		started_at: '2026-11-11T10:00:00.000Z',
+		finished_at: '2026-11-11T10:05:00.000Z',
+		duration_ms: 300_000,
+		head_before: 'aaaaaaa',
+		head_after: 'bbbbbbb',
+		input_tokens: 1200,
+		output_tokens: 300,
+		cost_usd: 0.42,
+		validate_ok: false,
+		plan_open: 0
+	};
+
+	it('keeps a restarted loop’s earlier run and ignores repeats', async () => {
+		const store = createDispatchStore(client);
+		const restarted: RalphIteration = {
+			...FIRST,
+			started_at: '2026-11-11T11:00:00.000Z',
+			finished_at: '2026-11-11T11:02:00.000Z',
+			outcome: 'timed_out'
+		};
+
+		await store.recordLoopIterations('dq_1', 'run-a', [FIRST]);
+		await store.recordLoopIterations('dq_1', 'run-a', [{ ...FIRST, outcome: 'failed' }]);
+		await store.recordLoopIterations('dq_1', 'run-b', [restarted]);
+		await store.recordLoopIterations('dq_1', 'run-b', []);
+		await store.recordLoopIterations('dq_other', 'run-c', [FIRST]);
+
+		expect(await store.listLoopIterations('dq_1')).toEqual([
+			{ ...FIRST, run_id: 'run-a' },
+			{ ...restarted, run_id: 'run-b' }
+		]);
 	});
 });

@@ -5,6 +5,7 @@ import type {
 	DispatchStatus
 } from '#lib/types.js';
 import type { StatusKey } from '#lib/client/format.js';
+import type { RalphHarness, RalphMode } from './ralph-cli.js';
 
 /** Validated File payload stored on the dispatch record. */
 export interface FilePayload {
@@ -52,7 +53,31 @@ export interface DiscussPayload {
 	description?: string;
 }
 
-export type DispatchPayload = FilePayload | TacklePayload | CommentPayload | DiscussPayload;
+/**
+ * Validated ralph loop payload (ADR-0019 rule 5): the flags of one
+ * `ralph <mode>` run. The loop works on the project's whole plan, or on one
+ * bead when `issue_id` is set (rule 6); epic and label scope wait for ralph's
+ * per-run scope. Everything else (prompts, validation, limits) comes from the
+ * checkout's own `.ralph/` configuration, which Beadsmith never edits.
+ */
+export interface LoopPayload {
+	operation: 'loop';
+	mode: RalphMode;
+	/** What a `run` loop does each iteration; only `run` takes one. */
+	prompt?: string;
+	/** The one bead a `build` or `run` loop works on; absent = the project's plan. */
+	issue_id?: string;
+	harness?: RalphHarness;
+	model?: string;
+	effort?: string;
+	max_iterations?: number;
+	iteration_timeout_minutes?: number;
+	/** The bead's title, recorded at launch for display. */
+	title?: string;
+}
+
+export type DispatchPayload =
+	FilePayload | TacklePayload | CommentPayload | DiscussPayload | LoopPayload;
 
 /** Internal row including fields that never leave the control plane. */
 export interface DispatchRecord {

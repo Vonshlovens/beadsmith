@@ -8,10 +8,12 @@ import {
 	DISARMED_DISPATCH_MESSAGE,
 	ELABORATE_NOT_ALLOWED_MESSAGE,
 	FILE_NOT_ALLOWED_MESSAGE,
+	LOOP_NOT_ALLOWED_MESSAGE,
 	TACKLE_NOT_ALLOWED_MESSAGE
 } from './policy.js';
 import { INVALID_FILE_CHECKOUT_MESSAGE } from './file-maps.js';
-import type { AgentLaunchInput, AgentProvider } from './provider.js';
+import type { AgentLaunchInput, AgentLoopLaunchInput, AgentProvider } from './provider.js';
+import type { RalphIteration } from './ralph.js';
 import { INVALID_TACKLE_MAPPING_MESSAGE, UNMAPPED_TACKLE_MESSAGE } from './repositories.js';
 import {
 	cancelDispatch,
@@ -24,6 +26,8 @@ import {
 	toPublicDispatch,
 	toPublicMission,
 	AGENT_BUSY_MESSAGE,
+	LOOP_FOLLOW_UP_MESSAGE,
+	LOOP_NOT_SUPPORTED_MESSAGE,
 	MISSION_NOT_LAUNCHED_MESSAGE
 } from './service.js';
 import { createDispatchStore } from './store.js';
@@ -1699,5 +1703,332 @@ describe('chat notices (ADR-0020 rule 5)', () => {
 			schedule_background: NO_BACKGROUND
 		});
 		expect(notify_chat).toHaveBeenCalledWith(expect.objectContaining({ status: 'cancelled' }));
+	});
+});
+
+describe('loop missions (ADR-0019 rule 5)', () => {
+	const BUILD_LOOP = {
+		operation: 'loop' as const,
+		mode: 'build' as const,
+		harness: 'claude' as const,
+		model: 'opus',
+		effort: 'high',
+		max_iterations: 5,
+		iteration_timeout_minutes: 30
+	};
+
+	const ITERATION: RalphIteration = {
+		iteration: 1,
+		outcome: 'completed',
+		started_at: '2026-11-11T10:00:00.000Z',
+		finished_at: '2026-11-11T10:05:00.000Z',
+		duration_ms: 300_000,
+		head_before: 'aaaaaaa',
+		head_after: 'bbbbbbb',
+		input_tokens: 1200,
+		output_tokens: 300,
+		cost_usd: 0.42,
+		validate_ok: true,
+		plan_open: 3
+	};
+
+	function loopProvider(
+		launchLoop: (input: AgentLoopLaunchInput) => Promise<{ agent_id: string; run_id?: string }>
+	): AgentProvider {
+		return {
+			...providerWithLaunch(vi.fn(async () => ({ agent_id: 'one-shot' }))),
+			id: 'e2b',
+			label: 'Sand',
+			launchLoop: vi.fn(launchLoop)
+		};
+	}
+
+	it('launches a plan-wide build loop on the Tackle checkout with its flags', async () => {
+		const provider = loopProvider(async () => ({ agent_id: 'sbx-1', run_id: 'loop-1' }));
+
+		const result = await enqueueDispatch(
+			{ idempotency_key: 'idem-loop-0001', project: PROJECT, actor: 'web', payload: BUILD_LOOP },
+			{
+				store,
+				provider,
+				configured: true,
+				policy: ALLOW_ALL,
+				repositories: BEADS_WEB_MAP,
+				schedule_background: NO_BACKGROUND
+			}
+		);
+
+		expect(result.created).toBe(true);
+		expect(result.request).toMatchObject({
+			operation: 'loop',
+			status: 'launched',
+			provider: 'e2b'
+		});
+		expect(result.request.issue_id).toBeUndefined();
+		expect(provider.launch).not.toHaveBeenCalled();
+		expect(provider.launchLoop).toHaveBeenCalledWith({
+			name: 'Loop build on beads_web',
+			dolt_database: 'beads_web',
+			repository: { url: 'https://github.com/example-org/beads-web', starting_ref: 'main' },
+			loop: {
+				mode: 'build',
+				harness: 'claude',
+				model: 'opus',
+				effort: 'high',
+				max_iterations: 5,
+				iteration_timeout_minutes: 30
+			}
+		});
+		const turns = await listDispatchTurns(PROJECT.id, result.request.id, { store });
+		expect(turns?.[0]).toMatchObject({
+			role: 'operator',
+			text: "Run a build loop on the project's plan."
+		});
+		const missions = await listMissions({ limit: 10 }, { store });
+		expect(missions[0]).toMatchObject({ operation: 'loop', id: result.request.id });
+	});
+
+	it('scopes a loop to one bead and records its title', async () => {
+		const provider = loopProvider(async () => ({ agent_id: 'sbx-2' }));
+
+		const result = await enqueueDispatch(
+			{
+				idempotency_key: 'idem-loop-0002',
+				project: PROJECT,
+				actor: 'web',
+				payload: { ...BUILD_LOOP, issue_id: ISSUE.id },
+				issue: ISSUE
+			},
+			{
+				store,
+				provider,
+				configured: true,
+				policy: ALLOW_ALL,
+				repositories: BEADS_WEB_MAP,
+				schedule_background: NO_BACKGROUND
+			}
+		);
+
+		expect(result.request.issue_id).toBe(ISSUE.id);
+		expect(provider.launchLoop).toHaveBeenCalledWith(
+			expect.objectContaining({
+				name: `Loop build on ${ISSUE.id}`,
+				loop: expect.objectContaining({ issue_id: ISSUE.id })
+			})
+		);
+		const missions = await listMissions({ issue_id: ISSUE.id, limit: 10 }, { store });
+		expect(missions).toHaveLength(1);
+		expect(missions[0]?.title).toBe(ISSUE.title);
+	});
+
+	it('refuses a runner without loops before recording anything', async () => {
+		const provider = providerWithLaunch(vi.fn(async () => ({ agent_id: 'never' })));
+
+		await expect(
+			enqueueDispatch(
+				{ idempotency_key: 'idem-loop-0003', project: PROJECT, actor: 'web', payload: BUILD_LOOP },
+				{
+					store,
+					provider,
+					configured: true,
+					policy: ALLOW_ALL,
+					repositories: BEADS_WEB_MAP,
+					schedule_background: NO_BACKGROUND
+				}
+			)
+		).rejects.toMatchObject({ code: 'forbidden', message: LOOP_NOT_SUPPORTED_MESSAGE });
+		expect(provider.launch).not.toHaveBeenCalled();
+		expect(await store.list({ limit: 10 })).toEqual([]);
+	});
+
+	it('picks the named runner: one without loops is refused even if the default has them', async () => {
+		const sand = loopProvider(async () => ({ agent_id: 'sbx-3' }));
+		const webhook = providerWithLaunch(vi.fn(async () => ({ agent_id: 'never' })));
+
+		await expect(
+			enqueueDispatch(
+				{
+					idempotency_key: 'idem-loop-0004',
+					project: PROJECT,
+					actor: 'web',
+					payload: BUILD_LOOP,
+					provider: 'webhook'
+				},
+				{
+					store,
+					providers: [sand, webhook],
+					configured: true,
+					policy: ALLOW_ALL,
+					repositories: BEADS_WEB_MAP,
+					schedule_background: NO_BACKGROUND
+				}
+			)
+		).rejects.toMatchObject({ message: LOOP_NOT_SUPPORTED_MESSAGE });
+		expect(sand.launchLoop).not.toHaveBeenCalled();
+	});
+
+	it('refuses like Tackle: disarmed, or Tackle not allowed for the project', async () => {
+		const provider = loopProvider(async () => ({ agent_id: 'never' }));
+		const deps = {
+			store,
+			provider,
+			configured: true,
+			repositories: BEADS_WEB_MAP,
+			schedule_background: NO_BACKGROUND
+		};
+		const input = {
+			idempotency_key: 'idem-loop-0005',
+			project: PROJECT,
+			actor: 'web',
+			payload: BUILD_LOOP
+		};
+
+		await expect(
+			enqueueDispatch(input, { ...deps, policy: { ...ALLOW_ALL, armed: false } })
+		).rejects.toMatchObject({ code: 'forbidden', message: DISARMED_DISPATCH_MESSAGE });
+		await expect(
+			enqueueDispatch(input, {
+				...deps,
+				policy: { armed: true, allow: { file: true, tackle: false } }
+			})
+		).rejects.toMatchObject({ code: 'forbidden', message: LOOP_NOT_ALLOWED_MESSAGE });
+		expect(provider.launchLoop).not.toHaveBeenCalled();
+	});
+
+	it('fails closed without a Tackle checkout, like Tackle', async () => {
+		const provider = loopProvider(async () => ({ agent_id: 'never' }));
+
+		const unmapped = await enqueueDispatch(
+			{ idempotency_key: 'idem-loop-0006', project: PROJECT, actor: 'web', payload: BUILD_LOOP },
+			{
+				store,
+				provider,
+				configured: true,
+				policy: ALLOW_ALL,
+				repositories: {},
+				schedule_background: NO_BACKGROUND
+			}
+		);
+		const invalid = await enqueueDispatch(
+			{ idempotency_key: 'idem-loop-0007', project: PROJECT, actor: 'web', payload: BUILD_LOOP },
+			{
+				store,
+				provider,
+				configured: true,
+				policy: ALLOW_ALL,
+				repositories_invalid: true,
+				schedule_background: NO_BACKGROUND
+			}
+		);
+
+		expect(unmapped.request).toMatchObject({
+			status: 'failed',
+			error_message: UNMAPPED_TACKLE_MESSAGE
+		});
+		expect(invalid.request).toMatchObject({
+			status: 'failed',
+			error_message: INVALID_TACKLE_MAPPING_MESSAGE
+		});
+		expect(provider.launchLoop).not.toHaveBeenCalled();
+	});
+
+	it('replays an idempotent loop without launching a second one', async () => {
+		const provider = loopProvider(async () => ({ agent_id: 'sbx-8', run_id: 'loop-8' }));
+		const deps = {
+			store,
+			provider,
+			configured: true,
+			policy: ALLOW_ALL,
+			repositories: BEADS_WEB_MAP,
+			schedule_background: NO_BACKGROUND
+		};
+		const input = {
+			idempotency_key: 'idem-loop-0008',
+			project: PROJECT,
+			actor: 'web',
+			payload: BUILD_LOOP
+		};
+
+		const first = await enqueueDispatch(input, deps);
+		const replay = await enqueueDispatch(input, deps);
+
+		expect(replay).toMatchObject({ created: false, request: { id: first.request.id } });
+		expect(provider.launchLoop).toHaveBeenCalledTimes(1);
+	});
+
+	it('copies iterations into state.db as they arrive, once each', async () => {
+		const second: RalphIteration = {
+			...ITERATION,
+			iteration: 2,
+			outcome: 'failed',
+			started_at: '2026-11-11T10:05:00.000Z',
+			finished_at: '2026-11-11T10:09:00.000Z',
+			cost_usd: null,
+			validate_ok: null,
+			plan_open: null
+		};
+		const provider: AgentProvider = {
+			...loopProvider(async () => ({ agent_id: 'sbx-9', run_id: 'loop-9' })),
+			streamRun: vi.fn(async (_agent_id, _run_id, on_update) => {
+				await on_update({ status: 'running', iterations: [ITERATION] });
+				await on_update({ status: 'running', iterations: [ITERATION, second] });
+				await on_update({
+					status: 'succeeded',
+					result_summary: 'Stopped: no open plan items are left.',
+					iterations: [ITERATION, second]
+				});
+				return 'terminal' as const;
+			})
+		};
+		let background: Promise<void> | undefined;
+
+		const result = await enqueueDispatch(
+			{ idempotency_key: 'idem-loop-0009', project: PROJECT, actor: 'web', payload: BUILD_LOOP },
+			{
+				store,
+				provider,
+				configured: true,
+				policy: ALLOW_ALL,
+				repositories: BEADS_WEB_MAP,
+				schedule_background: (task) => {
+					background = task();
+				}
+			}
+		);
+		await background;
+
+		expect(await store.get(result.request.id)).toMatchObject({ status: 'succeeded' });
+		expect(await store.listLoopIterations(result.request.id)).toEqual([
+			{ ...ITERATION, run_id: 'loop-9' },
+			{ ...second, run_id: 'loop-9' }
+		]);
+	});
+
+	it('refuses a follow-up on a loop: it has its own controls', async () => {
+		const provider = loopProvider(async () => ({ agent_id: 'sbx-10', run_id: 'loop-10' }));
+		const { record } = await store.create({
+			idempotency_key: 'idem-loop-0010',
+			project_id: PROJECT.id,
+			dolt_database: PROJECT.dolt_database,
+			operation: 'loop',
+			actor: 'web',
+			payload: BUILD_LOOP
+		});
+		await store.updateStatus(record.id, {
+			status: 'succeeded',
+			provider: 'e2b',
+			agent_id: 'sbx-10',
+			run_id: 'loop-10'
+		});
+
+		await expect(
+			followUpDispatch(PROJECT.id, record.id, 'Keep going.', {
+				store,
+				provider,
+				configured: true,
+				policy: ALLOW_ALL
+			})
+		).rejects.toMatchObject({ code: 'conflict', message: LOOP_FOLLOW_UP_MESSAGE });
+		expect(provider.createRun).not.toHaveBeenCalled();
 	});
 });

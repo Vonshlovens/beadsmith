@@ -92,6 +92,31 @@ export const dispatchTurns = sqliteTable('dispatch_turns', {
 	createdAt: text('created_at').notNull()
 });
 
+/**
+ * A loop mission's finished iterations, copied from ralph as each ends
+ * (ADR-0019 rule 5). DDL in `DISPATCH_ITERATIONS_SCHEMA_SQL`.
+ */
+export const dispatchLoopIterations = sqliteTable(
+	'dispatch_loop_iterations',
+	{
+		requestId: text('request_id').notNull(),
+		runId: text('run_id').notNull(),
+		iteration: integer('iteration').notNull(),
+		outcome: text('outcome').notNull(),
+		startedAt: text('started_at').notNull(),
+		finishedAt: text('finished_at').notNull(),
+		durationMs: integer('duration_ms').notNull(),
+		headBefore: text('head_before'),
+		headAfter: text('head_after'),
+		inputTokens: integer('input_tokens').notNull(),
+		outputTokens: integer('output_tokens').notNull(),
+		costUsd: real('cost_usd'),
+		validateOk: integer('validate_ok', { mode: 'boolean' }),
+		planOpen: integer('plan_open')
+	},
+	(table) => [primaryKey({ columns: [table.requestId, table.runId, table.iteration] })]
+);
+
 /** One scheduled or manual backup run (ADR-0010). No credentials. */
 export const backupRuns = sqliteTable('backup_runs', {
 	id: text('id').primaryKey(),

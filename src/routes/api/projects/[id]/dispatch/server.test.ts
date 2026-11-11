@@ -394,4 +394,137 @@ describe('POST /api/projects/:id/dispatch', () => {
 		expect(response.status).toBe(404);
 		expect(mocks.enqueueDispatch).not.toHaveBeenCalled();
 	});
+
+	describe('loops', () => {
+		const LAUNCHED = {
+			created: true,
+			request: {
+				id: 'dq_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+				project_id: 'd_beads_web',
+				operation: 'loop',
+				status: 'launched',
+				created_at: '2026-11-11T00:00:00.000Z',
+				updated_at: '2026-11-11T00:00:00.000Z'
+			}
+		};
+
+		it('starts a plan-wide build loop without looking up an issue', async () => {
+			mocks.resolveProject.mockResolvedValue(PROJECT);
+			mocks.enqueueDispatch.mockResolvedValue(LAUNCHED);
+
+			const response = await post({
+				operation: 'loop',
+				idempotency_key: 'idem-aaaaaaaa',
+				provider: 'e2b',
+				mode: 'build',
+				harness: 'claude',
+				model: 'claude-opus-5-5',
+				effort: 'high',
+				max_iterations: 10,
+				iteration_timeout_minutes: 45
+			});
+
+			expect(response.status).toBe(201);
+			expect(mocks.getProjectIssue).not.toHaveBeenCalled();
+			expect(mocks.enqueueDispatch).toHaveBeenCalledWith({
+				idempotency_key: 'idem-aaaaaaaa',
+				project: PROJECT,
+				provider: 'e2b',
+				actor: 'web',
+				payload: {
+					operation: 'loop',
+					mode: 'build',
+					harness: 'claude',
+					model: 'claude-opus-5-5',
+					effort: 'high',
+					max_iterations: 10,
+					iteration_timeout_minutes: 45
+				},
+				issue: undefined
+			});
+		});
+
+		it('scopes a loop to one bead that exists', async () => {
+			mocks.resolveProject.mockResolvedValue(PROJECT);
+			mocks.getProjectIssue.mockResolvedValue({ issue: { id: 'beads-web-1', title: 'Map' } });
+			mocks.enqueueDispatch.mockResolvedValue(LAUNCHED);
+
+			const response = await post({
+				operation: 'loop',
+				idempotency_key: 'idem-aaaaaaaa',
+				mode: 'build',
+				issue_id: 'beads-web-1',
+				max_iterations: 3
+			});
+
+			expect(response.status).toBe(201);
+			expect(mocks.enqueueDispatch).toHaveBeenCalledWith(
+				expect.objectContaining({
+					payload: { operation: 'loop', mode: 'build', issue_id: 'beads-web-1', max_iterations: 3 },
+					issue: { id: 'beads-web-1', title: 'Map' }
+				})
+			);
+		});
+
+		it('refuses a loop on a bead that does not exist', async () => {
+			mocks.resolveProject.mockResolvedValue(PROJECT);
+			mocks.getProjectIssue.mockResolvedValue(undefined);
+
+			const response = await post({
+				operation: 'loop',
+				idempotency_key: 'idem-aaaaaaaa',
+				mode: 'build',
+				issue_id: 'beads-web-404',
+				max_iterations: 3
+			});
+
+			expect(response.status).toBe(404);
+			expect(mocks.enqueueDispatch).not.toHaveBeenCalled();
+		});
+
+		it.each([
+			['a run loop without a prompt', { mode: 'run', max_iterations: 3 }],
+			['a prompt on a build loop', { mode: 'build', prompt: 'Do it.', max_iterations: 3 }],
+			['a plan loop on one bead', { mode: 'plan', issue_id: 'beads-web-1', max_iterations: 3 }],
+			['no iteration limit', { mode: 'build' }],
+			['too many iterations', { mode: 'build', max_iterations: 201 }],
+			['an unknown mode', { mode: 'serve', max_iterations: 3 }],
+			['an unknown harness', { mode: 'build', harness: 'bash', max_iterations: 3 }],
+			['a model that looks like a flag', { mode: 'build', model: '--yolo', max_iterations: 3 }],
+			['an effort with spaces', { mode: 'build', effort: 'very high', max_iterations: 3 }],
+			['an unknown field', { mode: 'build', max_iterations: 3, scope: 'auth' }]
+		])('rejects %s', async (_name, fields) => {
+			mocks.resolveProject.mockResolvedValue(PROJECT);
+			const response = await post({
+				operation: 'loop',
+				idempotency_key: 'idem-aaaaaaaa',
+				...fields
+			});
+			expect(response.status).toBe(400);
+			expect(mocks.enqueueDispatch).not.toHaveBeenCalled();
+		});
+
+		it('accepts a run loop with its prompt', async () => {
+			mocks.resolveProject.mockResolvedValue(PROJECT);
+			mocks.enqueueDispatch.mockResolvedValue(LAUNCHED);
+
+			const response = await post({
+				operation: 'loop',
+				idempotency_key: 'idem-aaaaaaaa',
+				mode: 'run',
+				prompt: 'Tidy one module per iteration.',
+				max_iterations: 4
+			});
+
+			expect(response.status).toBe(201);
+			expect(mocks.enqueueDispatch).toHaveBeenCalledWith(
+				expect.objectContaining({
+					payload: expect.objectContaining({
+						mode: 'run',
+						prompt: 'Tidy one module per iteration.'
+					})
+				})
+			);
+		});
+	});
 });

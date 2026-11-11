@@ -347,6 +347,11 @@ export function buildDispatchAgentName(record: DispatchRecord): string {
 		];
 		return `${verb} ${record.payload.issue_id}`.slice(0, 100);
 	}
+	if (record.payload.operation === 'loop') {
+		const mode = record.payload.mode;
+		const subject = record.payload.issue_id ?? record.dolt_database;
+		return `Loop ${mode} on ${subject}`.slice(0, 100);
+	}
 	const issue_id = record.payload.operation === 'tackle' ? record.payload.issue_id : 'issue';
 	const destination =
 		record.payload.operation === 'tackle' ? record.payload.destination_status : undefined;

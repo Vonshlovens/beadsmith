@@ -239,7 +239,8 @@ export function missionVerb(mission: Pick<DispatchRequest, 'operation' | 'intent
 		file: 'File',
 		tackle: 'Tackle',
 		comment: 'Comment',
-		discuss: 'Discuss'
+		discuss: 'Discuss',
+		loop: 'Loop'
 	};
 	return verbs[mission.operation];
 }

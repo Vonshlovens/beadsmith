@@ -28,6 +28,7 @@ describe('initStateSchema', () => {
 			'auth_user',
 			'auth_verification',
 			'backup_runs',
+			'dispatch_loop_iterations',
 			'dispatch_project_allows',
 			'dispatch_requests',
 			'dispatch_turns',

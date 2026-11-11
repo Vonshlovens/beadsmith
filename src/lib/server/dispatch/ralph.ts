@@ -21,6 +21,7 @@
 import { isMissionEvent, type MissionEvent } from '#lib/mission-events.js';
 import { readSseStream } from '../mate/runner.js';
 import type { AgentRunStatus, AgentStreamOutcome } from './provider.js';
+import { RALPH_MODES, type RalphMode } from './ralph-cli.js';
 import { readDurationMs, sanitizeResultSummary } from './sanitize.js';
 
 /** ralph's own run name rule; Beadsmith addresses a run by the name it launched it with. */
@@ -82,9 +83,6 @@ export class RalphError extends Error {
 }
 
 // ------------------------------------------------------------------ records
-
-export const RALPH_MODES = ['run', 'plan', 'build', 'reverse'] as const;
-export type RalphMode = (typeof RALPH_MODES)[number];
 
 export const RALPH_STOP_REASONS = [
 	'max_iterations',

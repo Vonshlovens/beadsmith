@@ -23,6 +23,8 @@ import type { MissionEvent } from '#lib/mission-events.js';
 import type { DispatchCapabilities, DispatchProviderId, DispatchProviderInfo } from '#lib/types.js';
 import { getEnv, type ServerEnv } from '../env.js';
 import { createE2bProvider } from './e2b-provider.js';
+import type { RalphIteration } from './ralph.js';
+import type { LoopPayload } from './types.js';
 import { createWebhookProvider } from './webhook-provider.js';
 
 export type { DispatchProviderId };
@@ -41,6 +43,21 @@ export interface AgentLaunchInput {
 	};
 }
 
+/**
+ * A ralph loop to start (ADR-0019 rule 2): `ralph <mode>` with these flags in
+ * the project's Tackle checkout, in the runner's hc terminal.
+ */
+export interface AgentLoopLaunchInput {
+	name: string;
+	/** The project's Dolt database the loop's agents work in. */
+	dolt_database: string;
+	repository: {
+		url: string;
+		starting_ref: string;
+	};
+	loop: Omit<LoopPayload, 'operation' | 'title'>;
+}
+
 export interface AgentLaunch {
 	agent_id: string;
 	agent_url?: string;
@@ -57,6 +74,13 @@ export interface AgentRunUpdate {
 	/** Bead a File run created, when the runner reports it (webhook contract v1 `issue_id`). */
 	issue_id?: string;
 	error_message?: string;
+	/**
+	 * A loop's finished iterations so far, as ralph records them. The service
+	 * copies them into state.db as they arrive, because the sandbox and its
+	 * ralph database are destroyed when the loop ends (ADR-0019 rule 5).
+	 * Repeats are harmless: an iteration is stored once.
+	 */
+	iterations?: RalphIteration[];
 }
 
 export interface AgentFollowUpRun {
@@ -75,6 +99,12 @@ export interface AgentProvider {
 	/** Human name for status and messages, e.g. "Webhook agent runner". */
 	readonly label: string;
 	launch(input: AgentLaunchInput): Promise<AgentLaunch>;
+	/**
+	 * Start a ralph loop. Present only on a provider whose runner has ralph
+	 * (its `loop` capability); without it a loop launch is refused before a
+	 * record or a sandbox exists.
+	 */
+	launchLoop?(input: AgentLoopLaunchInput): Promise<AgentLaunch>;
 	getLatestRunId(agent_id: string): Promise<string | undefined>;
 	getRun(agent_id: string, run_id: string): Promise<AgentRunUpdate>;
 	createRun?(agent_id: string, prompt: string): Promise<AgentFollowUpRun>;
@@ -104,11 +134,13 @@ export const WEBHOOK_PROVIDER_LABEL = 'Webhook agent runner';
  * What each provider can do, for the agent console. The
  * webhook contract makes follow-up and cancel optional; a runner that does
  * not support them answers 404 and the console shows that refusal. E2B
- * streams the agent's own event log. A new provider adds its row here.
+ * streams the agent's own event log. `loop` is true exactly when the provider
+ * implements `launchLoop`: the webhook contract has no loop, and Sand gains
+ * one when its template carries ralph. A new provider adds its row here.
  */
 export const PROVIDER_CAPABILITIES: Record<DispatchProviderId, DispatchCapabilities> = {
-	webhook: { live_events: false, follow_up: true, cancel: true },
-	e2b: { live_events: true, follow_up: true, cancel: true }
+	webhook: { live_events: false, follow_up: true, cancel: true, loop: false },
+	e2b: { live_events: true, follow_up: true, cancel: true, loop: false }
 };
 
 /** Label for a provider id, for status and messages. */

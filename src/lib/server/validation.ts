@@ -5,6 +5,8 @@ import type { FileCheckoutMapping } from './dispatch/file-maps.js';
 import { parseGitHubRepositoryUrl, parseGitRef } from './dispatch/repositories.js';
 import type { TackleRepositoryMapping } from './dispatch/repositories.js';
 import { normalizeEndpoint } from './backup/s3.js';
+import { RALPH_HARNESSES, RALPH_MODES } from './dispatch/ralph-cli.js';
+import { EFFORT_PATTERN, MODEL_PATTERN } from '#lib/agent-session/claude-code.js';
 import {
 	CHAT_ID_PATTERN,
 	CREW_NOTICE_PREFIX,
@@ -119,12 +121,61 @@ const discuss_dispatch_schema = z
 	})
 	.strict();
 
+/**
+ * Bounds on a loop. A loop always has an iteration limit: an unbounded loop
+ * spends until someone notices, and a Sand sandbox has a lifetime anyway.
+ */
+export const LOOP_MAX_ITERATIONS = 200;
+export const LOOP_MAX_ITERATION_TIMEOUT_MINUTES = 240;
+export const LOOP_PROMPT_MAX = 8000;
+
+const loop_dispatch_schema = z
+	.object({
+		operation: z.literal('loop'),
+		provider: dispatch_provider_schema,
+		idempotency_key: z.string().regex(IDEMPOTENCY_KEY_PATTERN, 'invalid idempotency key'),
+		mode: z.enum(RALPH_MODES),
+		prompt: z.string().trim().min(1).max(LOOP_PROMPT_MAX).optional(),
+		issue_id: issue_id_schema.optional(),
+		harness: z.enum(RALPH_HARNESSES).optional(),
+		model: z.string().regex(MODEL_PATTERN, 'invalid model').optional(),
+		effort: z.string().regex(EFFORT_PATTERN, 'invalid effort').optional(),
+		max_iterations: z.number().int().min(1).max(LOOP_MAX_ITERATIONS),
+		iteration_timeout_minutes: z
+			.number()
+			.int()
+			.min(1)
+			.max(LOOP_MAX_ITERATION_TIMEOUT_MINUTES)
+			.optional()
+	})
+	.strict()
+	.superRefine((loop, ctx) => {
+		// ralph run takes its task as a prompt; the other modes use the
+		// checkout's own prompts, so a prompt there would be silently ignored.
+		if (loop.mode === 'run' && loop.prompt === undefined) {
+			ctx.addIssue({ code: 'custom', path: ['prompt'], message: 'a run loop needs a prompt' });
+		}
+		if (loop.mode !== 'run' && loop.prompt !== undefined) {
+			ctx.addIssue({ code: 'custom', path: ['prompt'], message: 'only a run loop takes a prompt' });
+		}
+		// ralph narrows build (and records run) to one bead; plan and reverse
+		// work on the whole project (ADR-0019 rule 6).
+		if (loop.issue_id !== undefined && loop.mode !== 'build' && loop.mode !== 'run') {
+			ctx.addIssue({
+				code: 'custom',
+				path: ['issue_id'],
+				message: 'only a build or run loop works on one bead'
+			});
+		}
+	});
+
 /** Body of `POST /api/projects/:id/dispatch`. */
 export const dispatch_schema = z.discriminatedUnion('operation', [
 	file_dispatch_schema,
 	tackle_dispatch_schema,
 	comment_dispatch_schema,
-	discuss_dispatch_schema
+	discuss_dispatch_schema,
+	loop_dispatch_schema
 ]);
 
 export const dispatch_request_id_schema = z

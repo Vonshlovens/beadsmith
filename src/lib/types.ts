@@ -178,6 +178,11 @@ export interface DispatchCapabilities {
 	follow_up: boolean;
 	/** Can stop a run in flight. */
 	cancel: boolean;
+	/**
+	 * Runs ralph loops (ADR-0019 rule 1): its sandboxes have ralph installed.
+	 * A loop launch on a provider without it is refused before anything starts.
+	 */
+	loop: boolean;
 }
 
 /** Public GitHub checkout shown on the operator console. Not a secret. */
@@ -391,8 +396,11 @@ export type DependencyType = 'blocks' | 'related' | 'parent-child' | 'discovered
 /** Stored UI theme preference (settings key `ui.theme`). */
 export type ThemePreference = 'system' | 'light' | 'dark';
 
-/** Lifecycle intent the control plane may enqueue for an agent. */
-export type DispatchOperation = 'file' | 'tackle' | 'comment' | 'discuss';
+/**
+ * Lifecycle intent the control plane may enqueue for an agent. `loop` runs a
+ * multi-iteration ralph loop as one mission (ADR-0019).
+ */
+export type DispatchOperation = 'file' | 'tackle' | 'comment' | 'discuss' | 'loop';
 
 /**
  * What a `discuss` mission asks of the agent: talk the issue through, rewrite

@@ -213,6 +213,8 @@ record is written. It is not part of the idempotent payload.
 - `{ operation: "comment", idempotency_key, issue_id, text }`
 - `{ operation: "discuss", idempotency_key, issue_id, intent, message? }` with
   `intent` one of `discuss`, `elaborate`, `close`
+- `{ operation: "loop", idempotency_key, mode, max_iterations, prompt?, issue_id?, harness?, model?, effort?, iteration_timeout_minutes? }`
+  with `mode` one of `build`, `plan`, `run`, `reverse`
 
 Discuss is the issue page's agent button (key `a`): the worker follows
 `.agents/skills/discuss/SKILL.md` and either talks the issue through, rewrites
@@ -222,6 +224,23 @@ checkout, never opens a PR,
 and continues as a conversation through follow-up. A plain discussion is
 allowed when File or Tackle is allowed; `elaborate` and `close` need Tackle.
 The public record carries `intent` but never the message.
+
+Loop runs a [ralph](https://github.com/Vonshlovens/von-ralph) loop as one
+mission ([ADR-0019](../specs/decisions/0019-ralph-loops-and-automations.md)):
+`ralph <mode>` with those flags, in the project's Tackle checkout, one fresh
+agent session per iteration. Every mode writes Beads or code, so a loop needs
+Tackle allowed and a Tackle map, and fails closed without one, as Tackle does.
+`run` needs a `prompt` and the other modes refuse one (they use the
+checkout's own `.ralph/` prompts). `issue_id` narrows a `build` (or labels a
+`run`) to one bead, which must exist; without it the loop works on the
+project's whole plan. `max_iterations` is required (1 to 200), so no loop
+spends without a bound; `iteration_timeout_minutes` is 1 to 240. Only a
+runner whose `capabilities.loop` is true takes a loop; any other refuses it
+with `403` before a record is written. A loop takes no follow-up (`409`):
+steer, stop and restart are its controls. Each finished iteration (number,
+outcome, duration, tokens, cost, commit range, validation, open plan items)
+is copied into `state.db` as the runner reports it, because a Sand sandbox
+and ralph's own database go when the loop ends.
 
 Comment launches the File checkout (beads-web, no PR) and is allowed when File
 or Tackle is allowed for the project. The browser cannot set `author`; the

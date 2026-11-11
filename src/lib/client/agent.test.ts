@@ -19,7 +19,7 @@ function health(patch: Partial<DispatchHealth> = {}): { dispatch: DispatchHealth
 			key_configured: true,
 			armed: true,
 			provider: 'webhook',
-			capabilities: { live_events: false, follow_up: true, cancel: true },
+			capabilities: { live_events: false, follow_up: true, cancel: true, loop: false },
 			...patch
 		}
 	};
@@ -91,8 +91,8 @@ describe('isFollowedMission', () => {
 });
 
 describe('missions across several runners', () => {
-	const webhook_caps = { live_events: false, follow_up: false, cancel: true };
-	const sand_caps = { live_events: true, follow_up: true, cancel: true };
+	const webhook_caps = { live_events: false, follow_up: false, cancel: true, loop: false };
+	const sand_caps = { live_events: true, follow_up: true, cancel: true, loop: false };
 	const dispatch = {
 		armed: true,
 		provider: 'webhook' as const,
@@ -148,7 +148,9 @@ describe('composerState', () => {
 		expect(
 			composerState(
 				done,
-				health({ capabilities: { live_events: false, follow_up: false, cancel: false } }).dispatch
+				health({
+					capabilities: { live_events: false, follow_up: false, cancel: false, loop: false }
+				}).dispatch
 			).reason
 		).toContain('follow-up');
 		expect(composerState(done, health({ armed: false }).dispatch).reason).toContain('disarmed');
@@ -184,7 +186,7 @@ describe('formatElapsed', () => {
 });
 
 describe('missionCardState', () => {
-	const caps = (cancel: boolean) => ({ live_events: true, follow_up: true, cancel });
+	const caps = (cancel: boolean) => ({ live_events: true, follow_up: true, cancel, loop: false });
 	const dispatch = {
 		armed: true,
 		provider: 'e2b' as const,
@@ -197,7 +199,10 @@ describe('missionCardState', () => {
 	const running = { status: 'running' as const, agent_id: 'sbx1', provider: 'e2b' as const };
 
 	it('offers Stop while a followed run can be cancelled', () => {
-		expect(missionCardState(running, dispatch)).toEqual({ busy: true, can_cancel: true });
+		expect(missionCardState(running, dispatch)).toEqual({
+			busy: true,
+			can_cancel: true
+		});
 	});
 
 	it('offers no Stop before launch, on a runner that cannot cancel, or once finished', () => {

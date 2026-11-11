@@ -8,6 +8,11 @@ import type {
 } from '#lib/types.js';
 import { DISPATCH_PROVIDER_IDS } from '#lib/types.js';
 import { DispatchError, type DispatchPayload, type DispatchRecord } from './types.js';
+import {
+	RALPH_ITERATION_OUTCOMES,
+	type RalphIteration,
+	type RalphIterationOutcome
+} from './ralph.js';
 
 export interface CreateDispatchInput {
 	idempotency_key: string;
@@ -48,6 +53,38 @@ export const DISPATCH_TURNS_SCHEMA_SQL: string[] = [
 	`CREATE UNIQUE INDEX IF NOT EXISTS dispatch_turns_agent_run
 		ON dispatch_turns (request_id, run_id) WHERE role = 'agent' AND run_id IS NOT NULL`
 ];
+
+/**
+ * A loop mission's finished iterations (ADR-0019 rule 5), copied from ralph as
+ * each one ends, because the sandbox holding ralph's own database is destroyed
+ * with the loop. Keyed by run so a restarted loop (a new run on the same
+ * mission) keeps its earlier iterations. Numbers and a commit range only: the
+ * agent's words and errors stay in the sandbox.
+ */
+export const DISPATCH_ITERATIONS_SCHEMA_SQL: string[] = [
+	`CREATE TABLE IF NOT EXISTS dispatch_loop_iterations (
+		request_id TEXT NOT NULL,
+		run_id TEXT NOT NULL,
+		iteration INTEGER NOT NULL,
+		outcome TEXT NOT NULL,
+		started_at TEXT NOT NULL,
+		finished_at TEXT NOT NULL,
+		duration_ms INTEGER NOT NULL,
+		head_before TEXT,
+		head_after TEXT,
+		input_tokens INTEGER NOT NULL,
+		output_tokens INTEGER NOT NULL,
+		cost_usd REAL,
+		validate_ok INTEGER,
+		plan_open INTEGER,
+		PRIMARY KEY (request_id, run_id, iteration)
+	)`
+];
+
+/** One stored loop iteration, with the run it belongs to. */
+export interface StoredLoopIteration extends RalphIteration {
+	run_id: string;
+}
 
 /** Turn text is display copy, so it is capped like a follow-up. */
 export const TURN_TEXT_MAX = 8000;
@@ -97,6 +134,14 @@ export interface DispatchStore {
 	 * yet, oldest first.
 	 */
 	listChatNoticesDue(chat_id: string, limit: number): Promise<DispatchRecord[]>;
+	/** Store a loop run's finished iterations; ones already stored are kept as they are. */
+	recordLoopIterations(
+		request_id: string,
+		run_id: string,
+		iterations: readonly RalphIteration[]
+	): Promise<void>;
+	/** A loop mission's iterations across its runs, oldest first. */
+	listLoopIterations(request_id: string): Promise<StoredLoopIteration[]>;
 }
 
 /**
@@ -192,6 +237,35 @@ function rowToRecord(row: Record<string, unknown>): DispatchRecord {
 }
 
 /** Build a dispatch store over an already-initialised libsql client. */
+function rowToIteration(row: Record<string, unknown>): StoredLoopIteration | undefined {
+	const outcome = String(row.outcome);
+	if (!(RALPH_ITERATION_OUTCOMES as readonly string[]).includes(outcome)) {
+		return undefined;
+	}
+	const optionalText = (value: unknown) =>
+		value === null || value === undefined ? null : String(value);
+	const optionalNumber = (value: unknown) =>
+		value === null || value === undefined ? null : Number(value);
+	return {
+		run_id: String(row.run_id),
+		iteration: Number(row.iteration),
+		outcome: outcome as RalphIterationOutcome,
+		started_at: String(row.started_at),
+		finished_at: String(row.finished_at),
+		duration_ms: Number(row.duration_ms),
+		head_before: optionalText(row.head_before),
+		head_after: optionalText(row.head_after),
+		input_tokens: Number(row.input_tokens),
+		output_tokens: Number(row.output_tokens),
+		cost_usd: optionalNumber(row.cost_usd),
+		validate_ok:
+			row.validate_ok === null || row.validate_ok === undefined
+				? null
+				: Number(row.validate_ok) === 1,
+		plan_open: optionalNumber(row.plan_open)
+	};
+}
+
 export function createDispatchStore(client: Client): DispatchStore {
 	return {
 		async create(
@@ -416,6 +490,52 @@ export function createDispatchStore(client: Client): DispatchStore {
 				args: [chat_id, limit]
 			});
 			return result.rows.map((row) => rowToRecord(row as Record<string, unknown>));
+		},
+
+		async recordLoopIterations(
+			request_id: string,
+			run_id: string,
+			iterations: readonly RalphIteration[]
+		): Promise<void> {
+			if (iterations.length === 0) {
+				return;
+			}
+			await client.batch(
+				iterations.map((it) => ({
+					sql: `INSERT OR IGNORE INTO dispatch_loop_iterations (
+							request_id, run_id, iteration, outcome, started_at, finished_at, duration_ms,
+							head_before, head_after, input_tokens, output_tokens, cost_usd, validate_ok, plan_open
+						) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					args: [
+						request_id,
+						run_id,
+						it.iteration,
+						it.outcome,
+						it.started_at,
+						it.finished_at,
+						it.duration_ms,
+						it.head_before,
+						it.head_after,
+						it.input_tokens,
+						it.output_tokens,
+						it.cost_usd,
+						it.validate_ok === null ? null : it.validate_ok ? 1 : 0,
+						it.plan_open
+					]
+				})),
+				'write'
+			);
+		},
+
+		async listLoopIterations(request_id: string): Promise<StoredLoopIteration[]> {
+			const result = await client.execute({
+				sql: `SELECT run_id, iteration, outcome, started_at, finished_at, duration_ms, head_before,
+						head_after, input_tokens, output_tokens, cost_usd, validate_ok, plan_open
+					FROM dispatch_loop_iterations WHERE request_id = ?
+					ORDER BY started_at, iteration`,
+				args: [request_id]
+			});
+			return result.rows.flatMap((row) => rowToIteration(row as Record<string, unknown>) ?? []);
 		}
 	};
 }

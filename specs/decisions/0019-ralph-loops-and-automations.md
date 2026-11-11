@@ -210,7 +210,15 @@ Nothing ships with this record. Planned, each in its own change:
   not thread events; iterations reach the mission as records;
 - the `loop` operation (`src/lib/types.ts` `DispatchOperation`,
   `src/lib/server/dispatch/types.ts`, `state/schema.ts`), loop capability
-  per provider, iteration rows, and the Sand loop runner;
+  per provider, iteration rows, and the Sand loop runner.
+  The operation, capability and iteration rows shipped: `LoopPayload` holds
+  the flags, `AgentProvider.launchLoop` is the capability (no provider has it
+  until a runner carries ralph, so every loop launch is refused today), and a
+  run update's `iterations` are stored in `dispatch_loop_iterations`. A loop
+  requires an iteration limit (1 to 200), a `run` loop requires its prompt
+  and the other modes refuse one, and bead scope is for `build` and `run`
+  only, as ralph's `--bead` is. A loop refuses follow-up: a one-shot agent in
+  its checkout would run outside ralph;
 - loop controls and the loop UI on project, epic, issue and mission pages;
 - automations: tables, the ticker beside `src/lib/server/backup/runtime.ts`,
   and an automations page. ADR-0004's list of what `state.db` holds and
