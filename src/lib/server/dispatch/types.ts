@@ -5,7 +5,8 @@ import type {
 	DispatchStatus
 } from '#lib/types.js';
 import type { StatusKey } from '#lib/client/format.js';
-import type { RalphHarness, RalphMode } from './ralph-cli.js';
+import type { RalphHarness, RalphMode } from '#lib/ralph.js';
+import type { LoopEnd } from './provider.js';
 
 /** Validated File payload stored on the dispatch record. */
 export interface FilePayload {
@@ -108,6 +109,8 @@ export interface DispatchRecord {
 	 * outcome is told once, across restarts.
 	 */
 	chat_notice?: string;
+	/** A loop's current run has ended and why; absent while it runs (ADR-0019 rule 4). */
+	loop_end?: LoopEnd;
 	created_at: string;
 	updated_at: string;
 }

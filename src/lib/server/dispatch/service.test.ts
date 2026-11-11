@@ -21,6 +21,7 @@ import {
 	followUpDispatch,
 	getDispatch,
 	listDispatchTurns,
+	listLoopIterations,
 	listMissions,
 	streamDispatchMissionEvents,
 	toPublicDispatch,
@@ -1975,7 +1976,8 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 				await on_update({
 					status: 'succeeded',
 					result_summary: 'Stopped: no open plan items are left.',
-					iterations: [ITERATION, second]
+					iterations: [ITERATION, second],
+					loop_end: { stop_reason: 'plan_complete', needs_person: false }
 				});
 				return 'terminal' as const;
 			})
@@ -2002,6 +2004,22 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 			{ ...ITERATION, run_id: 'loop-9' },
 			{ ...second, run_id: 'loop-9' }
 		]);
+		expect(await listLoopIterations(PROJECT.id, result.request.id, { store })).toEqual([
+			{ ...ITERATION, run_id: 'loop-9' },
+			{ ...second, run_id: 'loop-9' }
+		]);
+		expect(await listLoopIterations('d_other', result.request.id, { store })).toBeUndefined();
+		const record = await store.get(result.request.id);
+		expect(toPublicDispatch(record!).loop).toEqual({
+			mode: 'build',
+			harness: 'claude',
+			model: 'opus',
+			effort: 'high',
+			max_iterations: 5,
+			iteration_timeout_minutes: 30,
+			stop_reason: 'plan_complete',
+			needs_person: false
+		});
 	});
 
 	it('refuses a follow-up on a loop: it has its own controls', async () => {

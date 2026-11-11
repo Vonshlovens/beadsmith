@@ -2,6 +2,7 @@
  * Wire types shared by server and client. Mirrors `docs/contract.md` §Wire types.
  * This file must stay free of runtime code.
  */
+import type { RalphHarness, RalphIterationOutcome, RalphMode, RalphStopReason } from './ralph.js';
 
 /** Every project exposed by the web service is a remote Dolt database. */
 export type ProjectState = 'remote';
@@ -433,6 +434,55 @@ export interface DispatchRequest {
 	created_at: string;
 	updated_at: string;
 	error_message?: string;
+	/** Present on `loop` missions. */
+	loop?: DispatchLoop;
+}
+
+/**
+ * A loop mission's flags and, once it has ended, why (ADR-0019 rule 5). The
+ * `run` prompt is not here: like a Tackle description it stays on the record.
+ */
+export interface DispatchLoop {
+	mode: RalphMode;
+	/** The bead it works on; absent = the project's whole plan. */
+	issue_id?: string;
+	harness?: RalphHarness;
+	model?: string;
+	effort?: string;
+	max_iterations?: number;
+	iteration_timeout_minutes?: number;
+	/** Why the current run ended; absent while it runs or when ralph recorded none. */
+	stop_reason?: RalphStopReason;
+	/** The ended run asks a person to look (ralph's stop reason or report). */
+	needs_person?: boolean;
+}
+
+/**
+ * One finished loop iteration as Beadsmith keeps it (ADR-0019 rule 5):
+ * numbers and a commit range only, never the agent's words or errors.
+ */
+export interface LoopIteration {
+	/** The mission's run it belongs to; a restarted loop is a new run. */
+	run_id: string;
+	iteration: number;
+	outcome: RalphIterationOutcome;
+	started_at: string;
+	finished_at: string;
+	duration_ms: number;
+	head_before: string | null;
+	head_after: string | null;
+	input_tokens: number;
+	output_tokens: number;
+	cost_usd: number | null;
+	/** null: the project has no validation commands, or they did not run. */
+	validate_ok: boolean | null;
+	/** Open plan items after the iteration; null when there is no plan. */
+	plan_open: number | null;
+}
+
+/** GET /api/projects/:id/dispatch/:requestId/iterations. */
+export interface LoopIterationsResponse {
+	iterations: LoopIteration[];
 }
 
 /**

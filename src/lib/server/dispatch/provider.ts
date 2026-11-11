@@ -23,6 +23,7 @@ import type { MissionEvent } from '#lib/mission-events.js';
 import type { DispatchCapabilities, DispatchProviderId, DispatchProviderInfo } from '#lib/types.js';
 import { getEnv, type ServerEnv } from '../env.js';
 import { createE2bProvider } from './e2b-provider.js';
+import type { RalphStopReason } from '#lib/ralph.js';
 import type { RalphIteration } from './ralph.js';
 import type { LoopPayload } from './types.js';
 import type { TerminalAttachRequest, TerminalRelay } from '../terminal-relay/relay.js';
@@ -82,6 +83,16 @@ export interface AgentRunUpdate {
 	 * Repeats are harmless: an iteration is stored once.
 	 */
 	iterations?: RalphIteration[];
+	/** How a loop's run ended, on its terminal update (ADR-0019 rule 4). */
+	loop_end?: LoopEnd;
+}
+
+/** Why a loop run ended, kept on the mission so the UI need not parse its summary. */
+export interface LoopEnd {
+	/** null: ralph recorded no reason (it died first, or sent one this build does not know). */
+	stop_reason: RalphStopReason | null;
+	/** ralph's stop reason, exit code or report asks a person to look. */
+	needs_person: boolean;
 }
 
 export interface AgentFollowUpRun {

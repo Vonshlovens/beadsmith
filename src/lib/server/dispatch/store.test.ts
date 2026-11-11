@@ -291,4 +291,35 @@ describe('loop iterations', () => {
 			{ ...restarted, run_id: 'run-b' }
 		]);
 	});
+
+	it('keeps how a loop run ended until a restart starts a new run', async () => {
+		const store = createDispatchStore(client);
+		const { record } = await store.create(baseInput);
+		await store.updateStatus(record.id, { status: 'running', agent_id: 'sbx-1', run_id: 'run-a' });
+		expect((await store.get(record.id))!.loop_end).toBeUndefined();
+
+		await store.updateStatus(record.id, {
+			status: 'succeeded',
+			loop_end: { stop_reason: 'no_progress', needs_person: true }
+		});
+		// A later read without loop_end keeps it.
+		await store.updateStatus(record.id, { status: 'succeeded', duration_ms: 10 });
+		expect((await store.get(record.id))!.loop_end).toEqual({
+			stop_reason: 'no_progress',
+			needs_person: true
+		});
+
+		await store.startFollowUp(record.id, { run_id: 'run-b', status: 'running' });
+		expect((await store.get(record.id))!.loop_end).toBeUndefined();
+
+		// ralph recorded no reason: the run still ended.
+		await store.updateStatus(record.id, {
+			status: 'failed',
+			loop_end: { stop_reason: null, needs_person: false }
+		});
+		expect((await store.get(record.id))!.loop_end).toEqual({
+			stop_reason: null,
+			needs_person: false
+		});
+	});
 });

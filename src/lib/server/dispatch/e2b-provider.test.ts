@@ -914,9 +914,31 @@ describe('E2B provider loops', () => {
 		expect(update.result_summary).toContain('A person should look.');
 		expect(update.result_summary).toContain('bw-9 needs a decision');
 		expect(update.result_summary).not.toContain(DOLT_PASSWORD);
+		expect(update.loop_end).toEqual({ stop_reason: 'plan_exhausted', needs_person: true });
 		expect(JSON.parse(sandbox.file('r1', 'result.json')!)).toMatchObject({ status: 'succeeded' });
+		// Later reads come from result.json and keep how the loop ended.
+		expect((await provider.getRun('sbx1', 'r1')).loop_end).toEqual({
+			stop_reason: 'plan_exhausted',
+			needs_person: true
+		});
 		expect(sandbox.timeouts.at(-1)).toBe(SETTINGS.idle_minutes * 60_000);
 		expect(sandbox.killed).toBe(false);
+	});
+
+	it('asks for a person when the report does, even after a clean stop', async () => {
+		const { provider, claude, ralph, name } = await launched();
+		await provider.getRun('sbx1', 'r1');
+		ralph.addRun({ name, status: 'finished', alive: false, stopReason: 'max_iterations' });
+		ralph.reports.set(name, {
+			stopReason: 'max_iterations',
+			iterations: 5,
+			durationMs: 60_000,
+			needsHuman: ['bw-3 is blocked on a credential']
+		});
+		claude.core.exit(terminals(claude)[1].address, 0);
+		const update = await provider.getRun('sbx1', 'r1');
+		expect(update.status).toBe('succeeded');
+		expect(update.loop_end).toEqual({ stop_reason: 'max_iterations', needs_person: true });
 	});
 
 	it('fails with a clear message when the template has no ralph', async () => {

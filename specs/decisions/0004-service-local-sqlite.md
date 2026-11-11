@@ -45,7 +45,8 @@ Today the database has seventeen application tables plus four account tables:
 - `dispatch_requests` — File/Tackle control-plane metadata: opaque request
   id, idempotency key (unique), project id, Dolt database name of the
   targeted request, operation, actor, payload JSON, status, provider, optional
-  agent id/url/run id, sanitized error, timestamps. (Startup renamed the
+  agent id/url/run id, sanitized error, a loop run's stop reason and
+  needs-person flag (ADR-0019), timestamps. (Startup renamed the
   first provider's `cursor_`-prefixed columns from 2026-10-28; that step was
   removed on 2026-10-30 once every install had run it.)
 - `dispatch_turns` — per-mission conversation turns:

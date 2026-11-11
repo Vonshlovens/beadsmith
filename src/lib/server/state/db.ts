@@ -104,6 +104,16 @@ const DISPATCH_COLUMN_MIGRATIONS = [
 		// old outcomes as news.
 		then: `UPDATE dispatch_requests SET chat_notice = status || ':' || COALESCE(run_id, '')
 			WHERE chat_id IS NOT NULL AND status IN ('succeeded', 'cancelled', 'failed')`
+	},
+	// How a loop's current run ended (ADR-0019 rule 4). needs_person is set on
+	// every ended loop, so it also marks "ended"; the reason can be unknown.
+	{
+		name: 'loop_stop_reason',
+		sql: 'ALTER TABLE dispatch_requests ADD COLUMN loop_stop_reason TEXT'
+	},
+	{
+		name: 'loop_needs_person',
+		sql: 'ALTER TABLE dispatch_requests ADD COLUMN loop_needs_person INTEGER'
 	}
 ] as const;
 

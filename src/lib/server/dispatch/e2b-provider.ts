@@ -61,6 +61,7 @@ import {
 	type TurnMark
 } from '#lib/agent-session/session.js';
 import type { E2bSettings } from '../env.js';
+import { RALPH_STOP_REASONS, type RalphStopReason } from '#lib/ralph.js';
 import {
 	AGENT_BUSY_MESSAGE,
 	RUN_NOT_CANCELLABLE_MESSAGE,
@@ -71,7 +72,8 @@ import {
 	type AgentProvider,
 	type AgentRunUpdate,
 	type AgentStreamOptions,
-	type AgentStreamOutcome
+	type AgentStreamOutcome,
+	type LoopEnd
 } from './provider.js';
 import { DISPATCH_SKILLS } from './agent-skills.js';
 import {
@@ -257,6 +259,17 @@ function parseTurn(value: unknown): TurnMark | undefined {
 
 const RUN_STATUSES = new Set<string>(['succeeded', 'cancelled', 'failed']);
 
+function parseLoopEnd(value: unknown): LoopEnd | undefined {
+	if (!isRecord(value) || typeof value.needs_person !== 'boolean') return undefined;
+	const reason = value.stop_reason;
+	return {
+		stop_reason: (RALPH_STOP_REASONS as readonly unknown[]).includes(reason)
+			? (reason as RalphStopReason)
+			: null,
+		needs_person: value.needs_person
+	};
+}
+
 function parseResult(value: unknown): StoredResult | undefined {
 	if (!isRecord(value) || typeof value.status !== 'string' || !RUN_STATUSES.has(value.status)) {
 		return undefined;
@@ -269,6 +282,8 @@ function parseResult(value: unknown): StoredResult | undefined {
 	if (text('git_pr_url') !== undefined) result.git_pr_url = text('git_pr_url');
 	if (text('error_message') !== undefined) result.error_message = text('error_message');
 	if (text('event_id') !== undefined) result.event_id = text('event_id');
+	const loop_end = parseLoopEnd(value.loop_end);
+	if (loop_end !== undefined) result.loop_end = loop_end;
 	if (Number.isSafeInteger(duration) && (duration as number) >= 0) {
 		result.duration_ms = duration as number;
 	}
@@ -924,7 +939,14 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			describeRalphStop(run.stop_reason, report?.iterations ?? iterations.length),
 			...(report?.needs_person ?? []).map((line) => `- ${line}`)
 		].join('\n');
-		const done: StoredResult = { status: outcome.status, result_summary: summary };
+		const done: StoredResult = {
+			status: outcome.status,
+			result_summary: summary,
+			loop_end: {
+				stop_reason: run.stop_reason,
+				needs_person: outcome.needs_person || (report?.needs_person.length ?? 0) > 0
+			}
+		};
 		if (report !== undefined) done.duration_ms = report.duration_ms;
 		if (outcome.status === 'failed') done.error_message = summary;
 		if (event_id !== undefined) done.event_id = event_id;

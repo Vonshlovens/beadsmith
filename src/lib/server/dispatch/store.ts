@@ -4,15 +4,19 @@ import type {
 	DispatchOperation,
 	DispatchProviderId,
 	DispatchStatus,
-	DispatchTurn
+	DispatchTurn,
+	LoopIteration
 } from '#lib/types.js';
 import { DISPATCH_PROVIDER_IDS } from '#lib/types.js';
 import { DispatchError, type DispatchPayload, type DispatchRecord } from './types.js';
 import {
 	RALPH_ITERATION_OUTCOMES,
-	type RalphIteration,
-	type RalphIterationOutcome
-} from './ralph.js';
+	RALPH_STOP_REASONS,
+	type RalphIterationOutcome,
+	type RalphStopReason
+} from '#lib/ralph.js';
+import type { LoopEnd } from './provider.js';
+import type { RalphIteration } from './ralph.js';
 
 export interface CreateDispatchInput {
 	idempotency_key: string;
@@ -81,11 +85,6 @@ export const DISPATCH_ITERATIONS_SCHEMA_SQL: string[] = [
 	)`
 ];
 
-/** One stored loop iteration, with the run it belongs to. */
-export interface StoredLoopIteration extends RalphIteration {
-	run_id: string;
-}
-
 /** Turn text is display copy, so it is capped like a follow-up. */
 export const TURN_TEXT_MAX = 8000;
 
@@ -114,6 +113,7 @@ export interface DispatchStore {
 			result_summary?: string;
 			duration_ms?: number;
 			git_pr_url?: string;
+			loop_end?: LoopEnd;
 		},
 		now?: () => Date
 	): Promise<DispatchRecord | undefined>;
@@ -141,7 +141,7 @@ export interface DispatchStore {
 		iterations: readonly RalphIteration[]
 	): Promise<void>;
 	/** A loop mission's iterations across its runs, oldest first. */
-	listLoopIterations(request_id: string): Promise<StoredLoopIteration[]>;
+	listLoopIterations(request_id: string): Promise<LoopIteration[]>;
 }
 
 /**
@@ -167,7 +167,7 @@ const DISPATCH_SELECT = `SELECT
 	id, idempotency_key, project_id, dolt_database, operation, actor, payload_json,
 	status, provider, agent_id, agent_url, run_id, error_message,
 	result_summary, duration_ms, git_pr_url, chat_id, chat_notice,
-	created_at, updated_at
+	loop_stop_reason, loop_needs_person, created_at, updated_at
 FROM dispatch_requests`;
 
 function newId(): string {
@@ -208,6 +208,19 @@ function payloadsEqual(left: DispatchPayload, right: DispatchPayload): boolean {
 	return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function rowToLoopEnd(row: Record<string, unknown>): { loop_end?: LoopEnd } {
+	if (row.loop_needs_person === null || row.loop_needs_person === undefined) return {};
+	const reason = row.loop_stop_reason;
+	return {
+		loop_end: {
+			stop_reason: (RALPH_STOP_REASONS as readonly unknown[]).includes(reason)
+				? (reason as RalphStopReason)
+				: null,
+			needs_person: Number(row.loop_needs_person) === 1
+		}
+	};
+}
+
 function rowToRecord(row: Record<string, unknown>): DispatchRecord {
 	const payload = JSON.parse(String(row.payload_json)) as DispatchPayload;
 	return {
@@ -231,13 +244,14 @@ function rowToRecord(row: Record<string, unknown>): DispatchRecord {
 		git_pr_url: asText(row.git_pr_url),
 		chat_id: asText(row.chat_id),
 		chat_notice: asText(row.chat_notice),
+		...rowToLoopEnd(row),
 		created_at: String(row.created_at),
 		updated_at: String(row.updated_at)
 	};
 }
 
 /** Build a dispatch store over an already-initialised libsql client. */
-function rowToIteration(row: Record<string, unknown>): StoredLoopIteration | undefined {
+function rowToIteration(row: Record<string, unknown>): LoopIteration | undefined {
 	const outcome = String(row.outcome);
 	if (!(RALPH_ITERATION_OUTCOMES as readonly string[]).includes(outcome)) {
 		return undefined;
@@ -376,6 +390,7 @@ export function createDispatchStore(client: Client): DispatchStore {
 				result_summary?: string;
 				duration_ms?: number;
 				git_pr_url?: string;
+				loop_end?: LoopEnd;
 			},
 			now: () => Date = () => new Date()
 		): Promise<DispatchRecord | undefined> {
@@ -390,6 +405,8 @@ export function createDispatchStore(client: Client): DispatchStore {
 					result_summary = COALESCE(?, result_summary),
 					duration_ms = COALESCE(?, duration_ms),
 					git_pr_url = COALESCE(?, git_pr_url),
+					loop_stop_reason = CASE WHEN ? THEN ? ELSE loop_stop_reason END,
+					loop_needs_person = COALESCE(?, loop_needs_person),
 					updated_at = ?
 				WHERE id = ?
 					AND (
@@ -406,6 +423,9 @@ export function createDispatchStore(client: Client): DispatchStore {
 					patch.result_summary ?? null,
 					patch.duration_ms ?? null,
 					patch.git_pr_url ?? null,
+					patch.loop_end === undefined ? 0 : 1,
+					patch.loop_end?.stop_reason ?? null,
+					patch.loop_end === undefined ? null : patch.loop_end.needs_person ? 1 : 0,
 					now().toISOString(),
 					id,
 					patch.status
@@ -424,6 +444,8 @@ export function createDispatchStore(client: Client): DispatchStore {
 					status = ?,
 					run_id = ?,
 					error_message = NULL,
+					loop_stop_reason = NULL,
+					loop_needs_person = NULL,
 					updated_at = ?
 				WHERE id = ?
 					AND agent_id IS NOT NULL
@@ -527,7 +549,7 @@ export function createDispatchStore(client: Client): DispatchStore {
 			);
 		},
 
-		async listLoopIterations(request_id: string): Promise<StoredLoopIteration[]> {
+		async listLoopIterations(request_id: string): Promise<LoopIteration[]> {
 			const result = await client.execute({
 				sql: `SELECT run_id, iteration, outcome, started_at, finished_at, duration_ms, head_before,
 						head_after, input_tokens, output_tokens, cost_usd, validate_ok, plan_open

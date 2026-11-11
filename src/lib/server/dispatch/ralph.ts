@@ -19,9 +19,18 @@
  * terminal (ADR-0019 rule 2), so every run stays inside hc and dispatch.
  */
 import { isMissionEvent, type MissionEvent } from '#lib/mission-events.js';
+import type { LoopIteration } from '#lib/types.js';
 import { readSseStream } from '../mate/runner.js';
 import type { AgentRunStatus, AgentStreamOutcome } from './provider.js';
-import { RALPH_MODES, type RalphMode } from './ralph-cli.js';
+import {
+	RALPH_ITERATION_OUTCOMES,
+	RALPH_MODES,
+	RALPH_STOP_REASON_TEXT,
+	RALPH_STOP_REASONS,
+	type RalphIterationOutcome,
+	type RalphMode,
+	type RalphStopReason
+} from '#lib/ralph.js';
 import { readDurationMs, sanitizeResultSummary } from './sanitize.js';
 
 /** ralph's own run name rule; Beadsmith addresses a run by the name it launched it with. */
@@ -84,36 +93,6 @@ export class RalphError extends Error {
 
 // ------------------------------------------------------------------ records
 
-export const RALPH_STOP_REASONS = [
-	'max_iterations',
-	'complete',
-	'plan_complete',
-	'plan_exhausted',
-	'plan_converged',
-	'no_progress',
-	'validate_failed',
-	'scope_violation',
-	'blocked',
-	'rate_limited',
-	'auth_failed',
-	'harness_failed',
-	'operator_stop',
-	'interrupted',
-	'crashed'
-] as const;
-export type RalphStopReason = (typeof RALPH_STOP_REASONS)[number];
-
-export const RALPH_ITERATION_OUTCOMES = [
-	'completed',
-	'failed',
-	'blocked',
-	'rate_limited',
-	'auth_failed',
-	'timed_out',
-	'interrupted'
-] as const;
-export type RalphIterationOutcome = (typeof RALPH_ITERATION_OUTCOMES)[number];
-
 export type RalphRunState = 'running' | 'finished' | 'failed' | 'stopped';
 
 /** A run as Beadsmith keeps it: no directory, prompt, pid or callback. */
@@ -135,26 +114,10 @@ export interface RalphRun {
 }
 
 /**
- * One finished iteration, as ADR-0019 rule 5 copies it into state.db: number,
- * outcome, duration, tokens, cost, commit range and validation. The agent's
- * last words, errors and session locators stay in the sandbox.
+ * One finished iteration as ralph reports it: the wire {@link LoopIteration}
+ * without the Beadsmith run it belongs to (ADR-0019 rule 5).
  */
-export interface RalphIteration {
-	iteration: number;
-	outcome: RalphIterationOutcome;
-	started_at: string;
-	finished_at: string;
-	duration_ms: number;
-	head_before: string | null;
-	head_after: string | null;
-	input_tokens: number;
-	output_tokens: number;
-	cost_usd: number | null;
-	/** null: the project has no validation commands, or they did not run. */
-	validate_ok: boolean | null;
-	/** Open plan items after the iteration; null when there is no plan. */
-	plan_open: number | null;
-}
+export type RalphIteration = Omit<LoopIteration, 'run_id'>;
 
 export interface RalphRunDetail {
 	run: RalphRun;
@@ -396,30 +359,12 @@ export function ralphOutcome(input: {
 	}
 }
 
-const STOP_REASON_TEXT: Record<RalphStopReason, string> = {
-	max_iterations: 'reached its iteration limit',
-	complete: 'the agent reported the task complete',
-	plan_complete: 'no open plan items are left',
-	plan_exhausted: 'open plan items remain but none can be worked on',
-	plan_converged: 'the plan stopped changing',
-	no_progress: 'it stopped making progress',
-	validate_failed: 'validation kept failing',
-	scope_violation: 'an iteration changed files outside its mode',
-	blocked: 'the agent was blocked',
-	rate_limited: 'the model was rate limited',
-	auth_failed: 'the model refused its credentials',
-	harness_failed: 'the agent CLI failed',
-	operator_stop: 'it was stopped',
-	interrupted: 'it was interrupted',
-	crashed: 'ralph stopped unexpectedly'
-};
-
 /** One sentence for the mission thread about why a loop ended. */
 export function describeRalphStop(reason: RalphStopReason | null, iterations: number): string {
 	const ran = `${iterations} ${iterations === 1 ? 'iteration' : 'iterations'}`;
 	if (reason === null) return `The loop ended after ${ran}.`;
 	const needs = ralphOutcome({ stop_reason: reason }).needs_person ? ' A person should look.' : '';
-	return `The loop ended after ${ran}: ${STOP_REASON_TEXT[reason]}.${needs}`;
+	return `The loop ended after ${ran}: ${RALPH_STOP_REASON_TEXT[reason]}.${needs}`;
 }
 
 // ------------------------------------------------------------------ events

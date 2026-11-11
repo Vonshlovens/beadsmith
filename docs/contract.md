@@ -324,7 +324,9 @@ sanitized reply. It is scoped to the owning project and never includes the
 launch prompt, raw worker logs, or credentials. `operation: "discuss"`
 (`intent`: `discuss` | `elaborate` | `close`, optional `message`) asks an
 agent to talk an issue through, rewrite it, or close it; the agent makes any
-Beads change with `bd`.
+Beads change with `bd`. `GET /api/projects/:id/dispatch/:requestId/iterations`
+returns a loop mission's finished iterations: numbers, outcome and a commit
+range, never the agent's words.
 
 The **terminal relay**
 ([ADR-0021](../specs/decisions/0021-hc-terminal-runtime.md); implemented for

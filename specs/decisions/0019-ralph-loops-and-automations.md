@@ -234,6 +234,12 @@ Nothing ships with this record. Planned, each in its own change:
   gets a write-scoped GitHub token at the egress, as Tackle's does, and
   ralph's prompts decide when to push;
 - loop controls and the loop UI on project, epic, issue and mission pages;
+  The data the UI reads shipped first: a loop mission's public record
+  carries `loop` (its flags, and once a run ends, `stop_reason` and
+  `needs_person`, stored in `dispatch_requests` and cleared by a restart),
+  and `GET /api/projects/:id/dispatch/:requestId/iterations` returns its
+  iteration rows. ralph's mode, harness, stop reason and outcome lists live
+  in `src/lib/ralph.ts` so the browser and the server read one copy;
 - automations: tables, the ticker beside `src/lib/server/backup/runtime.ts`,
   and an automations page. ADR-0004's list of what `state.db` holds and
   `docs/contract.md`'s dispatch section are updated when these ship.

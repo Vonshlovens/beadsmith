@@ -267,6 +267,13 @@ these terminal result fields when the provider supplies them:
 - `duration_ms` — the runner's terminal run duration; and
 - `git_pr_url` — a validated `https://github.com/.../pull/:number` URL.
 
+A loop mission also carries `loop`: its `mode`, optional `issue_id`,
+`harness`, `model`, `effort`, `max_iterations` and
+`iteration_timeout_minutes`, and, once its current run has ended,
+`needs_person` and (when ralph recorded one) `stop_reason`. The loop UI reads
+these instead of parsing `result_summary`; a restart clears them with the new
+run. The `run` prompt is not included, as a Tackle description is not.
+
 Failed records may also include a sanitized `error_message`. The response never
 contains provider credentials, the launch prompt/payload, actor, idempotency
 key, or run id.
@@ -276,6 +283,14 @@ console renders: `{turns: [{seq, role, text, run_id?, status?, created_at}]}`,
 where `role` is `operator` (the request and each follow-up) or `agent` (each
 finished run's sanitized summary or error, once per run). It is display state
 in `dispatch_turns`, never the launch prompt or worker logs.
+
+`GET /api/projects/:id/dispatch/:requestId/iterations` is a loop mission's
+finished iterations across its runs, oldest first: `{iterations: [{run_id,
+iteration, outcome, started_at, finished_at, duration_ms, head_before,
+head_after, input_tokens, output_tokens, cost_usd, validate_ok,
+plan_open}]}`, copied from ralph as each iteration ends (ADR-0019 rule 5).
+Any other mission returns an empty list. Numbers and a commit range only:
+the agent's words and errors stay in the sandbox.
 
 `GET /api/status` reports `dispatch.capabilities` for the default provider
 and `dispatch.providers` (`id`, `label`, `capabilities`) for every configured

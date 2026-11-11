@@ -5,7 +5,7 @@ import type { FileCheckoutMapping } from './dispatch/file-maps.js';
 import { parseGitHubRepositoryUrl, parseGitRef } from './dispatch/repositories.js';
 import type { TackleRepositoryMapping } from './dispatch/repositories.js';
 import { normalizeEndpoint } from './backup/s3.js';
-import { RALPH_HARNESSES, RALPH_MODES } from './dispatch/ralph-cli.js';
+import { RALPH_HARNESSES, RALPH_MODES } from '#lib/ralph.js';
 import { EFFORT_PATTERN, MODEL_PATTERN } from '#lib/agent-session/claude-code.js';
 import {
 	CHAT_ID_PATTERN,

@@ -1,7 +1,9 @@
 import type {
+	DispatchLoop,
 	DispatchProviderId,
 	DispatchTurn,
 	IssueDetail,
+	LoopIteration,
 	Mission,
 	Project
 } from '#lib/types.js';
@@ -185,7 +187,8 @@ async function persistRunUpdate(
 		result_summary: update.result_summary,
 		duration_ms: update.duration_ms,
 		git_pr_url: update.git_pr_url,
-		error_message: update.error_message
+		error_message: update.error_message,
+		loop_end: update.loop_end
 	});
 	if (update.iterations !== undefined && update.iterations.length > 0) {
 		try {
@@ -482,8 +485,29 @@ export function toPublicDispatch(record: DispatchRecord) {
 		git_pr_url: record.git_pr_url,
 		created_at: record.created_at,
 		updated_at: record.updated_at,
-		error_message: record.status === 'failed' ? record.error_message : undefined
+		error_message: record.status === 'failed' ? record.error_message : undefined,
+		loop: publicLoop(record)
 	};
+}
+
+/** A loop's flags and how it ended; never its `run` prompt. */
+function publicLoop(record: DispatchRecord): DispatchLoop | undefined {
+	const payload = record.payload;
+	if (payload.operation !== 'loop') return undefined;
+	const loop: DispatchLoop = { mode: payload.mode };
+	if (payload.issue_id !== undefined) loop.issue_id = payload.issue_id;
+	if (payload.harness !== undefined) loop.harness = payload.harness;
+	if (payload.model !== undefined) loop.model = payload.model;
+	if (payload.effort !== undefined) loop.effort = payload.effort;
+	if (payload.max_iterations !== undefined) loop.max_iterations = payload.max_iterations;
+	if (payload.iteration_timeout_minutes !== undefined) {
+		loop.iteration_timeout_minutes = payload.iteration_timeout_minutes;
+	}
+	if (record.loop_end !== undefined) {
+		if (record.loop_end.stop_reason !== null) loop.stop_reason = record.loop_end.stop_reason;
+		loop.needs_person = record.loop_end.needs_person;
+	}
+	return loop;
 }
 
 /**
@@ -1247,4 +1271,22 @@ export async function listDispatchTurns(
 		});
 	}
 	return rebuilt;
+}
+
+/**
+ * A loop mission's finished iterations across its runs, oldest first
+ * (ADR-0019 rule 5). Any other mission has none. Undefined when the mission
+ * is not this project's.
+ */
+export async function listLoopIterations(
+	project_id: string,
+	request_id: string,
+	deps: { store?: DispatchStore } = {}
+): Promise<LoopIteration[] | undefined> {
+	const store = deps.store ?? (await getDispatchStore());
+	const record = await loadOwnedRecord(project_id, request_id, store);
+	if (record === undefined) {
+		return undefined;
+	}
+	return record.operation === 'loop' ? store.listLoopIterations(record.id) : [];
 }
