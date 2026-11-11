@@ -199,6 +199,7 @@ is Ctrl off macOS. Plain keys never fire while you type in a field.
 | `s`                  | Sort by the next column                                                        |
 | `⇧S`                 | Reverse the sort                                                               |
 | `/` / `⌘F`           | Filter issues                                                                  |
+| `1–6`                | Status tab: All, Ready, Open, In progress, Blocked, Closed                     |
 | `v`                  | Show the table or the board                                                    |
 | `h` / `←`            | Board: previous column                                                         |
 | `l` / `→`            | Board: next column                                                             |

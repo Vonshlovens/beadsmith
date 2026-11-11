@@ -14,7 +14,7 @@
 
 use rune::{Key, KeyEvent, MenuItem, Tx};
 
-use crate::app::{Layout, Pane, State, Step};
+use crate::app::{Layout, Pane, STATUS_FILTERS, State, Step};
 
 /// An element inside the detail pane's scroll view, by which `Scroll` names
 /// that view. The view itself is keyed per issue so each issue opens at its top.
@@ -46,6 +46,8 @@ pub enum Command {
     Lane(isize),
     /// Switch between the table and the board.
     SwitchLayout,
+    /// Choose a status tab by its place in `app::STATUS_FILTERS`, from 0.
+    Status(usize),
     /// Give the keyboard to the selected issue (or select the first one).
     Open,
     /// Esc: step back out of whatever is innermost.
@@ -143,6 +145,12 @@ pub fn command(key: &KeyEvent, pane: Pane, typing: bool) -> Option<Command> {
             "h" if !reading => Some(Command::Lane(-1)),
             "l" if !reading => Some(Command::Lane(1)),
             "v" => Some(Command::SwitchLayout),
+            // The tabs in their order, as the web project page's digits pick
+            // its views. Cmd with a digit is the sidebar's projects.
+            "1" | "2" | "3" | "4" | "5" | "6" => {
+                let n = t.parse::<usize>().map_or(0, |d| d - 1);
+                (n < STATUS_FILTERS.len()).then_some(Command::Status(n))
+            }
             "o" => Some(Command::Open),
             // The web issue page's key, and its capital for the link.
             "y" => Some(Command::CopyId),
@@ -239,6 +247,13 @@ pub fn run(s: &mut State, command: Command, tx: &mut Tx) -> bool {
         Command::SwitchLayout => {
             let next = if s.layout == Layout::Table { Layout::Board } else { Layout::Table };
             set_layout(s, next, tx);
+        }
+        Command::Status(n) => {
+            s.set_status_filter(n);
+            // The selection stays when the tab still shows it.
+            if let Some(id) = s.issue.clone() {
+                reveal(s, &id, tx);
+            }
         }
         Command::Open => open(s, tx),
         Command::Back => {
@@ -492,6 +507,7 @@ pub const SHORTCUTS: &[(&str, &[Shortcut])] = &[
             (&["s"], "Sort by the next column"),
             (&["⇧S"], "Reverse the sort"),
             (&["/", "⌘F"], "Filter issues"),
+            (&["1–6"], "Status tab: All, Ready, Open, In progress, Blocked, Closed"),
             (&["v"], "Show the table or the board"),
             (&["h", "←"], "Board: previous column"),
             (&["l", "→"], "Board: next column"),
@@ -568,6 +584,11 @@ mod tests {
         assert_eq!(list(text("y")), Some(Command::CopyId));
         assert_eq!(list(text("Y")), Some(Command::CopyLink));
         assert_eq!(list(text("O")), Some(Command::OpenWeb));
+        assert_eq!(list(text("1")), Some(Command::Status(0)));
+        assert_eq!(list(text("6")), Some(Command::Status(5)));
+        assert_eq!(list(text("7")), None, "six tabs");
+        assert_eq!(list(text("0")), None);
+        assert_eq!(command(&text("2"), Pane::Detail, false), Some(Command::Status(1)));
         assert_eq!(list(text("x")), None);
     }
 
@@ -621,6 +642,7 @@ mod tests {
             text("h"),
             text("y"),
             text("O"),
+            text("1"),
             Key::Down.into(),
             Key::Enter.into(),
         ] {
@@ -636,6 +658,7 @@ mod tests {
     fn only_moving_and_scrolling_repeat_while_held() {
         assert!(Command::Select(Step::Next).repeats() && Command::Scroll(Scroll::PageDown).repeats());
         assert!(Command::Lane(1).repeats() && !Command::SwitchLayout.repeats());
+        assert!(!Command::Status(1).repeats());
         assert!(!Command::Refresh.repeats() && !Command::Open.repeats() && !Command::Back.repeats());
         assert!(!Command::TrailBack.repeats() && !Command::TrailForward.repeats());
         assert!(!Command::QuickOpen.repeats());

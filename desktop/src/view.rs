@@ -884,7 +884,8 @@ fn main_pane(s: &State, th: &Theme, roomy: bool, main_w: f32, layer: &mut Vec<El
         .variant(if busy(s) { ButtonVariant::Loading } else { ButtonVariant::GhostMuted })
         .on_press(|s: &mut State| s.refresh())
         .build(k)
-        .key("refresh");
+        .key("refresh")
+        .help(format!("Refresh ({})", keys::key_label("r")));
     let toolbar = col()
         .key("toolbar")
         .w_full()
@@ -989,6 +990,7 @@ fn status_tabs(s: &State, th: &Theme, roomy: bool) -> El {
                 .position_in_set(i + 1, STATUS_FILTERS.len())
                 .hover(th.k.c.hover)
                 .on_press(move |s: &mut State| s.set_status_filter(i))
+                .help(format!("{label} ({})", keys::key_label(&(i + 1).to_string())))
                 .child(words)
                 .child(el().w_full().h(2.0).fill(if on { t.em_500 } else { Color::TRANSPARENT })),
         );
@@ -1015,7 +1017,8 @@ fn no_matches(s: &State, th: &Theme) -> El {
         .variant(ButtonVariant::Neutral)
         .on_press(|s: &mut State| s.clear_filters())
         .build(&th.k)
-        .key("clear-filters");
+        .key("clear-filters")
+        .help(format!("Clear filters ({})", keys::key_label("Esc")));
     state(th, false, "No matching issues", &what, vec![clear])
 }
 
