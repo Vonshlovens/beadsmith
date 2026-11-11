@@ -121,6 +121,12 @@ export interface DispatchRecord {
 	loop_end?: LoopEnd;
 	/** An operator asked the current loop run to stop after its iteration. */
 	loop_stop_requested?: boolean;
+	/**
+	 * Bumped each time a follow-up or loop restart claims the mission, so a
+	 * status write from a follower of an earlier run can be told apart and
+	 * refused (`DispatchStore.updateStatus`'s `expect`).
+	 */
+	generation: number;
 	created_at: string;
 	updated_at: string;
 }

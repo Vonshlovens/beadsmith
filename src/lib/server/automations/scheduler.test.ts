@@ -55,6 +55,7 @@ class FakeDispatch {
 			actor: input.actor,
 			payload: input.payload,
 			status: 'running',
+			generation: 0,
 			created_at: '',
 			updated_at: ''
 		});

@@ -88,6 +88,26 @@ export const DISPATCH_ITERATIONS_SCHEMA_SQL: string[] = [
 /** Turn text is display copy, so it is capped like a follow-up. */
 export const TURN_TEXT_MAX = 8000;
 
+/** The run a status write is for: see `DispatchStore.updateStatus`. */
+export interface RunClaim {
+	generation: number;
+	agent_id: string | undefined;
+	run_id: string | undefined;
+}
+
+/** The claim a record is on, for a write that must not outlive it. */
+export function runClaimOf(record: DispatchRecord): RunClaim {
+	return { generation: record.generation, agent_id: record.agent_id, run_id: record.run_id };
+}
+
+function onClaim(record: DispatchRecord, claim: RunClaim): boolean {
+	return (
+		record.generation === claim.generation &&
+		record.agent_id === claim.agent_id &&
+		record.run_id === claim.run_id
+	);
+}
+
 export interface ListDispatchFilter {
 	project_id?: string;
 	issue_id?: string;
@@ -116,6 +136,13 @@ export interface DispatchStore {
 			duration_ms?: number;
 			git_pr_url?: string;
 			loop_end?: LoopEnd;
+			/**
+			 * Write only if the row is still on this run claim. A follower
+			 * passes the generation, agent and run it was started for; when the
+			 * row has moved on (a follow-up or restart claimed it), nothing is
+			 * written and the result is undefined, so the stale reader stops.
+			 */
+			expect?: RunClaim;
 		},
 		now?: () => Date
 	): Promise<DispatchRecord | undefined>;
@@ -123,7 +150,8 @@ export interface DispatchStore {
 	 * Move a terminal mission onto a new run of the same agent (follow-up),
 	 * or claim it for a loop restart (`launching`, keeping the ended run's id
 	 * until the runner names the new one). Only one caller wins: undefined
-	 * when the mission was not terminal.
+	 * when the mission was not terminal. The claim bumps `generation`, which
+	 * retires every follower of the earlier run.
 	 */
 	startFollowUp(
 		id: string,
@@ -179,7 +207,8 @@ const DISPATCH_SELECT = `SELECT
 	id, idempotency_key, project_id, dolt_database, operation, actor, payload_json,
 	status, provider, agent_id, agent_url, run_id, error_message,
 	result_summary, duration_ms, git_pr_url, chat_id, chat_notice,
-	loop_stop_reason, loop_needs_person, loop_stop_requested_at, created_at, updated_at
+	loop_stop_reason, loop_needs_person, loop_stop_requested_at, generation,
+	created_at, updated_at
 FROM dispatch_requests`;
 
 function newId(): string {
@@ -258,6 +287,7 @@ function rowToRecord(row: Record<string, unknown>): DispatchRecord {
 		chat_notice: asText(row.chat_notice),
 		...rowToLoopEnd(row),
 		...(asText(row.loop_stop_requested_at) === undefined ? {} : { loop_stop_requested: true }),
+		generation: asNonNegativeInteger(row.generation) ?? 0,
 		created_at: String(row.created_at),
 		updated_at: String(row.updated_at)
 	};
@@ -409,10 +439,12 @@ export function createDispatchStore(client: Client): DispatchStore {
 				duration_ms?: number;
 				git_pr_url?: string;
 				loop_end?: LoopEnd;
+				expect?: RunClaim;
 			},
 			now: () => Date = () => new Date()
 		): Promise<DispatchRecord | undefined> {
-			await client.execute({
+			const expect = patch.expect;
+			const written = await client.execute({
 				sql: `UPDATE dispatch_requests SET
 					status = ?,
 					provider = COALESCE(?, provider),
@@ -430,7 +462,7 @@ export function createDispatchStore(client: Client): DispatchStore {
 					AND (
 						status NOT IN ('succeeded', 'cancelled', 'failed')
 						OR status = ?
-					)`,
+					)${expect === undefined ? '' : ' AND generation = ? AND agent_id IS ? AND run_id IS ?'}`,
 				args: [
 					patch.status,
 					patch.provider ?? null,
@@ -446,10 +478,24 @@ export function createDispatchStore(client: Client): DispatchStore {
 					patch.loop_end === undefined ? null : patch.loop_end.needs_person ? 1 : 0,
 					now().toISOString(),
 					id,
-					patch.status
+					patch.status,
+					...(expect === undefined
+						? []
+						: [expect.generation, expect.agent_id ?? null, expect.run_id ?? null])
 				]
 			});
-			return this.get(id);
+			const record = await this.get(id);
+			// A write the terminal guard refused still reads back the row, as it
+			// always has; only a row that left the expected claim reads as stale.
+			if (
+				expect !== undefined &&
+				written.rowsAffected === 0 &&
+				record !== undefined &&
+				!onClaim(record, expect)
+			) {
+				return undefined;
+			}
+			return record;
 		},
 
 		async startFollowUp(
@@ -465,6 +511,7 @@ export function createDispatchStore(client: Client): DispatchStore {
 					loop_stop_reason = NULL,
 					loop_needs_person = NULL,
 					loop_stop_requested_at = NULL,
+					generation = generation + 1,
 					updated_at = ?
 				WHERE id = ?
 					AND agent_id IS NOT NULL

@@ -79,6 +79,8 @@ export const dispatchRequests = sqliteTable('dispatch_requests', {
 	loopNeedsPerson: integer('loop_needs_person'),
 	/** When an operator asked the current loop run to stop after its iteration; null otherwise. */
 	loopStopRequestedAt: text('loop_stop_requested_at'),
+	/** Bumped by each follow-up or loop restart claim; followers write only their own. */
+	generation: integer('generation').notNull().default(0),
 	createdAt: text('created_at').notNull(),
 	updatedAt: text('updated_at').notNull()
 });

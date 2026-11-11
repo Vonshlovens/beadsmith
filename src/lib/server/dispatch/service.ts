@@ -63,7 +63,13 @@ import {
 	type TerminalRelay
 } from '../terminal-relay/relay.js';
 import { DispatchError, type DispatchPayload, type DispatchRecord } from './types.js';
-import { chatNoticeKey, type DispatchStore, type ListDispatchFilter } from './store.js';
+import {
+	chatNoticeKey,
+	runClaimOf,
+	type DispatchStore,
+	type ListDispatchFilter,
+	type RunClaim
+} from './store.js';
 
 export interface EnqueueDispatchInput {
 	idempotency_key: string;
@@ -109,6 +115,8 @@ export const LOOP_FOLLOW_UP_MESSAGE = 'A loop takes steer notes and stops, not a
 export const NOT_A_LOOP_MESSAGE = 'Only a loop takes steer notes and stops after an iteration.';
 export const RESTART_NOT_A_LOOP_MESSAGE = 'Only a loop can be restarted.';
 export const LOOP_STILL_RUNNING_MESSAGE = 'The loop is still running. Stop it before restarting.';
+export const RESTART_SUPERSEDED_MESSAGE =
+	'The mission changed while the loop restarted, so the new run was stopped. Reload and try again.';
 export const MISSION_NOT_LAUNCHED_MESSAGE = 'This mission has not launched an agent yet.';
 
 export const UNKNOWN_PROVIDER_MESSAGE = 'That agent runner is not configured on this service.';
@@ -166,7 +174,19 @@ const DEFAULT_MAX_POLL_ATTEMPTS = 120;
  * poll ceiling this is about 25 hours, past E2B's longest sandbox session.
  */
 const LOOP_MAX_POLL_ATTEMPTS = 3_000;
+/**
+ * Followers in this process, by mission and run claim (`followerKey`). A
+ * follow-up or restart bumps the claim, so the new run gets its own follower
+ * while the old one, whose writes the store now refuses, winds down.
+ */
 const active_followers = new Set<string>();
+
+function followerKey(record: DispatchRecord): string {
+	return `${record.id}:${record.generation}`;
+}
+
+/** Thrown out of a stream callback to end a follower whose run claim was replaced. */
+class StaleFollower extends Error {}
 
 function isFollowableStatus(status: DispatchRecord['status']): boolean {
 	return status === 'launched' || status === 'running';
@@ -196,21 +216,31 @@ function pollDelay(attempt: number): number {
 	return Math.min(2_000 * 2 ** attempt, 30_000);
 }
 
+/**
+ * Store what the provider said about the run `claim` names. Undefined when
+ * the mission has moved to another run claim since (a follow-up or loop
+ * restart): nothing is written, so a stale read cannot finish the new run.
+ */
 async function persistRunUpdate(
 	store: DispatchStore,
 	request_id: string,
-	run_id: string,
+	claim: RunClaim & { run_id: string },
 	update: AgentRunUpdate,
 	deps: DispatchDeps
 ): Promise<DispatchRecord | undefined> {
+	const run_id = claim.run_id;
 	const saved = await store.updateStatus(request_id, {
 		status: update.status,
 		result_summary: update.result_summary,
 		duration_ms: update.duration_ms,
 		git_pr_url: update.git_pr_url,
 		error_message: update.error_message,
-		loop_end: update.loop_end
+		loop_end: update.loop_end,
+		expect: claim
 	});
+	if (saved === undefined) {
+		return undefined;
+	}
 	if (update.iterations !== undefined && update.iterations.length > 0) {
 		try {
 			await store.recordLoopIterations(request_id, run_id, update.iterations);
@@ -371,13 +401,15 @@ async function resolveRunId(
 	if (run_id === undefined) {
 		return record;
 	}
-	return (
-		(await store.updateStatus(record.id, {
-			status: record.status,
-			run_id: run_id,
-			error_message: record.error_message
-		})) ?? { ...record, run_id: run_id }
-	);
+	const saved = await store.updateStatus(record.id, {
+		status: record.status,
+		run_id: run_id,
+		error_message: record.error_message,
+		expect: runClaimOf(record)
+	});
+	// Undefined: another claim took the mission while the runner was asked,
+	// so report the mission as it is now rather than this caller's old view.
+	return saved ?? (await store.get(record.id)) ?? record;
 }
 
 async function refreshDispatchRecord(
@@ -390,13 +422,20 @@ async function refreshDispatchRecord(
 	if (resolved.agent_id === undefined || resolved.run_id === undefined) {
 		return resolved;
 	}
-	const update = await provider.getRun(resolved.agent_id, resolved.run_id);
-	return (
-		(await persistRunUpdate(store, resolved.id, resolved.run_id, update, deps)) ?? {
-			...resolved,
-			...update
-		}
+	const run_id = resolved.run_id;
+	const update = await provider.getRun(resolved.agent_id, run_id);
+	const saved = await persistRunUpdate(
+		store,
+		resolved.id,
+		{ ...runClaimOf(resolved), run_id },
+		update,
+		deps
 	);
+	if (saved !== undefined) {
+		return saved;
+	}
+	// The mission moved on while the provider was read: report what it is now.
+	return (await store.get(resolved.id)) ?? resolved;
 }
 
 async function followDispatchRecord(
@@ -411,10 +450,15 @@ async function followDispatchRecord(
 	} catch {
 		return;
 	}
-	if (resolved.agent_id === undefined || resolved.run_id === undefined) {
+	if (
+		resolved.generation !== record.generation ||
+		resolved.agent_id === undefined ||
+		resolved.run_id === undefined
+	) {
 		return;
 	}
 	const run_id = resolved.run_id;
+	const claim = { ...runClaimOf(resolved), run_id };
 
 	if (provider.streamRun !== undefined) {
 		try {
@@ -422,13 +466,16 @@ async function followDispatchRecord(
 				resolved.agent_id,
 				resolved.run_id,
 				async (update) => {
-					await persistRunUpdate(store, resolved.id, run_id, update, deps);
+					if ((await persistRunUpdate(store, resolved.id, claim, update, deps)) === undefined) {
+						throw new StaleFollower();
+					}
 				}
 			);
 			if (stream_outcome === 'terminal') {
 				return;
 			}
-		} catch {
+		} catch (error) {
+			if (error instanceof StaleFollower) return;
 			// A disconnected/expired stream falls through to authoritative GET polling.
 		}
 	}
@@ -440,7 +487,10 @@ async function followDispatchRecord(
 	for (let attempt = 0; attempt < attempts; attempt += 1) {
 		try {
 			const update = await provider.getRun(resolved.agent_id, run_id);
-			await persistRunUpdate(store, resolved.id, run_id, update, deps);
+			if ((await persistRunUpdate(store, resolved.id, claim, update, deps)) === undefined) {
+				// A follow-up or restart claimed the mission; its own follower reads it.
+				return;
+			}
 			if (isTerminalRunStatus(update.status)) {
 				return;
 			}
@@ -459,21 +509,22 @@ function scheduleFollower(
 	provider: AgentProvider,
 	deps: DispatchDeps
 ): void {
-	if (!isFollowableStatus(record.status) || active_followers.has(record.id)) {
+	const key = followerKey(record);
+	if (!isFollowableStatus(record.status) || active_followers.has(key)) {
 		return;
 	}
-	active_followers.add(record.id);
+	active_followers.add(key);
 	const schedule = deps.schedule_background ?? defaultScheduleBackground;
 	try {
 		schedule(async () => {
 			try {
 				await followDispatchRecord(record, store, provider, deps);
 			} finally {
-				active_followers.delete(record.id);
+				active_followers.delete(key);
 			}
 		});
 	} catch (error) {
-		active_followers.delete(record.id);
+		active_followers.delete(key);
 		throw error;
 	}
 }
@@ -499,7 +550,7 @@ export async function resumeDispatchFollowers(deps: DispatchDeps = {}): Promise<
 	let scheduled = 0;
 	for (const record of records) {
 		const provider = providerForRecord(record, deps);
-		if (provider === undefined || active_followers.has(record.id)) continue;
+		if (provider === undefined || active_followers.has(followerKey(record))) continue;
 		scheduleFollower(record, store, provider, deps);
 		scheduled += 1;
 	}
@@ -1430,24 +1481,39 @@ export async function restartDispatch(
 				: `${provider.label} could not restart the loop.`;
 		const failed = await store.updateStatus(claimed.id, {
 			status: 'failed',
-			error_message: message
+			error_message: message,
+			expect: runClaimOf(claimed)
 		});
 		await appendAgentTurn(store, claimed.id, undefined, 'failed', { error_message: message });
 		await markChatToldAtLaunch(store, failed);
 		throw error instanceof DispatchError ? error : new DispatchError('unavailable', message);
 	}
 
+	// Compare-and-set on the claim: the new run is recorded only if the row is
+	// still the one this restart claimed. Anything else (a stale write the claim
+	// should have fenced off, a cancel that landed meanwhile) would leave the new
+	// run with no durable pointer and no follower, so it is stopped and the
+	// operator told, never answered with an unrelated read-back.
 	const saved = await store.updateStatus(claimed.id, {
 		status: 'launched',
 		agent_id: restarted.agent_id,
-		run_id: restarted.run_id
+		run_id: restarted.run_id,
+		expect: runClaimOf(claimed)
 	});
-	const launched = saved ?? {
-		...claimed,
-		status: 'launched' as const,
-		agent_id: restarted.agent_id,
-		run_id: restarted.run_id
-	};
+	if (
+		saved === undefined ||
+		saved.status !== 'launched' ||
+		saved.agent_id !== restarted.agent_id ||
+		saved.run_id !== restarted.run_id
+	) {
+		try {
+			await provider.cancelRun?.(restarted.agent_id, restarted.run_id);
+		} catch {
+			// The runner's own limits end a run nobody follows.
+		}
+		throw new DispatchError('conflict', RESTART_SUPERSEDED_MESSAGE);
+	}
+	const launched = saved;
 	try {
 		scheduleFollower(launched, store, provider, deps);
 	} catch {

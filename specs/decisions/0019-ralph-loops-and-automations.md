@@ -263,7 +263,12 @@ Nothing ships with this record. Planned, each in its own change:
   `{max_iterations?}`, with a Restart control in an ended loop's thread.
   It is a new run of the same mission (`restartDispatch` claims the record
   as `launching`, then records the run the runner names) with the launch's
-  flags; a new limit applies to that run only, so the stored payload still
+  flags. Each follow-up or restart claim bumps the record's `generation`;
+  a follower writes status only on the generation, agent and run it was
+  started for, so a read of the ended run still in flight cannot finish or
+  orphan the new one, and followers are keyed by mission and generation so
+  the new run is followed at once. If the claim was lost before the new run
+  is recorded, the new run is cancelled and the restart reports a conflict; a new limit applies to that run only, so the stored payload still
   matches its idempotency key. On Sand a loop's sandbox outlives the loop
   only by the idle time, so the lifecycle is: restart in that sandbox while
   E2B still has it (keeping the checkout and unpushed work, each run with

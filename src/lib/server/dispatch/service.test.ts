@@ -40,6 +40,7 @@ import {
 	LOOP_NOT_RUNNING_MESSAGE,
 	LOOP_NOT_SUPPORTED_MESSAGE,
 	LOOP_STILL_RUNNING_MESSAGE,
+	RESTART_SUPERSEDED_MESSAGE,
 	MISSION_NOT_LAUNCHED_MESSAGE,
 	NOT_A_LOOP_MESSAGE,
 	RESTART_NOT_A_LOOP_MESSAGE
@@ -1031,6 +1032,7 @@ describe('toPublicDispatch', () => {
 			actor: 'owner@example.com',
 			payload: { operation: 'file', notes: 'private notes' },
 			status: 'queued',
+			generation: 0,
 			created_at: '2026-08-16T00:00:00.000Z',
 			updated_at: '2026-08-16T00:00:00.000Z'
 		});
@@ -1056,6 +1058,7 @@ describe('toPublicDispatch', () => {
 				title: 'Let humans add comments'
 			},
 			status: 'queued',
+			generation: 0,
 			created_at: '2026-08-16T00:00:00.000Z',
 			updated_at: '2026-08-16T00:00:00.000Z'
 		});
@@ -1079,6 +1082,7 @@ describe('toPublicMission', () => {
 				actor: 'owner@example.com',
 				payload: { operation: 'file', notes: 'private notes', title: 'Login bug' },
 				status: 'queued',
+				generation: 0,
 				created_at: '2026-08-16T00:00:00.000Z',
 				updated_at: '2026-08-16T00:00:00.000Z'
 			},
@@ -2485,6 +2489,128 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 				reason: { code: 'conflict', message: LOOP_STILL_RUNNING_MESSAGE }
 			});
 			expect(provider.restartLoop).toHaveBeenCalledTimes(1);
+		});
+
+		/**
+		 * An old run's follower whose provider read is still out when a restart
+		 * claims the mission. `release` lets that read answer r1's result.
+		 */
+		function staleFollowerProvider(restartLoop: AgentProvider['restartLoop']) {
+			let release!: () => void;
+			const gate = new Promise<void>((resolve) => (release = resolve));
+			let reading!: () => void;
+			const read_started = new Promise<void>((resolve) => (reading = resolve));
+			const provider = restartableProvider({
+				restartLoop,
+				getRun: vi.fn(async (_agent_id: string, run_id: string) => {
+					if (run_id !== 'r1') return { status: 'running' as const };
+					reading();
+					await gate;
+					return {
+						status: 'succeeded' as const,
+						result_summary: 'r1 finished',
+						loop_end: { stop_reason: 'max_iterations' as const, needs_person: true }
+					};
+				})
+			});
+			return { provider, release, read_started };
+		}
+
+		async function followOldRun(provider: AgentProvider, tasks: Promise<void>[]) {
+			await resumeDispatchFollowers({
+				store,
+				provider,
+				sleep: async () => {},
+				max_poll_attempts: 1,
+				schedule_background: (task) => {
+					tasks.push(task());
+				}
+			});
+		}
+
+		const followingDeps = (provider: AgentProvider, tasks: Promise<void>[]) => ({
+			...deps(provider),
+			sleep: async () => {},
+			max_poll_attempts: 1,
+			schedule_background: (task: () => Promise<void>) => {
+				tasks.push(task());
+			}
+		});
+
+		it('keeps the new run when the old follower writes between the claim and the save', async () => {
+			const tasks: Promise<void>[] = [];
+			const restarted = staleFollowerProvider(
+				vi.fn(async () => {
+					// The claim is in; now the old follower's read lands.
+					restarted.release();
+					await Promise.all(tasks);
+					return { agent_id: 'sbx-s', run_id: 'r2' };
+				})
+			);
+			const { provider } = restarted;
+			const id = await loopIn('running', 'stale-claim');
+			await followOldRun(provider, tasks);
+			await restarted.read_started;
+			// A page refresh saw r1 end while the follower's read was still out.
+			await store.updateStatus(id, {
+				status: 'succeeded',
+				loop_end: { stop_reason: 'max_iterations', needs_person: true }
+			});
+
+			const result = await restartDispatch(PROJECT.id, id, {}, followingDeps(provider, tasks));
+			await Promise.all(tasks);
+
+			expect(result).toMatchObject({ status: 'launched', agent_id: 'sbx-s' });
+			expect(await store.get(id)).toMatchObject({
+				status: 'running',
+				agent_id: 'sbx-s',
+				run_id: 'r2'
+			});
+			// The new run has its own follower.
+			expect(provider.getRun).toHaveBeenCalledWith('sbx-s', 'r2');
+		});
+
+		it('follows the new run and keeps it when the old follower writes after the save', async () => {
+			const tasks: Promise<void>[] = [];
+			const restarted = staleFollowerProvider(
+				vi.fn(async () => ({ agent_id: 'sbx-s', run_id: 'r2' }))
+			);
+			const { provider } = restarted;
+			const id = await loopIn('running', 'stale-save');
+			await followOldRun(provider, tasks);
+			await restarted.read_started;
+			await store.updateStatus(id, {
+				status: 'succeeded',
+				loop_end: { stop_reason: 'max_iterations', needs_person: true }
+			});
+
+			await restartDispatch(PROJECT.id, id, {}, followingDeps(provider, tasks));
+			// r1's follower is still out, yet r2 is followed.
+			await vi.waitFor(() => expect(provider.getRun).toHaveBeenCalledWith('sbx-s', 'r2'));
+			restarted.release();
+			await Promise.all(tasks);
+
+			const stored = await store.get(id);
+			expect(stored).toMatchObject({ status: 'running', agent_id: 'sbx-s', run_id: 'r2' });
+			expect(stored?.result_summary).toBeUndefined();
+			expect(stored?.loop_end).toBeUndefined();
+		});
+
+		it('stops the new run and says so when the claim was lost before the save', async () => {
+			const provider = restartableProvider({
+				restartLoop: vi.fn(async () => {
+					// A cancel lands on the claimed mission while the runner works.
+					await store.updateStatus(id, { status: 'cancelled' });
+					return { agent_id: 'sbx-s', run_id: 'r2' };
+				})
+			});
+			const id = await loopIn('succeeded', 'claim-lost');
+			await expect(restartDispatch(PROJECT.id, id, {}, deps(provider))).rejects.toMatchObject({
+				code: 'conflict',
+				message: RESTART_SUPERSEDED_MESSAGE
+			});
+			expect(provider.cancelRun).toHaveBeenCalledWith('sbx-s', 'r2');
+			expect(await store.get(id)).toMatchObject({ status: 'cancelled', run_id: 'r1' });
 		});
 	});
 });

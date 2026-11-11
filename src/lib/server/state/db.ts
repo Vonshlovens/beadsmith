@@ -120,6 +120,12 @@ const DISPATCH_COLUMN_MIGRATIONS = [
 	{
 		name: 'loop_stop_requested_at',
 		sql: 'ALTER TABLE dispatch_requests ADD COLUMN loop_stop_requested_at TEXT'
+	},
+	// Which run claim the row is on: a follow-up or loop restart bumps it, so a
+	// follower still reading the previous run cannot write over the new one.
+	{
+		name: 'generation',
+		sql: 'ALTER TABLE dispatch_requests ADD COLUMN generation INTEGER NOT NULL DEFAULT 0'
 	}
 ] as const;
 
