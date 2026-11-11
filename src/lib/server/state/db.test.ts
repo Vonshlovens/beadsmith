@@ -38,14 +38,15 @@ describe('initStateSchema', () => {
 			'mate_events',
 			'settings',
 			'tackle_repository_maps',
+			'terminal_relay_sessions',
 			'todo_comments',
 			'todo_route_issues',
 			'todos'
 		]);
 	});
 
-	it('declares the application, todo and account tables and indexes', () => {
-		expect(STATE_SCHEMA_SQL).toHaveLength(23);
+	it('declares the application, todo, account and relay audit tables and indexes', () => {
+		expect(STATE_SCHEMA_SQL).toHaveLength(25);
 	});
 
 	it('adds run result columns to an existing table', async () => {

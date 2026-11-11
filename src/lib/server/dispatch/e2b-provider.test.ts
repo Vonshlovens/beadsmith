@@ -476,6 +476,30 @@ describe('E2B provider', () => {
 		expect(sandbox.carriers).toBe(carriers);
 	});
 
+	it('relays the mission CLI terminal to a watcher and never wakes a paused sandbox for it', async () => {
+		const { provider, claude, states } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		expect(await provider.getRun('sbx1', 'r1')).toEqual({ status: 'running' });
+		const cli = claude.live()!;
+		const received: string[] = [];
+		const relay = await provider.attachTerminal!('sbx1', {
+			mode: 'watch',
+			cols: 80,
+			rows: 24,
+			onData: (bytes) => void received.push(new TextDecoder().decode(bytes))
+		});
+		claude.core.output(cli.address, 'thinking hard');
+		await vi.waitFor(() => expect(received.join('')).toContain('thinking hard'));
+		relay.close();
+
+		states.set('sbx1', 'paused');
+		await expect(
+			provider.attachTerminal!('sbx1', { mode: 'watch', cols: 80, rows: 24, onData: () => {} })
+		).rejects.toThrow(/paused/);
+		expect(states.get('sbx1')).toBe('paused');
+	});
+
 	it('starts a run once when two reads race for it', async () => {
 		const { provider, claude } = setup();
 		claude.auto = false;
@@ -856,6 +880,21 @@ describe('E2B provider loops', () => {
 		expect(terminals(claude)).toHaveLength(2);
 		// Only allowlisted ralph routes.
 		expect(ralph.requests.every((r) => r.method === 'GET')).toBe(true);
+	});
+
+	it('relays the loop terminal, not ralph serve', async () => {
+		const { provider, claude } = await launched();
+		await provider.getRun('sbx1', 'r1');
+		const loop = terminals(claude).find((t) => t.name === LOOP_TERMINAL)!;
+		const relay = await provider.attachTerminal!('sbx1', {
+			mode: 'watch',
+			cols: 80,
+			rows: 24,
+			onData: () => {}
+		});
+		const attach = claude.core.calls.findLast((call) => call.method === 'terminal.attach');
+		expect(attach?.params.terminal).toBe(loop.address);
+		relay.close();
 	});
 
 	it('maps a finished loop onto the mission and lets the sandbox go', async () => {

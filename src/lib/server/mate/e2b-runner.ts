@@ -39,6 +39,12 @@ import {
 import { CLAUDE_CONFIG_DIR, MATE_WORKDIR } from '../e2b/image.js';
 import { connectSandboxHc } from '../e2b/hc-transport.js';
 import {
+	attachSandboxTerminal,
+	RELAY_GONE_MESSAGE,
+	RELAY_UNAVAILABLE_MESSAGE,
+	TerminalRelayError
+} from '../terminal-relay/relay.js';
+import {
 	CREW_MCP_CONFIG_PATH,
 	prepareChatSandbox,
 	startCrewBridge,
@@ -56,6 +62,7 @@ import {
 const SESSION_KEY = 'beadsmith_mate_session';
 /** Extend the sandbox's idle timeout at most this often while the agent is active. */
 const KEEPALIVE_EVERY_MS = 60_000;
+const CHAT_NOT_STARTED = 'This chat has no agent yet. Send it a message first.';
 
 export interface E2bMateDeps {
 	settings: E2bMateSettings;
@@ -313,6 +320,34 @@ export function createE2bMateRunner(deps: E2bMateDeps): MateRunner & { close(): 
 			} catch (error) {
 				throw toRunnerError(error);
 			}
+		},
+
+		async attachTerminal(chat_id, request) {
+			let session_id: string | undefined;
+			try {
+				session_id = store.get(chat_id).meta?.session_id;
+			} catch {
+				throw new TerminalRelayError('unavailable', RELAY_UNAVAILABLE_MESSAGE);
+			}
+			if (session_id === undefined) throw new TerminalRelayError('conflict', CHAT_NOT_STARTED);
+			let found;
+			try {
+				[found] = await driver.find({ [SESSION_KEY]: session_id });
+			} catch {
+				throw new TerminalRelayError('unavailable', RELAY_UNAVAILABLE_MESSAGE);
+			}
+			if (found === undefined) throw new TerminalRelayError('conflict', RELAY_GONE_MESSAGE);
+			const owned = session_id;
+			return attachSandboxTerminal(
+				{
+					driver,
+					connect_hc: deps.connect_hc ?? connectSandboxHc,
+					idle_ms: deps.settings.idle_minutes * 60_000
+				},
+				found.id,
+				(live) => live.find((terminal) => terminal.labels[SESSION_LABEL] === owned),
+				request
+			);
 		},
 
 		async health() {

@@ -25,6 +25,7 @@ import { getEnv, type ServerEnv } from '../env.js';
 import { createE2bProvider } from './e2b-provider.js';
 import type { RalphIteration } from './ralph.js';
 import type { LoopPayload } from './types.js';
+import type { TerminalAttachRequest, TerminalRelay } from '../terminal-relay/relay.js';
 import { createWebhookProvider } from './webhook-provider.js';
 
 export type { DispatchProviderId };
@@ -121,6 +122,12 @@ export interface AgentProvider {
 		on_event: (event: MissionEvent) => Promise<void>,
 		options?: AgentStreamOptions
 	): Promise<AgentStreamOutcome>;
+	/**
+	 * Attach to the agent's hc terminal for the admin relay (ADR-0021 rule 4).
+	 * Present only on a provider whose agents run in hc; throws
+	 * `TerminalRelayError` when there is no live terminal to attach to.
+	 */
+	attachTerminal?(agent_id: string, request: TerminalAttachRequest): Promise<TerminalRelay>;
 }
 
 /** Public message when a runner refuses a follow-up because a run is active. */

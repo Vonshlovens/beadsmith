@@ -15,6 +15,11 @@ import { BACKUP_SCHEMA_SQL, createBackupStore, type BackupStore } from '../backu
 import { AUTH_SCHEMA_SQL } from '../auth/store.js';
 import { createTodoStore, TODO_SCHEMA_SQL, type TodoStore } from '../todos/store.js';
 import { createMateStore, MATE_SCHEMA_SQL, type MateStore } from '../mate/store.js';
+import {
+	createTerminalRelayAuditStore,
+	TERMINAL_RELAY_SCHEMA_SQL,
+	type TerminalRelayAuditStore
+} from '../terminal-relay/audit.js';
 import { getSecretBox } from '../secret-box.js';
 
 /**
@@ -73,7 +78,8 @@ export const STATE_SCHEMA_SQL: string[] = [
 	BACKUP_SCHEMA_SQL,
 	...TODO_SCHEMA_SQL,
 	...MATE_SCHEMA_SQL,
-	...AUTH_SCHEMA_SQL
+	...AUTH_SCHEMA_SQL,
+	...TERMINAL_RELAY_SCHEMA_SQL
 ];
 
 const DISPATCH_COLUMN_MIGRATIONS = [
@@ -178,6 +184,7 @@ let policy_promise: Promise<DispatchPolicyStore> | undefined;
 let backup_promise: Promise<BackupStore> | undefined;
 let todo_promise: Promise<TodoStore> | undefined;
 let mate_promise: Promise<MateStore> | undefined;
+let relay_audit_promise: Promise<TerminalRelayAuditStore> | undefined;
 let state_ok = false;
 
 async function openStateClient(): Promise<Client> {
@@ -275,6 +282,14 @@ export async function getMateStore(): Promise<MateStore> {
 	return mate_promise;
 }
 
+/** Open (once) the terminal relay's audit store on the same database (ADR-0021). */
+export async function getTerminalRelayAuditStore(): Promise<TerminalRelayAuditStore> {
+	if (relay_audit_promise === undefined) {
+		relay_audit_promise = openStateClient().then((client) => createTerminalRelayAuditStore(client));
+	}
+	return relay_audit_promise;
+}
+
 /** Whether the preference database opened successfully at least once. */
 export function stateDbHealthy(): boolean {
 	return state_ok;
@@ -292,6 +307,7 @@ export function setStateStore(store: StateStore | undefined): void {
 		backup_promise = undefined;
 		todo_promise = undefined;
 		mate_promise = undefined;
+		relay_audit_promise = undefined;
 		state_ok = false;
 	} else {
 		state_ok = true;
@@ -331,4 +347,9 @@ export function setTodoStore(store: TodoStore | undefined): void {
 /** Replace the cached First Mate chat store (tests only). */
 export function setMateStore(store: MateStore | undefined): void {
 	mate_promise = store === undefined ? undefined : Promise.resolve(store);
+}
+
+/** Replace the cached terminal relay audit store (tests only). */
+export function setTerminalRelayAuditStore(store: TerminalRelayAuditStore | undefined): void {
+	relay_audit_promise = store === undefined ? undefined : Promise.resolve(store);
 }

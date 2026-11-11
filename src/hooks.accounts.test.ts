@@ -177,7 +177,9 @@ describe('signed out', () => {
 			['PUT', '/api/console/backups'],
 			['POST', '/api/console/backups/run'],
 			['POST', '/api/console/backups/test'],
-			['GET', '/api/console/accounts']
+			['GET', '/api/console/accounts'],
+			['POST', '/api/console/terminals'],
+			['POST', `/api/console/terminals/tr_${'0'.repeat(32)}`]
 		]) {
 			const { response } = await run({ path, method });
 			expect(response.status, `${method} ${path}`).toBe(401);
@@ -215,7 +217,9 @@ describe('member', () => {
 			['DELETE', '/api/todos/td_1'],
 			['POST', '/api/todos/td_1/comments'],
 			['POST', '/api/console/accounts/users'],
-			['DELETE', '/api/console/accounts/users/abc']
+			['DELETE', '/api/console/accounts/users/abc'],
+			['POST', '/api/console/terminals'],
+			['POST', `/api/console/terminals/tr_${'0'.repeat(32)}`]
 		]) {
 			const { response } = await run({ path, method, cookie: member_cookie });
 			expect(response.status, `${method} ${path}`).toBe(403);

@@ -486,3 +486,48 @@ export const mate_message_schema = z
 export const mate_event_id_schema = z
 	.string()
 	.regex(/^[A-Za-z0-9._:-]{1,128}$/, 'invalid event id');
+
+// --- Admin terminal relay (ADR-0021 rule 4) -------------------------------
+
+const relay_cells_schema = z.number().int().min(1).max(1000);
+
+/**
+ * Body of `POST /api/console/terminals`: exactly one of a mission or a chat
+ * (never a sandbox or terminal address), how to attach, and the viewer's grid.
+ */
+export const open_terminal_relay_schema = z
+	.object({
+		mission: dispatch_request_id_schema.optional(),
+		chat: mate_chat_id_schema.optional(),
+		mode: z.enum(['watch', 'take_over']),
+		cols: relay_cells_schema,
+		rows: relay_cells_schema
+	})
+	.strict()
+	.refine(
+		(value) => (value.mission === undefined) !== (value.chat === undefined),
+		'name exactly one of mission or chat'
+	);
+
+export const terminal_relay_id_schema = z
+	.string()
+	.regex(/^tr_[a-f0-9]{32}$/, 'invalid terminal relay id');
+
+/** Body of `POST /api/console/terminals/:relay`: base64 keystrokes, a new size, or both. */
+export const terminal_relay_input_schema = z
+	.object({
+		data: z
+			.string()
+			.max(65_536)
+			.regex(/^[A-Za-z0-9+/]*={0,2}$/, 'data must be base64')
+			.optional(),
+		cols: relay_cells_schema.optional(),
+		rows: relay_cells_schema.optional()
+	})
+	.strict()
+	.refine((value) => (value.cols === undefined) === (value.rows === undefined), {
+		message: 'send cols and rows together'
+	})
+	.refine((value) => value.data !== undefined || value.cols !== undefined, {
+		message: 'send data or a size'
+	});

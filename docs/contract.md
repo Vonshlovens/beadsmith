@@ -133,8 +133,8 @@ Accepted and being implemented: every agent runs as an interactive CLI in an
 hc (herdr-core) terminal inside its sandbox or guest
 ([ADR-0021](../specs/decisions/0021-hc-terminal-runtime.md)). Sand missions
 and First Mate chats do so today; Beadsmith and the forge runner reach each
-hc core only over the sandbox's process channel or SSH, and there is no
-admin terminal relay yet.
+hc core only over the sandbox's process channel or SSH. Admins can watch or
+take over a Sand mission's or chat's terminal; the forge relay follows.
 
 A machine that runs agents is classified by what it holds, not by where it
 runs:
@@ -316,8 +316,9 @@ launch prompt, raw worker logs, or credentials. `operation: "discuss"`
 agent to talk an issue through, rewrite it, or close it; the agent makes any
 Beads change with `bd`.
 
-Target, **not implemented yet**: the **terminal relay**
-([ADR-0021](../specs/decisions/0021-hc-terminal-runtime.md)). An admin may
+The **terminal relay**
+([ADR-0021](../specs/decisions/0021-hc-terminal-runtime.md); implemented for
+Sand missions and chats, forge chats answer 409 until the runner relays). An admin may
 open the agent terminal of a First Mate chat or a mission on a registered
 beads or repo sandbox ([Where agents run](#where-agents-run)) from a route
 under `/api/console/`. The route names the chat or mission, never a machine
@@ -329,6 +330,18 @@ sandbox prints, the admin sees, which is why keys stay outside the sandbox
 and the one credential it may hold, its Dolt account, is scoped. Each attach and take-over is recorded with its actor
 and time. The relay is separate from the stream above, which keeps its
 sanitized union for every other view.
+
+`POST /api/console/terminals` with `{ mission | chat, mode: "watch" |
+"take_over", cols, rows }` answers with `text/event-stream`: `open`
+(`{ relay, mode, cols, rows }`), `output` (base64 bytes), `resize` and a
+final `end` (`{ reason }`). 404 for an unknown mission or a chat that is not
+the caller's; 409 when the mission has not launched, its runner has no relay,
+the terminal has finished, the sandbox is gone, or a watch would have to
+resume a paused sandbox. `POST /api/console/terminals/:relay` with
+`{ data?: base64, cols?, rows? }` sends keystrokes and size to a take-over
+the same browser session opened (202); a watching relay answers 409, any
+other 404. Each relay is a `terminal_relay_sessions` row in `state.db`
+written before its first byte; one that cannot be recorded is refused (503).
 
 ## Security invariants
 
@@ -402,9 +415,9 @@ At minimum, tests must demonstrate:
    cross-project enumeration.
 5. A dispatch request is validated, authorized, persisted idempotently, and
    processed only by the distinct agent-worker identity.
-6. Once the terminal relay exists, it refuses members and any machine that
-   is not a registered sandbox, stores and logs no relayed bytes, and records
-   every attach and take-over.
+6. The terminal relay refuses members and any machine that is not a
+   registered sandbox, stores and logs no relayed bytes, and records every
+   attach and take-over.
 
 ### Initial First Mate runtime
 

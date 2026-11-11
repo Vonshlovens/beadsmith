@@ -253,6 +253,29 @@ export const mateCrewCalls = sqliteTable(
 	]
 );
 
+/**
+ * The admin terminal relay's audit trail (ADR-0021 rule 4): one row per
+ * attach, watching or taking over, with actor and start and end time. Never
+ * terminal bytes. Keep in step with `TERMINAL_RELAY_SCHEMA_SQL` in
+ * `terminal-relay/audit.ts`.
+ */
+export const terminalRelaySessions = sqliteTable(
+	'terminal_relay_sessions',
+	{
+		id: text('id').primaryKey(),
+		actor: text('actor').notNull(),
+		targetKind: text('target_kind').notNull(),
+		targetId: text('target_id').notNull(),
+		mode: text('mode').notNull(),
+		startedAt: text('started_at').notNull(),
+		endedAt: text('ended_at'),
+		endReason: text('end_reason')
+	},
+	(table) => [
+		index('terminal_relay_sessions_target').on(table.targetKind, table.targetId, table.startedAt)
+	]
+);
+
 // --- Accounts (Better Auth, ADR-0011) ----------------------------------------
 // Property names are Better Auth's field names (the Drizzle adapter addresses
 // columns by them); SQL names follow this file's snake_case convention. Keep

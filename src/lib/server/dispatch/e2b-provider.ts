@@ -54,6 +54,7 @@ import { claudeCode } from '#lib/agent-session/claude-code.js';
 import {
 	AgentSession,
 	parseSessionEventId,
+	SESSION_LABEL,
 	SessionError,
 	SYNTHETIC_INDEX,
 	type SessionTiming,
@@ -85,6 +86,11 @@ import {
 import { sandboxRalphFetch, RALPH_SERVE_PORT } from '../e2b/ralph-transport.js';
 import { CLAUDE_CONFIG_DIR, RUNS_DIR, SKILLS_DIR, WORK_DIR } from '../e2b/image.js';
 import { connectSandboxHc } from '../e2b/hc-transport.js';
+import {
+	attachSandboxTerminal,
+	type TerminalAttachRequest,
+	type TerminalRelay
+} from '../terminal-relay/relay.js';
 import {
 	mintGithubRepositoryToken,
 	mintTailscaleAuthKey,
@@ -1058,6 +1064,26 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 	return {
 		id: 'e2b',
 		label: deps.label,
+
+		/**
+		 * The admin relay: a loop's ralph terminal, or the mission's CLI (the
+		 * terminal labelled with its session id). Never launches anything.
+		 */
+		attachTerminal(agent_id: string, request: TerminalAttachRequest): Promise<TerminalRelay> {
+			return attachSandboxTerminal(
+				{ driver, connect_hc: connectHc, idle_ms },
+				requireSandboxId(agent_id),
+				(live, info) => {
+					if (loopNameOf(info) !== undefined) {
+						return live.find((terminal) => terminal.name === LOOP_TERMINAL);
+					}
+					const session_id = sessionIdOf(info);
+					if (session_id === undefined) return undefined;
+					return live.find((terminal) => terminal.labels[SESSION_LABEL] === session_id);
+				},
+				request
+			);
+		},
 
 		async launch(input: AgentLaunchInput): Promise<AgentLaunch> {
 			const sandbox = await createSandbox({

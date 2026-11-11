@@ -37,7 +37,7 @@ sqlite-core). The runtime does not run drizzle-kit push or migrate.
 `src/lib/server/state/db.ts` opens `file:${stateDir}/state.db` and applies
 `CREATE TABLE IF NOT EXISTS` for the known tables.
 
-Today the database has fourteen application tables plus four account tables:
+Today the database has fifteen application tables plus four account tables:
 
 - `settings` — key/value application preferences. The shipped key is
   `ui.theme` (`system` | `light` | `dark`); `dispatch.armed` is the global
@@ -87,6 +87,10 @@ Today the database has fourteen application tables plus four account tables:
   runner. Application-owned rows, not Beads issues; the runner is the
   durable log of the session ([`docs/first-mate.md`](../../docs/first-mate.md)).
   No separate ADR: two more tables in the same file.
+- `terminal_relay_sessions` — the admin terminal relay's audit trail
+  ([0021](./0021-hc-terminal-runtime.md) rule 4): one row per attach, with
+  the actor, the mission or chat it named, the mode (`watch` or
+  `take_over`), start and end time and why it ended. Never terminal bytes.
 - `auth_user`, `auth_session`, `auth_account`, `auth_verification` —
   Better Auth accounts, sessions, sign-in methods (password as a scrypt hash),
   and short-lived verification values ([0011](./0011-accounts-and-roles.md)).

@@ -325,6 +325,38 @@ Steps 4 to 6 are unit-tested against a fake hc core and a fake sandbox
 ([`e2b-provider.test.ts`](../src/lib/server/dispatch/e2b-provider.test.ts));
 they have not been run against E2B yet.
 
+### Admin terminal relay
+
+An admin can watch a Sand mission's or chat's agent terminal, or take it
+over, through `POST /api/console/terminals`
+([contract](contract.md#http-and-ui-boundary), ADR-0021 rule 4). Beadsmith opens a
+fresh `beadsmith-hc connect` over the E2B process channel for each relay and
+calls `terminal.attach` on the agent's terminal (the mission's or chat's
+`beadsmith-session` label, or a loop's `ralph-loop`), `observe` when
+watching. Nothing in the sandbox changes for it. Watching never resumes a
+paused sandbox; taking over does. Every attach is a row in
+`terminal_relay_sessions` in `state.db`; the bytes are not kept anywhere.
+
+Operator check (not yet run against E2B; the routes are unit-tested against
+a fake hc core in
+[`server.test.ts`](../src/routes/api/console/terminals/server.test.ts)):
+
+1. With a Sand mission running, as an admin in the browser's devtools
+   console on Beadsmith, `fetch('/api/console/terminals', { method: 'POST',
+headers: { 'content-type': 'application/json', 'x-bdx-request': '1' },
+body: JSON.stringify({ mission: '<dq_ id>', mode: 'watch', cols: 120,
+rows: 40 }) })` and read the body: an `open` frame, then `output` frames
+   whose base64 decodes to Claude Code's screen. Typing to the relay id
+   answers 409.
+2. The same with `mode: 'take_over'`, then post `{ data: btoa('/help\r') }`
+   to `/api/console/terminals/<relay>`: Claude Code shows its help in the
+   stream and in `hc read <terminal>` inside the sandbox.
+3. Let the sandbox pause and watch again: 409 saying it is paused, and the
+   sandbox stays paused in E2B's dashboard.
+4. `SELECT * FROM terminal_relay_sessions ORDER BY started_at DESC` in
+   `state.db` lists both attaches with your email, their mode, and an end
+   time once each stream closed.
+
 ## How a mission runs
 
 1. Beadsmith checks the project's Dolt account, mints the GitHub token (if

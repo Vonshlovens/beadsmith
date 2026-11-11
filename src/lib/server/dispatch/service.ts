@@ -45,6 +45,12 @@ import {
 	UNMAPPED_TACKLE_MESSAGE
 } from './repositories.js';
 import { mergeTackleMaps } from './tackle-maps.js';
+import {
+	RELAY_UNAVAILABLE_MESSAGE,
+	TerminalRelayError,
+	type TerminalAttachRequest,
+	type TerminalRelay
+} from '../terminal-relay/relay.js';
 import { DispatchError, type DispatchPayload, type DispatchRecord } from './types.js';
 import { chatNoticeKey, type DispatchStore, type ListDispatchFilter } from './store.js';
 
@@ -1157,6 +1163,36 @@ export async function streamDispatchMissionEvents(
 		return 'terminal';
 	}
 	return outcome;
+}
+
+export const NO_TERMINAL_RELAY_MESSAGE = "This mission's agent runner has no terminal to open.";
+
+/**
+ * Attach the admin relay to a mission's agent terminal (ADR-0021 rule 4).
+ * The browser names only the mission; the provider resolves its sandbox and
+ * terminal. Refusals are `TerminalRelayError`s whose messages may be shown.
+ */
+export async function attachDispatchTerminal(
+	request_id: string,
+	request: TerminalAttachRequest,
+	deps: DispatchDeps = {}
+): Promise<TerminalRelay> {
+	const store = deps.store ?? (await getDispatchStore());
+	const record = await store.get(request_id);
+	if (record === undefined) throw new TerminalRelayError('not_found', 'mission not found');
+	if (record.agent_id === undefined) {
+		throw new TerminalRelayError('conflict', MISSION_NOT_LAUNCHED_MESSAGE);
+	}
+	const provider = providerForRecord(record, deps);
+	if (provider?.attachTerminal === undefined) {
+		throw new TerminalRelayError('conflict', NO_TERMINAL_RELAY_MESSAGE);
+	}
+	try {
+		return await provider.attachTerminal(record.agent_id, request);
+	} catch (error) {
+		if (error instanceof TerminalRelayError) throw error;
+		throw new TerminalRelayError('unavailable', RELAY_UNAVAILABLE_MESSAGE);
+	}
 }
 
 /** Recent File/Tackle runs for the fleet view or an issue's linked missions. */

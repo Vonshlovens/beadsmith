@@ -18,6 +18,7 @@ import { parseMissionEventJson, type MissionEvent } from '#lib/mission-events.js
 import { getEnv, type ServerEnv } from '../env.js';
 import { readGithubPullUrl, stripTerminalNoise } from '../dispatch/sanitize.js';
 import { signWebhookRequest } from '../dispatch/webhook-provider.js';
+import type { TerminalAttachRequest, TerminalRelay } from '../terminal-relay/relay.js';
 import type { MateRunnerId, MateRunnerInfo } from '#lib/mate.js';
 import { createE2bMateRunner } from './e2b-runner.js';
 
@@ -69,6 +70,11 @@ export interface MateRunner {
 	/** Stop and forget the session. A chat the runner never knew is fine. */
 	deleteChat(chat_id: string): Promise<void>;
 	health(): Promise<boolean>;
+	/**
+	 * Attach the admin relay to the chat's agent terminal (ADR-0021 rule 4).
+	 * Present only on runners Beadsmith can relay; throws `TerminalRelayError`.
+	 */
+	attachTerminal?(chat_id: string, request: TerminalAttachRequest): Promise<TerminalRelay>;
 }
 
 export interface MateRunnerDeps {

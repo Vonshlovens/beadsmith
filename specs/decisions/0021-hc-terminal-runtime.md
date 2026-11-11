@@ -268,11 +268,34 @@ Shipped:
   finds the CLI still live and follows it. The wire contract is
   unchanged (still version 1).
 
+- The admin relay for Sand (`src/lib/server/terminal-relay/`).
+  `POST /api/console/terminals` names a mission or one of the caller's
+  chats, a mode (`watch` or `take_over`) and the viewer's grid, and answers
+  with a Server-Sent Events stream: `open` (relay id, mode, size), `output`
+  (base64 bytes), `resize`, and a final `end`. SSE on a POST response rather
+  than a WebSocket because the Node adapter serves no upgrades and a POST
+  keeps the same-origin and CSRF checks every console mutation gets; a
+  take-over resizes the agent's terminal and must not be a cross-site GET.
+  Keystrokes and size go to `POST /api/console/terminals/:relay`, accepted
+  only from the browser session that opened a `take_over` relay (a watching
+  one answers 409). Providers and chat runners resolve the target
+  (`AgentProvider.attachTerminal`, `MateRunner.attachTerminal`): a mission's
+  CLI is the terminal labelled with its session id, a loop's is ralph's loop
+  terminal, a chat's is labelled with its session. Watching never resumes a
+  paused sandbox (409); taking over does. Each relay opens its own hc
+  connection over the carrier and closes it when the stream ends. Each attach
+  is a `terminal_relay_sessions` row (0004) written before the first byte
+  and stamped with its end; a relay whose row cannot be written is not
+  opened. Output waits for the browser to read, so a slow viewer slows the hc
+  stream instead of growing a buffer.
+
 Planned, each in its own change:
 
 - the forge guest's hc and the runner wired to it;
-- the relay route, its audit rows in `state.db` (0004 updated when they
-  ship), and the terminal view in First Mate chats and mission threads.
+- the relay on forge: the mate runner's signed contract gains an attach
+  endpoint the host runner serves over its SSH `hc connect` (forge chats
+  answer 409 until then);
+- the terminal view in First Mate chats and mission threads.
 
 The current architecture bullet is in [`specs/README.md`](../README.md); the
 contract's rules are in
