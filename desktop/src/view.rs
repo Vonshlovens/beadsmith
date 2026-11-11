@@ -9,8 +9,8 @@ use std::rc::Rc;
 use rune::TextEdit;
 use rune::{Color, Cx, El, GrowthSpec, LoopSpec, ScrollSpec, Tx, col, el, row, text};
 use rune_kit::{
-    Button, ButtonVariant, Cell, Dialog, Field, Keybind, Kit, Markdown, SegmentedControl, Select, Table, TableColumn,
-    TableStyle, TextInput, Toast, ToastRegion,
+    Button, ButtonVariant, Cell, Checkbox, Dialog, Field, Keybind, Kit, Markdown, SegmentedControl, Select, Table,
+    TableColumn, TableStyle, TextInput, Toast, ToastRegion,
 };
 
 use crate::app::{BOARD_KEY, Check, Connection, Layout, Load, Notice, Pane, Quick, STATUS_FILTERS, State, TABLE_KEY};
@@ -300,24 +300,43 @@ fn sidebar(s: &State, th: &Theme) -> El {
     };
 
     // The server's name is the way into its settings: the one place the
-    // window says what it is connected to.
+    // window says what it is connected to. A connection that leaves the
+    // machine in the clear says so under the name, on every screen, so it
+    // is never a surprise; amber is the window's colour for a warning that
+    // leaves the data usable.
+    let unencrypted = s.source.unencrypted();
+    let name = text(s.source.label()).font(th.ty.xs).color(t.tx_mid).truncate().w_full();
+    let mut words = col().grow(1.0).min_w(0.0).child(name);
+    if unencrypted {
+        words = words.child(text("Unencrypted").key("unencrypted").font(th.ty.xs).color(t.amber));
+    }
     let server = row()
         .key("connection")
         .role("button")
-        .label(format!("Connection settings: {}", s.source.label()))
+        .label(if unencrypted {
+            format!("Connection settings: {}, unencrypted", s.source.label())
+        } else {
+            format!("Connection settings: {}", s.source.label())
+        })
         .focusable(true)
         .focus_ring(2.0, 1.0, t.em_400)
         .grow(1.0)
         .min_w(0.0)
         .px(8.0)
-        .h(28.0)
+        .py(4.0)
+        .min_h(28.0)
         .gap(8.0)
         .center_y()
         .radius(k.radius.sm)
         .hover(k.c.hover)
         .on_press(|s: &mut State| s.open_connection())
         .child(el().size(7.0, 7.0).radius(3.5).fill(connection_color(s, th)))
-        .child(text(s.source.label()).font(th.ty.xs).color(t.tx_mid).truncate().grow(1.0).min_w(0.0));
+        .child(words);
+    let server = if unencrypted {
+        server.help("TLS is off: the password and issues cross the network unencrypted")
+    } else {
+        server
+    };
     // The one pointer route to the list of keys; `?` is the keyboard's.
     let shortcuts = row()
         .key("shortcuts")
@@ -488,6 +507,7 @@ fn connection_dialog(s: &State, form: &Connection, k: &Kit, layer: &mut Vec<El>)
         )
         .child(field("User", user, owned_by("BEADS_DOLT_SERVER_USER", s.env.user.is_some())))
         .child(field("Password", password, Some(password_hint.into())))
+        .child(tls_checkbox(s, form, k))
         .child(field(
             "Web address",
             web,
@@ -791,6 +811,44 @@ fn quick_row(s: &State, n: usize, total: usize, target: &Target, active: bool, t
                 .child(aside(hit.project.clone()))
         }
     }
+}
+
+/// TLS on or off. The note under it says what the choice means for the
+/// host as typed: what is checked when it is on, and, when it is off for a
+/// host off this machine, that the password and issues travel in the clear.
+fn tls_checkbox(s: &State, form: &Connection, k: &Kit) -> El {
+    let note = if form.tls {
+        "The server's certificate must be trusted by this computer and issued for the host above."
+    } else if s.connection_unencrypted() {
+        "Off: the password and issues cross the network unencrypted."
+    } else {
+        "Encrypts the connection. The server needs a certificate."
+    };
+    // The kit draws a checkbox's description on one line, so the note is
+    // set below it, wrapped and indented to the label (16pt box + 12pt gap).
+    col()
+        .w_full()
+        .gap(2.0)
+        .child(
+            Checkbox::new(form.tls)
+                .label("Use TLS")
+                .disabled(form.saving)
+                .on_toggle(|s: &mut State| s.toggle_connection_tls())
+                .build(k)
+                .key("tls")
+                .description(note),
+        )
+        .child(
+            text(note)
+                .key("tls-note")
+                // The field hints' face, with room for a second line.
+                .font(k.ty.small.lh(15.0))
+                .color(k.c.text_muted)
+                .wrap()
+                .w_full()
+                .pl(28.0)
+                .a11y_hidden(),
+        )
 }
 
 /// What the last test or save attempt found, in plain words. The line keeps

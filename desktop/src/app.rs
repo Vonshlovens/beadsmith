@@ -275,6 +275,8 @@ pub struct Connection {
     pub saved: bool,
     /// Where the web app for this server is, for issue links; blank for none.
     pub web: TextEdit,
+    /// Require TLS (`dolt::Config::tls`).
+    pub tls: bool,
 }
 
 impl Connection {
@@ -284,6 +286,7 @@ impl Connection {
         let current = env.config(stored);
         let host = current.as_ref().map(|c| c.host.clone()).unwrap_or_default();
         let port = current.as_ref().map_or(env.port.unwrap_or(settings::DEFAULT_PORT), |c| c.port);
+        let tls = current.as_ref().is_some_and(|c| c.tls);
         let user = current.map(|c| c.user).or_else(|| env.user.clone()).unwrap_or_default();
         Connection {
             host: TextEdit::new(host),
@@ -295,6 +298,7 @@ impl Connection {
             saving: false,
             saved: stored.is_some(),
             web: TextEdit::new(web.unwrap_or_default()),
+            tls,
         }
     }
 }
@@ -1151,6 +1155,25 @@ impl State {
         }
     }
 
+    /// Turn TLS on or off in the form. Like any edit, it voids a test result.
+    pub fn toggle_connection_tls(&mut self) {
+        if let Some(form) = &mut self.connection
+            && !form.saving
+        {
+            form.tls = !form.tls;
+            self.connection_edited();
+        }
+    }
+
+    /// True when the form, as filled in, would read across a network in the
+    /// clear: what the TLS checkbox's note warns about.
+    pub fn connection_unencrypted(&self) -> bool {
+        self.connection.as_ref().is_some_and(|form| {
+            let host = self.env.host.as_deref().unwrap_or(form.host.text.trim());
+            !host.is_empty() && !form.tls && !crate::dolt::is_loopback(host)
+        })
+    }
+
     /// The form changed, so an earlier test result no longer describes it.
     pub fn connection_edited(&mut self) {
         self.test_req.cancel();
@@ -1169,10 +1192,10 @@ impl State {
             form.error = Some(e);
             return None;
         }
-        match Stored::parse(&form.host.text, &form.port.text, &form.user.text) {
+        match Stored::parse(&form.host.text, &form.port.text, &form.user.text, form.tls) {
             Ok(typed) => {
                 let config = self.env.config(Some(&typed))?;
-                Some(Stored { host: config.host, port: config.port, user: config.user })
+                Some(Stored { host: config.host, port: config.port, user: config.user, tls: config.tls })
             }
             Err(e) => {
                 form.check = Check::Idle;
@@ -1567,12 +1590,14 @@ mod tests {
         assert_eq!(s.source.label(), "Not configured");
 
         let mut b = Backing::detached();
-        Stored { host: "db.example".into(), port: 13306, user: "reader".into() }.save(&mut b.prefs).unwrap();
+        Stored { host: "db.example".into(), port: 13306, user: "reader".into(), tls: true }.save(&mut b.prefs).unwrap();
         let mut s = State::launch(b);
         assert!(s.connection.is_none());
         assert_eq!(s.source.label(), "Dolt db.example:13306");
+        assert!(!s.source.unencrypted(), "TLS was saved on");
         s.open_connection();
         let form = s.connection.as_ref().unwrap();
+        assert!(form.tls, "the form shows the saved TLS choice");
         assert_eq!(
             (form.host.text.as_str(), form.port.text.as_str(), form.user.text.as_str()),
             ("db.example", "13306", "reader")
@@ -1600,6 +1625,36 @@ mod tests {
         assert_eq!((saved.host.as_str(), saved.port, saved.user.as_str()), ("127.0.0.1", 1, "reader"));
         assert_eq!(s.source.label(), "Dolt 127.0.0.1:1");
         assert_eq!((&s.projects, &s.project), (&Load::Loading, &None), "the window starts over on the new server");
+    }
+
+    #[test]
+    fn tls_is_saved_with_the_connection_and_the_form_warns_without_it() {
+        let mut s = State::launch(backing(Env::default(), Arc::new(MemoryStore::default())));
+        type_into(&mut s, "dolt.example", "1", "reader", "");
+        assert!(s.connection_unencrypted(), "a network host in the clear");
+        s.connection.as_mut().unwrap().check = Check::Ok(2);
+        s.toggle_connection_tls();
+        let form = s.connection.as_ref().unwrap();
+        assert!(form.tls && !s.connection_unencrypted());
+        assert_eq!(form.check, Check::Idle, "the earlier test no longer describes the form");
+        s.toggle_connection_tls();
+        type_into(&mut s, "localhost", "1", "reader", "");
+        assert!(!s.connection_unencrypted(), "loopback never leaves the machine");
+
+        type_into(&mut s, "127.0.0.1", "1", "reader", "");
+        s.toggle_connection_tls();
+        s.save_connection();
+        assert!(s.connection.is_none());
+        assert!(Stored::load(&s.prefs).unwrap().tls);
+        s.open_connection();
+        assert!(s.connection.as_ref().unwrap().tls, "the form shows it again");
+
+        // The environment's host is the one the warning is about.
+        let env = Env { host: Some("dolt.example".into()), ..Env::default() };
+        let mut s = State::launch(backing(env, Arc::new(MemoryStore::default())));
+        s.open_connection();
+        assert!(s.connection_unencrypted());
+        assert!(s.source.unencrypted(), "and the window says so");
     }
 
     #[test]

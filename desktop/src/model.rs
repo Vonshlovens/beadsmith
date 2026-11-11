@@ -190,6 +190,11 @@ pub enum Failure {
     CredentialUnavailable,
     AuthenticationRejected,
     Unreachable,
+    /// TLS is on and the handshake failed: the server's certificate is not
+    /// trusted by this system, or not issued for the host as typed.
+    TlsRejected,
+    /// TLS is on and the server does not offer it.
+    TlsUnsupported,
     Unknown,
 }
 
@@ -201,6 +206,8 @@ impl Failure {
             Failure::CredentialUnavailable => "No password for this server",
             Failure::AuthenticationRejected => "Sign-in rejected",
             Failure::Unreachable => "Server unreachable",
+            Failure::TlsRejected => "Certificate not trusted",
+            Failure::TlsUnsupported => "Server has no TLS",
             Failure::Unknown => "Connection failed",
         }
     }
@@ -221,6 +228,12 @@ impl Failure {
             }
             Failure::AuthenticationRejected => "Dolt authentication was rejected. Check the configured credentials.",
             Failure::Unreachable => "The Dolt server is unreachable. Check the host and port.",
+            Failure::TlsRejected => {
+                "The secure connection failed. The server's certificate must be trusted by this computer and issued for the host as entered."
+            }
+            Failure::TlsUnsupported => {
+                "The Dolt server does not offer TLS. Turn on TLS on the server, or turn it off in connection settings."
+            }
             Failure::Unknown => "The Dolt connection failed.",
         }
     }
@@ -239,6 +252,11 @@ pub trait Source: Send + Sync {
     fn search(&self, databases: &[String], needle: &str) -> Result<Vec<Hit>, Failure>;
     /// A short label for the status bar, never a secret.
     fn label(&self) -> String;
+    /// True when reads cross a network without TLS (`dolt::Config::unencrypted`),
+    /// so the window can say so. Sources that open no connection never do.
+    fn unencrypted(&self) -> bool {
+        false
+    }
 }
 
 /// The source used when no Dolt server is configured: every read fails with

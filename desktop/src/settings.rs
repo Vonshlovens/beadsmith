@@ -29,6 +29,9 @@ pub const DEFAULT_USER: &str = "root";
 const HOST_KEY: &str = "dolt.host";
 const PORT_KEY: &str = "dolt.port";
 const USER_KEY: &str = "dolt.user";
+/// `true` to require TLS; absent for a plain connection, which stays the
+/// default because a stock Dolt server has no certificate configured.
+const TLS_KEY: &str = "dolt.tls";
 const REFRESH_KEY: &str = "refresh.seconds";
 
 /// How often the window can re-read the server by itself: the choices the
@@ -196,6 +199,7 @@ pub struct Stored {
     pub host: String,
     pub port: u16,
     pub user: String,
+    pub tls: bool,
 }
 
 impl Stored {
@@ -208,7 +212,8 @@ impl Stored {
         }
         let port = prefs.get::<u16>(PORT_KEY).filter(|p| *p > 0).unwrap_or(DEFAULT_PORT);
         let user = prefs.get::<String>(USER_KEY).filter(|u| !u.is_empty()).unwrap_or_else(|| DEFAULT_USER.to_string());
-        Some(Stored { host, port, user })
+        let tls = prefs.get::<bool>(TLS_KEY).unwrap_or(false);
+        Some(Stored { host, port, user, tls })
     }
 
     /// The host goes last: it is what makes a saved connection exist, so a
@@ -216,12 +221,17 @@ impl Stored {
     pub fn save(&self, prefs: &mut Prefs) -> Result<(), PrefsError> {
         prefs.set(PORT_KEY, &self.port)?;
         prefs.set(USER_KEY, &self.user)?;
+        if self.tls {
+            prefs.set(TLS_KEY, &true)?
+        } else {
+            prefs.remove(TLS_KEY)?
+        }
         prefs.set(HOST_KEY, &self.host)
     }
 
     /// What the connection form holds, checked. An empty port or user takes
     /// the web service's default.
-    pub fn parse(host: &str, port: &str, user: &str) -> Result<Stored, FormError> {
+    pub fn parse(host: &str, port: &str, user: &str, tls: bool) -> Result<Stored, FormError> {
         let host = host.trim();
         if host.is_empty() || host.chars().any(char::is_whitespace) {
             return Err(FormError::Host);
@@ -234,11 +244,11 @@ impl Stored {
             "" => DEFAULT_USER,
             u => u,
         };
-        Ok(Stored { host: host.to_string(), port, user: user.to_string() })
+        Ok(Stored { host: host.to_string(), port, user: user.to_string(), tls })
     }
 
     pub fn config(&self) -> Config {
-        Config { host: self.host.clone(), port: self.port, user: self.user.clone() }
+        Config { host: self.host.clone(), port: self.port, user: self.user.clone(), tls: self.tls }
     }
 }
 
@@ -293,12 +303,14 @@ impl Env {
 
     /// The connection to use: each field from the environment when it is set
     /// there, else from the settings file, else the web service's default.
-    /// None without a host from either.
+    /// None without a host from either. TLS has no variable (the web
+    /// service's Dolt client has no TLS setting to mirror), so it is always
+    /// the saved choice, off when nothing is saved.
     pub fn config(&self, stored: Option<&Stored>) -> Option<Config> {
         let host = self.host.clone().or_else(|| stored.map(|s| s.host.clone()))?;
         let port = self.port.or(stored.map(|s| s.port)).unwrap_or(DEFAULT_PORT);
         let user = self.user.clone().or_else(|| stored.map(|s| s.user.clone())).unwrap_or_else(|| DEFAULT_USER.into());
-        Some(Config { host, port, user })
+        Some(Config { host, port, user, tls: stored.is_some_and(|s| s.tls) })
     }
 }
 
@@ -449,7 +461,7 @@ mod tests {
     }
 
     fn stored() -> Stored {
-        Stored { host: "db.example".into(), port: 13306, user: "reader".into() }
+        Stored { host: "db.example".into(), port: 13306, user: "reader".into(), tls: false }
     }
 
     /// A settings file in a fresh folder under the system temp directory.
@@ -497,7 +509,7 @@ mod tests {
         assert!(Env::from_lookup(env(&[])).config(None).is_none());
         assert!(Env::from_lookup(env(&[("BEADS_DOLT_SERVER_HOST", "  ")])).config(None).is_none());
         let c = Env::from_lookup(env(&[("BEADS_DOLT_SERVER_HOST", " db.example ")])).config(None).unwrap();
-        assert_eq!((c.host.as_str(), c.port, c.user.as_str()), ("db.example", 3306, "root"));
+        assert_eq!((c.host.as_str(), c.port, c.user.as_str(), c.tls), ("db.example", 3306, "root", false));
     }
 
     #[test]
@@ -517,6 +529,8 @@ mod tests {
         ]));
         let c = all.config(Some(&file)).unwrap();
         assert_eq!((c.host.as_str(), c.port, c.user.as_str()), ("other", 1, "u"));
+        let secure = Stored { tls: true, ..stored() };
+        assert!(all.config(Some(&secure)).unwrap().tls, "TLS has no variable: the saved choice holds");
 
         let bad_port = Env::from_lookup(env(&[("BEADS_DOLT_SERVER_PORT", "0")]));
         assert_eq!(bad_port.config(Some(&file)).unwrap().port, 13306, "an unusable override is ignored");
@@ -540,6 +554,13 @@ mod tests {
         assert_eq!(Stored::load(&Prefs::at(&path)), Some(stored()), "a second open reads it back");
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("db.example") && !text.to_lowercase().contains("password"), "{text}");
+        assert!(!text.contains("dolt.tls"), "a plain connection writes no TLS key: {text}");
+
+        let secure = Stored { tls: true, ..stored() };
+        secure.save(&mut prefs).unwrap();
+        assert_eq!(Stored::load(&Prefs::at(&path)), Some(secure));
+        stored().save(&mut prefs).unwrap();
+        assert_eq!(Stored::load(&Prefs::at(&path)), Some(stored()), "turning TLS off removes the key");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
@@ -549,9 +570,13 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "{ not json").unwrap();
         assert_eq!(Stored::load(&Prefs::at(&path)), None);
-        std::fs::write(&path, r#"{"dolt.host":"h","dolt.port":"many","dolt.user":""}"#).unwrap();
+        std::fs::write(&path, r#"{"dolt.host":"h","dolt.port":"many","dolt.user":"","dolt.tls":"yes"}"#).unwrap();
         let s = Stored::load(&Prefs::at(&path)).unwrap();
-        assert_eq!((s.port, s.user.as_str()), (DEFAULT_PORT, DEFAULT_USER), "bad fields fall back to defaults");
+        assert_eq!(
+            (s.port, s.user.as_str(), s.tls),
+            (DEFAULT_PORT, DEFAULT_USER, false),
+            "bad fields fall back to defaults"
+        );
         std::fs::write(&path, r#"{"dolt.port":3306}"#).unwrap();
         assert_eq!(Stored::load(&Prefs::at(&path)), None, "no host, no connection");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
@@ -647,13 +672,13 @@ mod tests {
 
     #[test]
     fn the_form_is_checked_and_defaults_are_filled() {
-        assert_eq!(Stored::parse(" db.example ", " 13306 ", " reader "), Ok(stored()));
-        let s = Stored::parse("h", "", "").unwrap();
-        assert_eq!((s.port, s.user.as_str()), (3306, "root"));
-        assert_eq!(Stored::parse("", "3306", "u"), Err(FormError::Host));
-        assert_eq!(Stored::parse("two words", "3306", "u"), Err(FormError::Host));
+        assert_eq!(Stored::parse(" db.example ", " 13306 ", " reader ", false), Ok(stored()));
+        let s = Stored::parse("h", "", "", true).unwrap();
+        assert_eq!((s.port, s.user.as_str(), s.tls), (3306, "root", true));
+        assert_eq!(Stored::parse("", "3306", "u", false), Err(FormError::Host));
+        assert_eq!(Stored::parse("two words", "3306", "u", false), Err(FormError::Host));
         for port in ["0", "65536", "-1", "abc"] {
-            assert_eq!(Stored::parse("h", port, "u"), Err(FormError::Port), "{port}");
+            assert_eq!(Stored::parse("h", port, "u", false), Err(FormError::Port), "{port}");
         }
     }
 

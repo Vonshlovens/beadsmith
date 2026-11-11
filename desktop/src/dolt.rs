@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use mysql::prelude::Queryable;
-use mysql::{Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts, Row, Value};
+use mysql::{Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts, Row, SslOpts, Value};
 
 use crate::model::{Comment, Counts, Failure, Hit, IssueDetail, IssueRef, IssueSummary, Project, Source};
 use crate::quick;
@@ -90,6 +90,31 @@ pub struct Config {
     pub host: String,
     pub port: u16,
     pub user: String,
+    /// Require TLS, with the server's certificate checked against the
+    /// system's trusted roots and its name against `host`. There is no
+    /// switch to skip either check: a certificate the system does not trust
+    /// is a failed connection, not a warning.
+    pub tls: bool,
+}
+
+impl Config {
+    /// True when the connection crosses a network in the clear: TLS is off
+    /// and the host is not this machine. The window says so beside the
+    /// server's name.
+    pub fn unencrypted(&self) -> bool {
+        !self.tls && !is_loopback(&self.host)
+    }
+}
+
+/// True for a host that names this machine, so traffic to it never leaves
+/// it: `localhost` (and a name under it) or a loopback address. Anything
+/// else, including this machine's own LAN address, counts as a network.
+pub fn is_loopback(host: &str) -> bool {
+    let host = host.trim().trim_start_matches('[').trim_end_matches(']').trim_end_matches('.');
+    let lower = host.to_ascii_lowercase();
+    lower == "localhost"
+        || lower.ends_with(".localhost")
+        || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
 /// How a client gets its password. Deliberately not `Debug`.
@@ -121,17 +146,38 @@ fn quote(database: &str) -> Result<String, Failure> {
     if valid_database(database) { Ok(format!("`{database}`")) } else { Err(Failure::Unknown) }
 }
 
-/// Reduce a driver error to a fixed class. Only codes are read, never
-/// messages, which can hold hosts, user names or other connection details.
+/// Reduce a driver error to a fixed class. Only codes and variants are read,
+/// never messages, which can hold hosts, user names, certificate subjects or
+/// other connection details.
 pub fn classify(error: &mysql::Error) -> Failure {
     match error {
         mysql::Error::MySqlError(e) if e.code == 1045 || e.state == "28000" => Failure::AuthenticationRejected,
+        // The handshake failed: almost always a certificate the system does
+        // not trust or one issued for another name. The platform's reason
+        // is not read, so the class covers every handshake failure.
+        mysql::Error::TlsError(_) => Failure::TlsRejected,
+        mysql::Error::DriverError(mysql::DriverError::TlsNotSupported) => Failure::TlsUnsupported,
         mysql::Error::IoError(_) => Failure::Unreachable,
         mysql::Error::DriverError(mysql::DriverError::ConnectTimeout | mysql::DriverError::CouldNotConnect(_)) => {
             Failure::Unreachable
         }
         _ => Failure::Unknown,
     }
+}
+
+/// How the pool connects to `config`.
+fn options(config: &Config, password: String) -> OptsBuilder {
+    let constraints = PoolConstraints::new(0, 4).expect("0 <= 4");
+    OptsBuilder::new()
+        .ip_or_hostname(Some(config.host.clone()))
+        .tcp_port(config.port)
+        .user(Some(config.user.clone()))
+        .pass(Some(password))
+        .tcp_connect_timeout(Some(std::time::Duration::from_secs(5)))
+        // The defaults verify the chain against the system's roots and the
+        // certificate against the host name; see `Config::tls`.
+        .ssl_opts(config.tls.then(SslOpts::default))
+        .pool_opts(PoolOpts::default().with_constraints(constraints))
 }
 
 /// A read-only client over one Dolt server. The pool connects lazily, on the
@@ -174,15 +220,7 @@ impl Dolt {
                 settings::resolve_password(lookup, |p| std::fs::read_to_string(p), store.as_ref(), &self.config)?
             }
         };
-        let constraints = PoolConstraints::new(0, 4).expect("0 <= 4");
-        let opts = OptsBuilder::new()
-            .ip_or_hostname(Some(self.config.host.clone()))
-            .tcp_port(self.config.port)
-            .user(Some(self.config.user.clone()))
-            .pass(Some(password))
-            .tcp_connect_timeout(Some(std::time::Duration::from_secs(5)))
-            .pool_opts(PoolOpts::default().with_constraints(constraints));
-        let pool = Pool::new(Opts::from(opts)).map_err(|e| classify(&e))?;
+        let pool = Pool::new(Opts::from(options(&self.config, password))).map_err(|e| classify(&e))?;
         Ok(self.pool.get_or_init(|| pool))
     }
 
@@ -388,6 +426,10 @@ impl Source for Dolt {
     fn label(&self) -> String {
         format!("Dolt {}:{}", self.config.host, self.config.port)
     }
+
+    fn unencrypted(&self) -> bool {
+        self.config.unencrypted()
+    }
 }
 
 fn summary(r: &Row) -> IssueSummary {
@@ -460,6 +502,41 @@ mod tests {
         });
         assert_eq!(classify(&denied), Failure::AuthenticationRejected);
         assert_eq!(classify(&mysql::Error::DriverError(mysql::DriverError::ConnectTimeout)), Failure::Unreachable);
+        let no_tls = mysql::Error::DriverError(mysql::DriverError::TlsNotSupported);
+        assert_eq!(classify(&no_tls), Failure::TlsUnsupported);
+        // `TlsError` holds a platform error that cannot be built here; the
+        // ignored live test `tls_is_verified_and_failures_are_fixed_classes`
+        // reaches it through a real handshake.
+    }
+
+    #[test]
+    fn only_this_machine_counts_as_loopback() {
+        for host in ["localhost", "LOCALHOST", "db.localhost", "localhost.", "127.0.0.1", "127.8.0.1", "::1", "[::1]"] {
+            assert!(is_loopback(host), "{host}");
+        }
+        for host in ["dolt.example", "10.0.0.5", "192.168.1.2", "0.0.0.0", "::", "localhost.example", "my-localhost"] {
+            assert!(!is_loopback(host), "{host}");
+        }
+    }
+
+    #[test]
+    fn a_plain_connection_off_this_machine_is_unencrypted() {
+        let config = |host: &str, tls: bool| Config { host: host.into(), port: 3306, user: "u".into(), tls };
+        assert!(config("dolt.example", false).unencrypted());
+        assert!(!config("dolt.example", true).unencrypted());
+        assert!(!config("127.0.0.1", false).unencrypted(), "loopback never leaves the machine");
+        let dolt = Dolt::new(config("10.0.0.5", false), Credential::Given(String::new()));
+        assert!(Source::unencrypted(&dolt), "the window is told");
+    }
+
+    #[test]
+    fn tls_asks_for_verified_tls_and_plain_asks_for_none() {
+        let config = |tls: bool| Config { host: "dolt.example".into(), port: 3306, user: "u".into(), tls };
+        let opts = |tls: bool| Opts::from(options(&config(tls), String::new()));
+        let secure = opts(true);
+        let ssl = secure.get_ssl_opts().expect("TLS is required");
+        assert!(!ssl.accept_invalid_certs() && !ssl.skip_domain_validation(), "both checks stay on");
+        assert!(opts(false).get_ssl_opts().is_none());
     }
 
     #[test]
@@ -586,6 +663,53 @@ mod live {
         let literal = dolt.search(&names, "%").expect("a wildcard is searched for, not expanded");
         assert!(literal.iter().all(|h| h.id.contains('%') || h.title.contains('%')), "a wildcard is literal");
         assert_eq!(dolt.search(&["Bad-Name".into()], "x"), Err(Failure::Unknown));
+    }
+
+    /// TLS end to end, against two servers: the one the environment names,
+    /// which must not offer TLS (the quickstart's does not), and one that
+    /// does, on `BEADS_DOLT_TLS_PORT` of the same host, with a certificate
+    /// for that host signed by the CA in the PEM file `BEADS_DOLT_TLS_CA`
+    /// and `require_secure_transport: true` in its listener config.
+    /// That CA is not in the system's trust store, so the app's own
+    /// connection is refused as untrusted, and the same connection that
+    /// also trusts the CA reads.
+    #[test]
+    #[ignore = "needs two Dolt servers, one with TLS"]
+    fn tls_is_verified_and_failures_are_fixed_classes() {
+        let plain = from_env(|c| c.tls = true);
+        assert_eq!(plain.probe(), Err(Failure::TlsUnsupported), "a server without TLS is not read in the clear");
+
+        let port: u16 = std::env::var("BEADS_DOLT_TLS_PORT").expect("BEADS_DOLT_TLS_PORT").parse().unwrap();
+        let ca = std::env::var("BEADS_DOLT_TLS_CA").expect("BEADS_DOLT_TLS_CA");
+        let secure = from_env(|c| {
+            c.port = port;
+            c.tls = true;
+        });
+        assert_eq!(secure.probe(), Err(Failure::TlsRejected), "a CA the system does not trust");
+
+        let password = settings::resolve_password(
+            Backing::system().lookup,
+            |p| std::fs::read_to_string(p),
+            &NoStore,
+            &secure.config,
+        )
+        .expect("password");
+        let trusting = options(&secure.config, password)
+            .ssl_opts(SslOpts::default().with_root_cert_path(Some(std::path::PathBuf::from(ca.clone()))));
+        let mut conn = mysql::Conn::new(trusting).expect("a verified TLS connection");
+        assert_eq!(conn.query_first::<i64, _>("SELECT 1").expect("a read"), Some(1));
+        // Dolt reports no `Ssl_*` status, so the proof the read above was
+        // encrypted is that the server refuses one that is not.
+        let plain = from_env(|c| c.port = port);
+        assert!(plain.probe().is_err(), "the TLS server requires secure transport, with the right password");
+
+        // The same server by another name: the certificate names only the
+        // address the environment gave, so this must be refused.
+        let other = if secure.config.host == "localhost" { "127.0.0.1" } else { "localhost" };
+        let elsewhere = options(&Config { host: other.into(), ..secure.config.clone() }, String::new())
+            .ssl_opts(SslOpts::default().with_root_cert_path(Some(std::path::PathBuf::from(ca))));
+        let wrong_name = mysql::Conn::new(elsewhere).map(|_| ()).map_err(|e| classify(&e));
+        assert_eq!(wrong_name, Err(Failure::TlsRejected), "a certificate for another name");
     }
 
     #[test]

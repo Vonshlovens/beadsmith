@@ -72,8 +72,19 @@ status and text filters, and the issue detail.
   `state.db`. ADR-0001's rejected desktop shape stays rejected.
 - The read queries now exist in TypeScript and in Rust. A Beads schema change
   has to land in both until one of them goes.
-- No TLS yet: the prototype connects in the clear, so it belongs on loopback,
-  a tunnel or a private network.
+- TLS to Dolt is optional and off by default, since a stock Dolt server has
+  no certificate. When on, the server's certificate is verified against the
+  operating system's trusted roots (Security.framework on macOS, so a
+  private CA the user trusts in Keychain Access works; OpenSSL's store
+  elsewhere) and against the host as typed, with no setting to skip either
+  check. It goes through the `mysql` crate's `native-tls` backend rather
+  than its rustls one, which only knows a bundled copy of the public web
+  roots and would make a private CA unusable. Handshake failures and a
+  server without TLS are two more fixed failure classes, with no text from
+  the TLS library. With TLS off, a host other than this machine is marked
+  "Unencrypted" under the server's name, so a password crossing a network
+  in the clear is visible rather than silent. The web service's Dolt
+  client has no TLS setting, so this has no environment variable.
 - Shipped as an unnotarized download only. A script builds a macOS app
   bundle, on the user's own machine (where it can copy it to
   `/Applications`) or in a release workflow that runs on `desktop-v<version>`
@@ -141,6 +152,12 @@ window: it still needs a running server and gains nothing native.
   holds names and numbers only, and an unusable value falls back to its
   default. See
   [What a relaunch remembers](../../desktop/README.md#what-a-relaunch-remembers).
+- TLS: `Config::tls` and `options` in `desktop/src/dolt.rs` (the pool's
+  `SslOpts`, defaults only), `dolt.tls` in the settings file, the form's
+  checkbox and the sidebar's mark in `desktop/src/view.rs`. The ignored
+  live test `tls_is_verified_and_failures_are_fixed_classes` runs against a
+  local Dolt with a throwaway CA; see
+  [TLS](../../desktop/README.md#tls).
 - Tests: `cargo test` in `desktop/` (unit: no server, no keychain);
   `cargo test -- --ignored` against a live server and the real Keychain.
   Headless scenes: `cargo run -- --snap out.png --scene sample`.

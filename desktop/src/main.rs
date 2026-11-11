@@ -110,7 +110,7 @@ fn board_loading_scene(s: &mut State) {
 
 /// A server that is never contacted: scenes set the outcome themselves.
 fn example_server() -> Arc<dyn Source> {
-    let config = Config { host: "dolt.example".into(), port: 3306, user: "reader".into() };
+    let config = Config { host: "dolt.example".into(), port: 3306, user: "reader".into(), tls: false };
     Arc::new(Dolt::new(config, Credential::Given(String::new())))
 }
 
@@ -226,6 +226,26 @@ fn connection_filled(s: &mut State) {
     form.user.replace_text("reader");
     form.password.replace_text("not a real password");
     form.web.replace_text("https://beads.example");
+}
+
+/// TLS on: the note says what the certificate must be.
+fn connection_tls_scene(s: &mut State) {
+    connection_filled(s);
+    s.connection.as_mut().expect("opened").tls = true;
+}
+
+/// TLS on, and the server's certificate is not one this computer trusts.
+fn tls_rejected_scene(s: &mut State) {
+    let config = Config { host: "dolt.example".into(), port: 3306, user: "reader".into(), tls: true };
+    s.source = Arc::new(Dolt::new(config, Credential::Given(String::new())));
+    s.projects = Load::Failed(Failure::TlsRejected);
+}
+
+/// A server across the network without TLS: the sidebar says so beside its
+/// name, on every screen.
+fn unencrypted_scene(s: &mut State) {
+    sample_scene(s);
+    s.source = example_server();
 }
 
 fn connection_testing_scene(s: &mut State) {
@@ -410,6 +430,8 @@ fn main() {
             ("unconfigured", unconfigured_scene),
             ("unreachable", unreachable_scene),
             ("auth-rejected", auth_rejected_scene),
+            ("tls-rejected", tls_rejected_scene),
+            ("unencrypted", unencrypted_scene),
             ("credential-unavailable", credential_unavailable_scene),
             ("loading", loading_scene),
             ("loading-issues", loading_issues_scene),
@@ -424,6 +446,7 @@ fn main() {
             ("issue-failed", issue_failed_scene),
             ("issue-gone", issue_gone_scene),
             ("connection", connection_scene),
+            ("connection-tls", connection_tls_scene),
             ("connection-testing", connection_testing_scene),
             ("connection-failed", connection_failed_scene),
             ("connection-ok", connection_ok_scene),

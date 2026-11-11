@@ -260,10 +260,11 @@ on the network, and a newer request supersedes an older one.
 You need the Rust toolchain in [`rust-toolchain.toml`](rust-toolchain.toml)
 (rustup installs it on first use). On Linux, building also needs the
 `libxkbcommon` and `libwayland` development packages (Rune's
-[Linux notes](https://github.com/anomalyco/rune/blob/dev/crates/rune/README.md#linux)):
+[Linux notes](https://github.com/anomalyco/rune/blob/dev/crates/rune/README.md#linux))
+and OpenSSL's, for TLS:
 
 ```sh
-sudo apt-get install libxkbcommon-dev libwayland-dev   # Debian/Ubuntu
+sudo apt-get install libxkbcommon-dev libwayland-dev libssl-dev pkg-config   # Debian/Ubuntu
 ```
 
 Then, from this directory:
@@ -385,14 +386,14 @@ scripts/bundle-macos.sh package      # target/bundle/Beadsmith-<version>-macos-<
 
 ## Where the connection is kept
 
-| What                | Where                                                                                                                                                             |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Host, port and user | `prefs.json` in the OS config folder: `~/Library/Application Support/Beadsmith` on macOS, `$XDG_CONFIG_HOME/Beadsmith` on Linux, `%APPDATA%\Beadsmith` on Windows |
-| Web app address     | `web.url` in the same `prefs.json` (see [Links to the web app](#links-to-the-web-app))                                                                            |
-| Refresh interval    | `refresh.seconds` in the same `prefs.json` (see [Automatic refresh](#automatic-refresh))                                                                          |
-| The view            | `view.*`, `ui.theme` and `window.size` in the same `prefs.json` (see [What a relaunch remembers](#what-a-relaunch-remembers))                                     |
-| Password, on macOS  | The login Keychain, as a generic password named `Beadsmith Dolt` with the account `user@host:port`                                                                |
-| Password, elsewhere | Not stored: this build has no keychain binding off macOS, so set `BEADS_DOLT_PASSWORD_FILE`                                                                       |
+| What                     | Where                                                                                                                                                             |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Host, port, user and TLS | `prefs.json` in the OS config folder: `~/Library/Application Support/Beadsmith` on macOS, `$XDG_CONFIG_HOME/Beadsmith` on Linux, `%APPDATA%\Beadsmith` on Windows |
+| Web app address          | `web.url` in the same `prefs.json` (see [Links to the web app](#links-to-the-web-app))                                                                            |
+| Refresh interval         | `refresh.seconds` in the same `prefs.json` (see [Automatic refresh](#automatic-refresh))                                                                          |
+| The view                 | `view.*`, `ui.theme` and `window.size` in the same `prefs.json` (see [What a relaunch remembers](#what-a-relaunch-remembers))                                     |
+| Password, on macOS       | The login Keychain, as a generic password named `Beadsmith Dolt` with the account `user@host:port`                                                                |
+| Password, elsewhere      | Not stored: this build has no keychain binding off macOS, so set `BEADS_DOLT_PASSWORD_FILE`                                                                       |
 
 The password is never written to the settings file, a log or a command line.
 It is saved for one `user@host:port`, so changing the host and leaving the
@@ -456,8 +457,32 @@ BEADS_DOLT_PASSWORD_FILE=/path/to/password cargo run --release
 The repository's [quickstart](../quickstart/compose.yaml) serves three sample
 projects; publish its Dolt port to point the client at it.
 
-There is no TLS yet: connect over loopback, an SSH tunnel or a private
-network, not across the internet.
+## TLS
+
+**Use TLS** in connection settings encrypts the connection and checks the
+server's certificate: it must chain to a root this computer trusts and be
+issued for the host as typed (a name, or an IP address in the certificate's
+subject alternative names). On macOS the check is the system's own
+(Security.framework), so a server with a private CA works once that CA is
+added to the login or System keychain in Keychain Access and set to
+**Always Trust**; on Linux it is OpenSSL with the system's CA store. There
+is no switch to skip either check. TLS is off by default, because a stock
+Dolt server has no certificate; it is saved as `dolt.tls` in `prefs.json`,
+and no environment variable changes it.
+
+With TLS off, a host that is not this machine (anything but `localhost` or
+a loopback address) is marked **Unencrypted** under the server's name in
+the sidebar, and the checkbox's note says the password and issues would
+cross the network in the clear. Use TLS for any such server, or reach it
+through an SSH tunnel and connect to the tunnel's loopback end.
+
+On the server, Dolt takes a certificate and key in its config file's
+`listener` section (`tls_cert`, `tls_key`); `require_secure_transport: true`
+then refuses plain connections. A failure is one of two fixed messages,
+with no detail from the TLS library: **Certificate not trusted** (any failed
+handshake, nearly always an untrusted CA or a certificate for another name)
+or **Server has no TLS**. A server that requires TLS while the app has it
+off reports a generic error, which reads as **Connection failed**.
 
 ## Check it headlessly
 
@@ -476,8 +501,9 @@ sorted heading), the board (`board`,
 `board-loading`), every pane while it loads
 (`loading`, `loading-issues`, `loading-issue`), the empty and failed states
 (`no-projects`, `empty-project`, `no-matches`, `issue-gone`, `unconfigured`,
-`unreachable`, `auth-rejected`, `credential-unavailable`, `issues-failed`,
-`issue-failed`), a failed refresh over loaded data (`stale`), the window
+`unreachable`, `auth-rejected`, `credential-unavailable`, `tls-rejected`,
+`issues-failed`, `issue-failed`), a server read without TLS across a
+network (`unencrypted`), a failed refresh over loaded data (`stale`), the window
 re-reading by itself (`refreshing`) and its interval being chosen
 (`auto-refresh`), the
 connection screen (`connection` for a first launch, then `connection-*`),
@@ -517,12 +543,21 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test                       # unit tests: no server, no keychain
 BEADS_DOLT_SERVER_HOST=127.0.0.1 BEADS_DOLT_SERVER_USER=beadsmith \
-BEADS_DOLT_PASSWORD=… cargo test -- --ignored --skip keychain   # a live server
+BEADS_DOLT_PASSWORD=… cargo test -- --ignored --skip keychain --skip tls   # a live server
 cargo test -- --ignored keychain # macOS: the real Keychain
 ```
 
 The live-server tests read, and save a connection to a scratch settings file
-and relaunch from it. The Keychain test writes one item under a test-only
+and relaunch from it. The TLS test needs, besides that server (which must
+not offer TLS), a second Dolt on the same host with a certificate for that
+host from a throwaway CA and `require_secure_transport: true` (see
+[TLS](#tls)); it checks that the app's own connection refuses the
+untrusted CA, and that the same connection trusting the CA reads:
+
+````sh
+BEADS_DOLT_SERVER_HOST=127.0.0.1 BEADS_DOLT_SERVER_PORT=<plain> … \
+BEADS_DOLT_TLS_PORT=<tls> BEADS_DOLT_TLS_CA=ca.pem cargo test -- --ignored tls
+``` The Keychain test writes one item under a test-only
 service name and deletes it.
 
 CI runs the first three, the notices check (see
@@ -582,14 +617,15 @@ generated from `Cargo.lock`, so after any dependency change run:
 ```sh
 scripts/third-party-notices.py          # rewrite the file
 scripts/third-party-notices.py --check  # what CI runs: fail if it is stale
-```
+````
 
 It needs `python3` and `cargo` and lists the dependencies of the two macOS
 targets, whatever machine runs it, so it is the same file on Linux CI.
 
 ## Not done yet
 
-- TLS to the Dolt server.
+- A per-connection CA file or client certificate for TLS: the system's
+  trusted roots are the only ones used.
 - Storing the password off macOS (Secret Service, Windows Credential
   Manager).
 - Talking to a Beadsmith server's API instead of Dolt, which would bring

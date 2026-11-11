@@ -15,10 +15,13 @@ description = "Prototype native desktop client for Beadsmith, built on Rune."
 # `dev` branch. Bump both lines together.
 rune = { git = "https://github.com/anomalyco/rune", rev = "cbaf637dfe5fcf3ec8b3f1c3ad27246b69742fbf" }
 rune-kit = { git = "https://github.com/anomalyco/rune", rev = "cbaf637dfe5fcf3ec8b3f1c3ad27246b69742fbf", features = ["markdown"] }
-# Pure-Rust MySQL protocol client (Dolt speaks it). No TLS backend yet: see
-# desktop/README.md.
-mysql = { version = "28", default-features = false, features = ["minimal-rust"] }
+# Pure-Rust MySQL protocol client (Dolt speaks it). TLS goes through
+# native-tls, so on macOS the server's certificate is checked against the
+# system trust store (Security.framework), including a private CA the user
+# trusts in Keychain Access. The crate's rustls backend only knows a bundled
+# copy of the public web roots. See ADR-0017.
+mysql = { version = "28", default-features = false, features = ["minimal-rust", "native-tls"] }
 
 # The macOS Keychain, where the Dolt password is kept (src/settings.rs).
 [target.'cfg(target_os = "macos")'.dependencies]
-security-framework = { version = "2", default-features = false }
+security-framework = { version = "3", default-features = false }
