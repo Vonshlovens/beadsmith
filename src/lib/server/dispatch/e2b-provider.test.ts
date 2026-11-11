@@ -859,6 +859,33 @@ describe('E2B provider', () => {
 		expect(after).toEqual(before);
 	});
 
+	it('bounds a cancelled run by the first later run with a turn', async () => {
+		const { provider, claude, sandboxes } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		await provider.getRun('sbx1', 'r1');
+		await provider.cancelRun!('sbx1', 'r1');
+		const sandbox = sandboxes.get('sbx1')!;
+		const before: MissionEvent[] = [];
+		await provider.streamMissionEvents!('sbx1', 'r1', async (e) => void before.push(e));
+		expect(before.map((e) => e.type)).toEqual(['tool_call', 'result']);
+
+		// r2 is cancelled while its setup runs, so it never marks a turn.
+		sandbox.setup = { ready: false };
+		expect(await provider.createRun!('sbx1', 'Try again')).toEqual({ run_id: 'r2' });
+		await provider.cancelRun!('sbx1', 'r2');
+		expect(sandbox.runs.get('r2')!.setup_killed).toBe(true);
+		expect(sandbox.file('r2', 'turn.json')).toBeUndefined();
+
+		claude.auto = true;
+		sandbox.setup = { ready: true };
+		expect(await provider.createRun!('sbx1', 'Once more')).toEqual({ run_id: 'r3' });
+		expect((await provider.getRun('sbx1', 'r3')).status).toBe('succeeded');
+		const after: MissionEvent[] = [];
+		await provider.streamMissionEvents!('sbx1', 'r1', async (e) => void after.push(e));
+		expect(after).toEqual(before);
+	});
+
 	it('resumes a live stream after the last id the client saw', async () => {
 		const { provider, claude } = setup();
 		claude.auto = false;

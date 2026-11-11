@@ -895,8 +895,11 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 	 * The last transcript line of a finished run's turn. The result's event
 	 * id names it (the session core gives its own events the last line it
 	 * read). A run cancelled before a result was stored has none: then the
-	 * next run's turn starts after it, and with no next turn the
-	 * transcript's current end is still this run's.
+	 * earliest later run with a turn starts after it. Later runs without a
+	 * turn (cancelled or failed in setup, or setup still running) wrote
+	 * nothing to the transcript, so they are skipped rather than taken as
+	 * the end; with no later turn at all, the transcript's current end is
+	 * still this run's.
 	 */
 	async function turnEndLine(
 		sandbox: SandboxRef,
@@ -905,8 +908,13 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 	): Promise<number | undefined> {
 		const stored = parseSessionEventId(files.result?.event_id);
 		if (stored !== undefined) return stored.line;
-		const next = await readRun(sandbox, `r${runNumber(run_id) + 1}`);
-		return next.turn === undefined ? undefined : next.turn.first_line - 1;
+		const latest = await latestRunId(sandbox);
+		const last = latest === undefined ? 0 : runNumber(latest);
+		for (let n = runNumber(run_id) + 1; n <= last; n++) {
+			const later = await readRun(sandbox, `r${n}`);
+			if (later.turn !== undefined) return later.turn.first_line - 1;
+		}
+		return undefined;
 	}
 
 	/**
