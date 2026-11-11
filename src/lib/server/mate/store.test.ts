@@ -40,6 +40,29 @@ describe('chats', () => {
 		expect(await store.getChat('u1', a.id)).toMatchObject({ title: 'renamed', scope: 'd_web' });
 	});
 
+	it('keeps a chat model and effort, and reads chats from before they existed', async () => {
+		const picked = await store.createChat('u1', {
+			title: 'picked',
+			scope: null,
+			model: 'claude-opus-5-5',
+			effort: 'high'
+		});
+		expect(picked).toMatchObject({ model: 'claude-opus-5-5', effort: 'high' });
+		expect(await store.getChat('u1', picked.id)).toMatchObject({
+			model: 'claude-opus-5-5',
+			effort: 'high'
+		});
+		await client.execute('ALTER TABLE mate_chats DROP COLUMN model');
+		await client.execute('ALTER TABLE mate_chats DROP COLUMN effort');
+		await initStateSchema(client);
+		const old = await store.getChat('u1', picked.id);
+		expect(old).not.toHaveProperty('model');
+		expect(old).not.toHaveProperty('effort');
+		const fresh = await store.createChat('u1', { title: 'fresh', scope: null, model: 'sonnet' });
+		expect(await store.getChat('u1', fresh.id)).toMatchObject({ model: 'sonnet' });
+		expect(await store.getChat('u1', fresh.id)).not.toHaveProperty('effort');
+	});
+
 	it('lists the most recently active first and deletes events with the chat', async () => {
 		const a = await store.createChat('u1', { title: 'a', scope: null });
 		const b = await store.createChat('u1', { title: 'b', scope: null });

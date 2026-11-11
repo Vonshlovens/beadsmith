@@ -108,9 +108,15 @@ function signed(method: string, target: string, body = ''): RequestInit {
 	};
 }
 
-async function post(chat: string, prompt: string, message_id: string, session_id = SESSION) {
+async function post(
+	chat: string,
+	prompt: string,
+	message_id: string,
+	session_id = SESSION,
+	extra: Record<string, unknown> = {}
+) {
 	const target = `/v1/mate/chats/${chat}/messages`;
-	const body = JSON.stringify({ session_id, prompt, scope: 'beads-web', message_id });
+	const body = JSON.stringify({ session_id, prompt, scope: 'beads-web', message_id, ...extra });
 	return fetch(`${base}${target}`, signed('POST', target, body));
 }
 
@@ -195,6 +201,9 @@ describe('mate runner', () => {
 			SESSION
 		]);
 		expect(t.argv).toContain('--append-system-prompt');
+		// No model or effort asked for: the CLI's defaults.
+		expect(t.argv).not.toContain('--model');
+		expect(t.argv).not.toContain('--effort');
 		expect(t.cwd).toBe(WORKDIR);
 		expect(t.labels).toEqual({ [CHAT_LABEL]: 'chat1', [SESSION_LABEL]: SESSION });
 		// The prompt is pasted into the running CLI, never put on its command line.
@@ -420,6 +429,38 @@ describe('mate runner', () => {
 		await handler.close();
 		expect(t.state).toBe('finished');
 		expect((await post('chat2', 'hello', 'm2', OTHER)).status).toBe(503);
+	});
+
+	it('launches with the chat model and effort, and keeps them across a resume', async () => {
+		const choice = { model: 'claude-opus-5-5', effort: 'high' };
+		expect((await post('chat1', 'one', 'm1', SESSION, choice)).status).toBe(202);
+		await readEvents('chat1', 3);
+		const argv = terminalOf().argv.join(' ');
+		expect(argv).toContain('--model claude-opus-5-5');
+		expect(argv).toContain('--effort high');
+
+		await shutdown(true);
+		await start();
+		expect((await post('chat1', 'two', 'm2', SESSION, choice)).status).toBe(202);
+		await readEvents('chat1', 6);
+		const resumed = terminalOf().argv;
+		expect(resumed).toContain('--resume');
+		expect(resumed.join(' ')).toContain('--model claude-opus-5-5');
+		expect(resumed.join(' ')).toContain('--effort high');
+	});
+
+	it('refuses a model or effort that is not a name, or that changes mid-chat', async () => {
+		expect((await post('chat1', 'hi', 'm1', SESSION, { model: '--dangerous' })).status).toBe(400);
+		expect((await post('chat1', 'hi', 'm1', SESSION, { model: 7 })).status).toBe(400);
+		expect((await post('chat1', 'hi', 'm1', SESSION, { effort: 'High Effort' })).status).toBe(400);
+		// Nothing was recorded for the refused messages.
+		expect((await post('chat1', 'hi', 'm1', SESSION, { model: 'sonnet' })).status).toBe(202);
+		expect((await post('chat1', 'next', 'm2', SESSION, { model: 'opus' })).status).toBe(409);
+		expect((await post('chat1', 'next', 'm2', SESSION)).status).toBe(409);
+		expect(
+			(await post('chat1', 'next', 'm2', SESSION, { effort: 'low', model: 'sonnet' })).status
+		).toBe(409);
+		expect((await post('chat1', 'next', 'm2', SESSION, { model: 'sonnet' })).status).toBe(202);
 	});
 
 	it('rejects reuse of an id for a different message', async () => {

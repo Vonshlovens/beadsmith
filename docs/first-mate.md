@@ -60,6 +60,28 @@ place to run, the start screen's **Runs on** picker chooses where new chats
 The `e2b` runner is the mate runner's own core running inside Beadsmith, so
 it follows the contract below exactly; it needs no URL or secret.
 
+### Model and effort
+
+A chat can ask for a model and a reasoning effort when it is created
+(`POST /api/mate/chats` `{ model?, effort? }`), from the same operator list
+mission launches use (`BDX_AGENT_MODELS`, `BDX_AGENT_EFFORTS`,
+[configuration.md](configuration.md)). Anything else is refused with `400`
+before the chat exists, because the name reaches the agent CLI's argv and
+decides what the chat spends. Not asking leaves the CLI's default, and an
+empty list offers nothing to pick.
+
+The choice is fixed for the chat's life: `mate_chats` keeps it, and
+Beadsmith sends it with every message, the user's and its crew notices
+alike. The runner records it from the chat's first message, launches
+`claude --model … --effort …`, and relaunches with the same flags on a
+`--resume`, so a runner restart, an evicted session or a new sandbox keeps
+the chat on its model. A later message carrying a different choice is
+refused (`409`) rather than resuming the transcript under another model
+unannounced. Both runners take it: Sand runs the runner core in-process,
+and the forge runner serves the same core over the contract, so a forge
+runner must be built from a Beadsmith version that knows the fields (an
+older one ignores them and runs its default).
+
 The start screen says where a new chat will run and what it can do there:
 crew tools on Sand, its own Beads sandbox elsewhere. When a runner is
 configured it also offers next actions from live data, such as "4 ready
@@ -128,7 +150,8 @@ Three tables in `state.db` ([ADR-0004](../specs/decisions/0004-service-local-sql
 - `mate_chats`: id (`mc_` + 24 hex), owner account id, title, scope (a
   project id, or null for every project), the chat runner (`remote` or `e2b`;
   older chats read as `remote`), the runner `session_id` (a UUID generated
-  with the chat and kept for its life; never sent to the browser), and
+  with the chat and kept for its life; never sent to the browser), the
+  model and effort it was created with (null for the default), and
   timestamps.
 - `mate_events`: the events Beadsmith has relayed for a chat, in order,
   keyed by the runner's event id, with compact fields only. Text for `user`,
@@ -154,7 +177,7 @@ errors use the normal `{ error: { code, message } }` envelope.
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /api/mate/status`                        | `{ connected, reason?, reachable?, runners? }` for any signed-in viewer. `reason`: `admin_only` or `unconfigured`. `reachable`: cached health of the default runner. `runners` (admins): `[{ id, label }]`, default first. |
 | `GET /api/mate/chats`                         | `{ chats }`, the caller's own, most recently active first.                                                                                                                                                                 |
-| `POST /api/mate/chats`                        | `{ title?, scope?, runner? }` → `201 { chat }`. `runner` must be configured (`400` otherwise); omitted, the default. `409` past 100 chats.                                                                                 |
+| `POST /api/mate/chats`                        | `{ title?, scope?, runner?, model?, effort? }` → `201 { chat }`. `runner` must be configured, `model` and `effort` on the operator's list (`400` otherwise); omitted, the defaults. `409` past 100 chats.                  |
 | `GET /api/mate/chats/:id`                     | `{ chat, events }`: the stored log, oldest first (the latest 2,000 events).                                                                                                                                                |
 | `PATCH /api/mate/chats/:id`                   | `{ title?, scope? }` → `{ chat }`. A new scope applies from the next message.                                                                                                                                              |
 | `DELETE /api/mate/chats/:id`                  | Stops the runner session, then deletes the chat. If the runner cannot stop it, the chat stays (`503`) so the delete can be retried.                                                                                        |
@@ -216,7 +239,9 @@ constant time and reject timestamps more than five minutes old.
 	"session_id": "6f1c1f4e-…",
 	"message_id": "1b7d…",
 	"prompt": "What is ready across every project?",
-	"scope": "d_beads_web"
+	"scope": "d_beads_web",
+	"model": "claude-opus-5-5",
+	"effort": "high"
 }
 ```
 
@@ -225,6 +250,12 @@ recorded for this message.
 
 - The runner starts the session on first use (with this `session_id`) and
   keeps it alive. The same `session_id` comes with every message of a chat.
+- `model` and `effort` are optional and come with every message of a chat
+  that has them, as `session_id` does. The runner checks only their shape
+  (a model name, an effort level; never a flag), records them with the
+  session on first use and launches and resumes the CLI with them. A
+  message whose `model` or `effort` differs from the recorded ones,
+  including leaving out ones the chat has, is `409`.
 - A message sent while the agent is working is queued for it; there is no
   "busy" answer.
 - `message_id` (1-64 characters of `[A-Za-z0-9_-]`) is unique per user
@@ -360,7 +391,8 @@ terminal, driven by the session core
   `ssh <guest> hc connect` with the pinned host key on forge, the E2B
   process channel on Sand ([sand-e2b.md](sand-e2b.md#how-a-chat-runs)). No
   hc socket or port leaves the guest or sandbox.
-- The first message launches `claude --session-id <session_id>` in the
+- The first message launches `claude --session-id <session_id>` (with
+  `--model` and `--effort` when the chat has them) in the
   working directory, labelled `beadsmith-chat=<chat id>`, and pastes the
   prompt into it; the prompt is never on a command line. The CLI keeps
   running between turns, so a follow-up is the next message to the same

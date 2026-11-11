@@ -1,7 +1,7 @@
 import { createClient } from '@libsql/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_MESSAGE_CHARS, UNWIRED_REPLY, type MateEvent } from '#lib/mate.js';
-import { readEnv } from '#lib/server/env.js';
+import { readEnv, resetEnvCache } from '#lib/server/env.js';
 import { createMateRunner, setMateRunner } from '#lib/server/mate/runner.js';
 import { resetMateHealthCache } from '#lib/server/mate/service.js';
 import { createMateStore, type MateStore } from '#lib/server/mate/store.js';
@@ -201,6 +201,76 @@ describe('chats', () => {
 			chats: { title: string; runner: string }[];
 		};
 		expect(listed.chats.find((entry) => entry.title === 'On Sand')?.runner).toBe('e2b');
+	});
+});
+
+describe('model and effort', () => {
+	beforeEach(() => {
+		vi.stubEnv('BDX_AGENT_MODELS', 'claude-opus-5-5,claude-sonnet-5-5');
+		vi.stubEnv('BDX_AGENT_EFFORTS', 'low,high');
+		resetEnvCache();
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+		resetEnvCache();
+	});
+
+	it('accepts a choice from the operator list and keeps it on the chat', async () => {
+		const chat = await createChat(ADMIN, {
+			scope: null,
+			model: 'claude-sonnet-5-5',
+			effort: 'high'
+		});
+		expect(chat).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'high' });
+		expect(await store.getChat(ADMIN.id, chat.id)).toMatchObject({
+			model: 'claude-sonnet-5-5',
+			effort: 'high'
+		});
+		const listed = (await (await call(LIST)).json()) as { chats: Record<string, unknown>[] };
+		expect(listed.chats[0]).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'high' });
+		// Fixed for the chat's life: a patch cannot change it.
+		const patched = await call(PATCH, {
+			id: chat.id,
+			body: { model: 'claude-opus-5-5' },
+			url: `http://localhost/api/mate/chats/${chat.id}`
+		});
+		expect(patched.status).toBe(400);
+	});
+
+	it('refuses a model or effort the operator does not offer, or that is not a name', async () => {
+		for (const body of [
+			{ scope: null, model: 'claude-haiku-5-5' },
+			{ scope: null, effort: 'max' },
+			{ scope: null, model: '--dangerously-skip-permissions' }
+		]) {
+			expect((await call(CREATE, { body })).status).toBe(400);
+		}
+		expect(await store.countChats(ADMIN.id)).toBe(0);
+	});
+
+	it('leaves both out by default', async () => {
+		const chat = await createChat(ADMIN, { scope: null });
+		expect(chat).not.toHaveProperty('model');
+		expect(chat).not.toHaveProperty('effort');
+	});
+
+	it('sends the chat choice with every message to the runner', async () => {
+		connect();
+		const chat = await createChat(ADMIN, { scope: null, model: 'claude-opus-5-5', effort: 'low' });
+		await call(SEND, { id: chat.id, body: { text: 'one', message_id: 'm1' } });
+		await call(SEND, { id: chat.id, body: { text: 'two', message_id: 'm2' } });
+		const messages = fake.requests.filter((r) => r.target.endsWith('/messages'));
+		expect(messages).toHaveLength(2);
+		for (const request of messages) {
+			expect(JSON.parse(request.body)).toMatchObject({ model: 'claude-opus-5-5', effort: 'low' });
+		}
+
+		const plain = await createChat(ADMIN, { scope: null });
+		await call(SEND, { id: plain.id, body: { text: 'three', message_id: 'm3' } });
+		const sent = JSON.parse(fake.requests.at(-1)!.body) as Record<string, unknown>;
+		expect(sent).not.toHaveProperty('model');
+		expect(sent).not.toHaveProperty('effort');
 	});
 });
 

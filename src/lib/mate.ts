@@ -33,6 +33,13 @@ export interface MateChat {
 	scope: string | null;
 	/** Where the chat's agent runs; fixed when the chat is created. */
 	runner: MateRunnerId;
+	/**
+	 * Model and reasoning effort the chat's agent runs with, picked from the
+	 * operator's list when the chat was created and fixed for its life (the
+	 * CLI keeps them across a resume). Absent: the runner's default.
+	 */
+	model?: string;
+	effort?: string;
 	/** ISO timestamps. */
 	created_at: string;
 	updated_at: string;

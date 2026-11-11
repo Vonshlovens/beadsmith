@@ -82,9 +82,9 @@ export const FOLLOW_UP_TEXT_MAX = 4000;
 const dispatch_provider_schema = z.enum(DISPATCH_PROVIDER_IDS).optional();
 
 /**
- * Model and effort any launch may ask for. The shape only keeps them from
- * being flags; whether the operator offers them is checked by the dispatch
- * service against BDX_AGENT_MODELS / BDX_AGENT_EFFORTS.
+ * Model and effort any launch or new First Mate chat may ask for. The shape
+ * only keeps them from being flags; whether the operator offers them is
+ * checked against BDX_AGENT_MODELS / BDX_AGENT_EFFORTS (`agentChoiceProblem`).
  */
 const agent_choice_shape = {
 	model: z.string().regex(MODEL_PATTERN, 'invalid model').optional(),
@@ -520,7 +520,9 @@ export const create_mate_chat_schema = z
 		title: mate_title_schema.optional(),
 		scope: project_id_schema.nullable().default(null),
 		/** Where the chat runs; must be configured. Omitted: the default runner. */
-		runner: z.enum(MATE_RUNNER_IDS).optional()
+		runner: z.enum(MATE_RUNNER_IDS).optional(),
+		/** Checked against the operator's list by the route, as a launch's is. */
+		...agent_choice_shape
 	})
 	.strict();
 

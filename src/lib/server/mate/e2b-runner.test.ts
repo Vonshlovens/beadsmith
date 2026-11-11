@@ -300,6 +300,30 @@ describe('Sand First Mate runner', () => {
 		).rejects.toMatchObject({ code: 'conflict' });
 	});
 
+	it('launches the chat CLI with its model and effort, and refuses others', async () => {
+		const { runner, sandboxes } = setup();
+		const input = {
+			session_id: SESSION,
+			message_id: 'm1',
+			prompt: 'Ahoy',
+			scope: null,
+			model: 'claude-sonnet-5-5',
+			effort: 'medium'
+		};
+		await expect(
+			runner.sendMessage('mc_one', { ...input, model: '--model=x' })
+		).rejects.toMatchObject({ code: 'bad_request' });
+		await runner.sendMessage('mc_one', input);
+		await collect(runner, 'mc_one', (all) => all.some((e) => e.type === 'result'));
+		const argv = sandboxes.get('chat-sbx1')!.terminals[0].argv.join(' ');
+		expect(argv).toContain('--model claude-sonnet-5-5');
+		expect(argv).toContain('--effort medium');
+		await expect(
+			runner.sendMessage('mc_one', { ...input, message_id: 'm2', effort: 'max' })
+		).rejects.toMatchObject({ code: 'conflict' });
+		await runner.close();
+	});
+
 	it('gives a fresh and a resumed sandbox the crew relay, its files and --mcp-config', async () => {
 		const sandboxes = new Map<string, FakeChatSandbox>();
 		const first = setup({ sandboxes });

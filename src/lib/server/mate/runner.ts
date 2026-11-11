@@ -2,7 +2,7 @@
  * Client for the mate runner, the service that keeps each First Mate chat's
  * agent session alive (contract v1, docs/first-mate.md):
  *
- *   POST   {base}/v1/mate/chats/{chat}/messages   { session_id, message_id, prompt, scope } -> 202 { event_id }
+ *   POST   {base}/v1/mate/chats/{chat}/messages   { session_id, message_id, prompt, scope, model?, effort? } -> 202 { event_id }
  *   GET    {base}/v1/mate/chats/{chat}/events?after={event_id}   long-lived SSE of MissionEvents
  *   POST   {base}/v1/mate/chats/{chat}/interrupt  -> 202
  *   DELETE {base}/v1/mate/chats/{chat}            -> 204
@@ -62,6 +62,13 @@ export interface MateMessageInput {
 	message_id: string;
 	prompt: string;
 	scope: string | null;
+	/**
+	 * The chat's model and effort, sent with every message as `session_id` is;
+	 * the runner launches the CLI with the ones the chat's first message
+	 * carried. Absent: the CLI's default.
+	 */
+	model?: string;
+	effort?: string;
 }
 
 /** Why `streamEvents` returned. */
@@ -533,7 +540,9 @@ export function createMateRunner(deps: MateRunnerDeps = {}): MateRunner | undefi
 					session_id: input.session_id,
 					message_id: input.message_id,
 					prompt: input.prompt,
-					scope: input.scope
+					scope: input.scope,
+					...(input.model === undefined ? {} : { model: input.model }),
+					...(input.effort === undefined ? {} : { effort: input.effort })
 				}
 			});
 			if (response.status !== 202 && response.status !== 200) {

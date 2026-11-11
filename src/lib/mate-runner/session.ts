@@ -228,6 +228,8 @@ export class ChatAgent {
 			launch: {
 				session_id: meta.session_id,
 				...connection.launch,
+				...(meta.model === undefined ? {} : { model: meta.model }),
+				...(meta.effort === undefined ? {} : { effort: meta.effort }),
 				...(meta.scope === null ? {} : { append_system_prompt: scopePrompt(meta.scope) })
 			},
 			labels: { [CHAT_LABEL]: this.#log.chat_id },

@@ -15,6 +15,7 @@
 
 import { randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { EFFORT_PATTERN, MODEL_PATTERN } from '../agent-session/claude-code.js';
 import { SESSION_LABEL } from '../agent-session/session.js';
 import { encodeMissionEvent, type MissionEvent } from '../mission-events.js';
 import {
@@ -158,7 +159,7 @@ export function createRunnerCore(options: RunnerCoreOptions) {
 		chat_id: string,
 		input: Record<string, unknown>
 	): Promise<{ event_id: string }> {
-		const { session_id, prompt, scope, message_id } = input;
+		const { session_id, prompt, scope, message_id, model, effort } = input;
 		if (typeof session_id !== 'string' || !SESSION_ID_PATTERN.test(session_id)) {
 			throw new RunnerFault(400, 'session_id must be a UUID.');
 		}
@@ -176,16 +177,30 @@ export function createRunnerCore(options: RunnerCoreOptions) {
 		) {
 			throw new RunnerFault(400, 'scope must be a project id or null.');
 		}
+		// Only the shape is checked here: they reach the CLI's argv. Which
+		// models a chat may use is Beadsmith's call, made when it created the chat.
+		if (model !== undefined && (typeof model !== 'string' || !MODEL_PATTERN.test(model))) {
+			throw new RunnerFault(400, 'model must be a model name.');
+		}
+		if (effort !== undefined && (typeof effort !== 'string' || !EFFORT_PATTERN.test(effort))) {
+			throw new RunnerFault(400, 'effort must be an effort level.');
+		}
 
 		const log = options.store.get(chat_id);
 		if (log.meta === undefined) {
 			log.setMeta({
 				session_id,
 				scope: typeof scope === 'string' ? scope : null,
+				...(model === undefined ? {} : { model }),
+				...(effort === undefined ? {} : { effort }),
 				created_at: now().toISOString()
 			});
 		} else if (log.meta.session_id !== session_id) {
 			throw new RunnerFault(409, 'This chat belongs to another session.');
+		} else if (log.meta.model !== model || log.meta.effort !== effort) {
+			// A chat keeps the model it started with: the CLI would otherwise
+			// resume the same transcript under a different one, unannounced.
+			throw new RunnerFault(409, 'This chat runs with another model or effort.');
 		}
 
 		const existing = log.user(message_id);
