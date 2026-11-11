@@ -177,6 +177,11 @@ export function loopRunName(base: string, run_id: string): string {
  * process that claimed it died: the CLI's startup limit (2 min) plus room.
  */
 const START_STALE_S = 300;
+/**
+ * A starter acts on the CLI only this long after its claim: a minute short
+ * of START_STALE_S, after which the next run may start without waiting for it.
+ */
+const START_ACT_LIMIT_MS = (START_STALE_S - 60) * 1000;
 /** How long a stream waits for setup and the start before handing back to polling. */
 const STREAM_START_WAIT_MS = 15 * 60_000;
 /** Characters of the setup log kept for the server log when setup fails. */
@@ -228,6 +233,11 @@ export interface RunFiles {
 	ready: boolean;
 	/** Seconds since a Beadsmith process claimed the start. */
 	claim_age_s?: number;
+	/**
+	 * Seconds since the previous run's start was claimed, while that starter
+	 * has not finished (no `start-done`, no result).
+	 */
+	previous_start_age_s?: number;
 	turn?: TurnMark;
 	/** A loop's ralph terminals are running (loops write this instead of a turn). */
 	started?: boolean;
@@ -242,14 +252,17 @@ export interface StoredResult extends Omit<AgentRunUpdate, 'status'> {
 
 function statusCommand(run_id: string): string {
 	const dir = `${RUNS_DIR}/${run_id}`;
+	const prev = `${RUNS_DIR}/r${runNumber(run_id) - 1}`;
 	return [
 		`d='${dir}'`,
 		`if [ ! -d "$d" ]; then echo missing; exit 0; fi`,
+		`p='${prev}'`,
 		`printf 'exit=%s\\n' "$(cat "$d/exit" 2>/dev/null)"`,
 		`printf 'cancelled=%s\\n' "$([ -f "$d/cancelled" ] && echo 1)"`,
 		`printf 'ready=%s\\n' "$([ -f "$d/ready" ] && echo 1)"`,
 		`printf 'claimed=%s\\n' "$(stat -c %Y "$d/claim" 2>/dev/null)"`,
 		`printf 'started=%s\\n' "$([ -f "$d/started" ] && echo 1)"`,
+		`printf 'prev_claimed=%s\\n' "$([ -f "$p/start-done" ] || [ -f "$p/result.json" ] || stat -c %Y "$p/claim" 2>/dev/null)"`,
 		`printf 'now=%s\\n' "$(date +%s)"`,
 		`printf 'turn=%s\\n' "$(head -c 4096 "$d/turn.json" 2>/dev/null)"`,
 		`printf 'result=%s\\n' "$(head -c 16384 "$d/result.json" 2>/dev/null)"`
@@ -346,6 +359,10 @@ export function parseRunFiles(stdout: string): RunFiles {
 		ready: fields.get('ready') === '1'
 	};
 	if (claimed !== undefined && now !== undefined) files.claim_age_s = Math.max(0, now - claimed);
+	const prev_claimed = readInt(fields.get('prev_claimed'));
+	if (prev_claimed !== undefined && now !== undefined) {
+		files.previous_start_age_s = Math.max(0, now - prev_claimed);
+	}
 	if (fields.get('started') === '1') files.started = true;
 	const turn = parseTurn(parseJson(fields.get('turn')));
 	if (turn !== undefined) files.turn = turn;
@@ -683,9 +700,16 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 	 *
 	 * A cancel can land while this runs (the launch alone may take the CLI's
 	 * whole startup limit) and find no terminal to end yet; the cancelled mark
-	 * is all it leaves. So the mark is read again once the CLI is attached,
-	 * before the prompt goes, and once more after: whichever check sees it
-	 * ends the CLI, and the run reads cancelled from the mark.
+	 * is all it leaves. So the mark is read before attaching, again once the
+	 * CLI is attached, before the prompt goes, and once more after: whichever
+	 * check sees it ends the CLI, and the run reads cancelled from the mark.
+	 *
+	 * Every run of a mission shares one CLI session, so a cancelled run's
+	 * starter that resumed after a follow-up started would attach to the
+	 * follow-up's CLI and end it. Two guards keep them apart: the next run's
+	 * turn waits until this starter writes `start-done` (see `advance`), and
+	 * a starter stalled past START_ACT_LIMIT_MS, when the next run stops
+	 * waiting for it, leaves the CLI alone.
 	 */
 	async function startTurn(
 		sandbox: SandboxRef,
@@ -696,20 +720,25 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		const dir = `${RUNS_DIR}/${run_id}`;
 		const claim = await sandbox.exec(`mkdir '${dir}/claim' 2>/dev/null`);
 		if (claim.exit_code !== 0) return;
+		const claimed_at = Date.now();
+		/** Still this run's to act on; false once the next run may have started. */
+		const mine = () => Date.now() - claimed_at < START_ACT_LIMIT_MS;
 		let client: HcClient | undefined;
 		let session: AgentSession | undefined;
 		try {
 			const { stdout: prompt } = await sandbox.exec(`cat '${dir}/prompt'`);
+			if ((await isCancelled(sandbox, run_id)) || !mine()) return;
 			client = await connectHc(sandbox);
 			session = newSession(info, redact, () => {});
 			await session.attach(client);
+			if (!mine()) return;
 			if (await isCancelled(sandbox, run_id)) {
-				await session.cancel();
+				if (mine()) await session.cancel();
 				return;
 			}
 			const mark = await session.send(prompt);
 			await sandbox.writeFile(`${dir}/turn.json`, JSON.stringify(mark));
-			if (await isCancelled(sandbox, run_id)) await session.cancel();
+			if ((await isCancelled(sandbox, run_id)) && mine()) await session.cancel();
 		} catch (error) {
 			log(`Sand mission ${sandbox.id}/${run_id}: the agent could not start: ${String(error)}`);
 			const message =
@@ -724,6 +753,8 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		} finally {
 			session?.close();
 			client?.close();
+			// The next run's turn waits for this (see `advance`).
+			await sandbox.writeFile(`${dir}/start-done`, '').catch(() => undefined);
 		}
 	}
 
@@ -841,8 +872,11 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 				}
 			};
 		}
+		// The previous run's starter, if still going, could act on the one CLI
+		// session this turn is about to use (see `startTurn`): wait for it.
+		const previous_starting = (files.previous_start_age_s ?? Infinity) <= START_STALE_S;
 		if (files.ready && files.turn === undefined && files.claim_age_s === undefined) {
-			if (!files.cancelled && files.result === undefined) {
+			if (!files.cancelled && files.result === undefined && !previous_starting) {
 				await startTurn(sandbox, info, run_id, redact);
 				files = await readRun(sandbox, run_id);
 			}
