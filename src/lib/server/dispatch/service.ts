@@ -149,6 +149,13 @@ function requireRecordProvider(record: DispatchRecord, deps: DispatchDeps): Agen
 }
 export { AGENT_BUSY_MESSAGE, LOOP_NOT_RUNNING_MESSAGE, RUN_NOT_CANCELLABLE_MESSAGE };
 const DEFAULT_MAX_POLL_ATTEMPTS = 120;
+/**
+ * A loop is followed for as long as it can run: its sandbox gets more time
+ * only when a read sees an iteration finish (`e2b-provider.ts`), so the
+ * follower must not stop after the hour the default allows. At the 30-second
+ * poll ceiling this is about 25 hours, past E2B's longest sandbox session.
+ */
+const LOOP_MAX_POLL_ATTEMPTS = 3_000;
 const active_followers = new Set<string>();
 
 function isFollowableStatus(status: DispatchRecord['status']): boolean {
@@ -417,7 +424,9 @@ async function followDispatchRecord(
 	}
 
 	const sleep = deps.sleep ?? defaultSleep;
-	const attempts = deps.max_poll_attempts ?? DEFAULT_MAX_POLL_ATTEMPTS;
+	const attempts =
+		deps.max_poll_attempts ??
+		(resolved.payload.operation === 'loop' ? LOOP_MAX_POLL_ATTEMPTS : DEFAULT_MAX_POLL_ATTEMPTS);
 	for (let attempt = 0; attempt < attempts; attempt += 1) {
 		try {
 			const update = await provider.getRun(resolved.agent_id, run_id);

@@ -439,7 +439,12 @@ pinned version. The checkout must already be a ralph project
    ([`ralph-transport.ts`](../src/lib/server/e2b/ralph-transport.ts));
    finished iterations are copied into `state.db`. The live view follows
    ralph's event stream the same way and maps it onto the thread. If
-   `ralph serve` stops answering, the next read starts it again.
+   `ralph serve` stops answering, the next read starts it again. Each read
+   that finds ralph alive with more iterations finished than at the last
+   extension gives the sandbox `BDX_E2B_MAX_RUN_MINUTES` again from now
+   (the first read after Beadsmith starts counts too). Beadsmith's
+   background follower keeps reading a loop until it ends, so this happens
+   with no browser open.
 4. When ralph's run ends, its stop reason (or, without one, the loop
    terminal's exit code) decides the mission's status, and the report's
    iteration count, duration and notes for a person become the summary. The
@@ -464,9 +469,20 @@ pinned version. The checkout must already be a ralph project
    mission follows the new sandbox id. Either way the iterations of each run
    are stored under its own run id.
 
-A loop still running at `BDX_E2B_MAX_RUN_MINUTES` is destroyed with its
-sandbox and reported failed; anything it had not pushed is lost. Keep the
-iteration limit within the run limit until long loops can pause and resume.
+So a loop can run for longer than `BDX_E2B_MAX_RUN_MINUTES` in total, but
+each iteration has to fit in it: an iteration still going a full run limit
+after the last one finished (or after the loop started) is destroyed with
+its sandbox and reported failed, and anything it had not pushed is lost.
+Keep ralph's iteration timeout below the run limit. E2B's own cap on
+continuous running (an hour on the free plan) still ends the sandbox,
+whatever Beadsmith asks for. If Beadsmith restarts mid-loop, nothing reads
+the loop until someone opens it, so an iteration that finishes meanwhile
+earns no extension.
+
+Loop sandboxes are destroyed, not paused, on timeout. Pausing would keep a
+stuck loop's disk, but a resumed sandbox has lost its tailnet node and the
+agent's open model connection mid-iteration, and nothing would resume it
+unasked; extending while the loop makes progress keeps the iteration whole.
 
 Live check after a rebuild (not yet run; the steps above are unit-tested
 against a fake sandbox, hc core and ralph in
@@ -504,6 +520,11 @@ and [`ralph-transport.test.ts`](../src/lib/server/e2b/ralph-transport.test.ts)):
    the idle time (the sandbox is gone from E2B) and restart again: the
    mission moves to a new sandbox whose `~/.beadsmith/runs` holds only
    `r3`, and the table shows a third group.
+9. With `BDX_E2B_MAX_RUN_MINUTES=10`, start a `run` loop with
+   `max_iterations` 4 whose iterations take about four minutes each, and
+   close the browser. The loop runs all four iterations (about 16 minutes)
+   and ends with `max_iterations`; E2B's sandbox info shows its end time
+   moving forward as each iteration finishes.
 
 ## How a chat runs
 

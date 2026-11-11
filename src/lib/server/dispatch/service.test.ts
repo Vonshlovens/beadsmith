@@ -1796,6 +1796,37 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 		expect(missions[0]).toMatchObject({ operation: 'loop', id: result.request.id });
 	});
 
+	it('follows a loop past the one-hour poll budget until it ends', async () => {
+		// The follower's reads are what give a long loop's sandbox more time.
+		let reads = 0;
+		const provider: AgentProvider = {
+			...loopProvider(async () => ({ agent_id: 'sbx-long', run_id: 'r1' })),
+			getRun: vi.fn(async () =>
+				++reads < 200 ? { status: 'running' as const } : { status: 'succeeded' as const }
+			)
+		};
+		let background: Promise<void> | undefined;
+
+		const result = await enqueueDispatch(
+			{ idempotency_key: 'idem-loop-long', project: PROJECT, actor: 'web', payload: BUILD_LOOP },
+			{
+				store,
+				provider,
+				configured: true,
+				policy: ALLOW_ALL,
+				repositories: BEADS_WEB_MAP,
+				sleep: async () => {},
+				schedule_background: (task) => {
+					background = task();
+				}
+			}
+		);
+		await background;
+
+		expect(provider.getRun).toHaveBeenCalledTimes(200);
+		expect(await store.get(result.request.id)).toMatchObject({ status: 'succeeded' });
+	});
+
 	it('scopes a loop to one bead and records its title', async () => {
 		const provider = loopProvider(async () => ({ agent_id: 'sbx-2' }));
 

@@ -890,6 +890,63 @@ describe('E2B provider loops', () => {
 		expect(ralph.requests.every((r) => r.method === 'GET')).toBe(true);
 	});
 
+	it('gives a loop the run limit again each time it finishes an iteration', async () => {
+		const { provider, ralph, sandbox, name } = await launched();
+		const max_run_ms = SETTINGS.max_run_minutes * 60_000;
+		const iteration = (n: number) => ({
+			iteration: n,
+			outcome: 'completed',
+			startedAt: '2026-11-11T10:00:00.000Z',
+			finishedAt: '2026-11-11T10:50:00.000Z',
+			durationMs: 3_000_000,
+			headBefore: null,
+			headAfter: null,
+			inputTokens: 1,
+			outputTokens: 1,
+			costUsd: null,
+			validateOk: null,
+			planOpen: null
+		});
+		// ralph has not recorded the run: no sign of progress, no extension.
+		await provider.getRun('sbx1', 'r1');
+		expect(sandbox.timeouts).toEqual([]);
+
+		ralph.addRun({ name });
+		await provider.getRun('sbx1', 'r1');
+		// The first sight of a live run counts as progress.
+		expect(sandbox.timeouts).toEqual([max_run_ms]);
+		await provider.getRun('sbx1', 'r1');
+		expect(sandbox.timeouts).toEqual([max_run_ms]);
+
+		ralph.iterations.set(name, [iteration(1)]);
+		expect((await provider.getRun('sbx1', 'r1')).status).toBe('running');
+		expect(sandbox.timeouts).toEqual([max_run_ms, max_run_ms]);
+		// Stuck in iteration 2: no more time, so the run limit cuts it off.
+		await provider.getRun('sbx1', 'r1');
+		await provider.getRun('sbx1', 'r1');
+		expect(sandbox.timeouts).toEqual([max_run_ms, max_run_ms]);
+
+		ralph.iterations.set(name, [iteration(1), iteration(2)]);
+		await provider.getRun('sbx1', 'r1');
+		expect(sandbox.timeouts).toEqual([max_run_ms, max_run_ms, max_run_ms]);
+
+		// Ended: the idle window replaces the run limit.
+		ralph.addRun({ name, status: 'finished', alive: false, stopReason: 'max_iterations' });
+		expect((await provider.getRun('sbx1', 'r1')).status).not.toBe('running');
+		expect(sandbox.timeouts.at(-1)).toBe(SETTINGS.idle_minutes * 60_000);
+	});
+
+	it('keeps reporting a running loop when its sandbox cannot get more time', async () => {
+		const { provider, ralph, sandbox, name, logs } = await launched();
+		await provider.getRun('sbx1', 'r1');
+		ralph.addRun({ name });
+		sandbox.setTimeout = async () => {
+			throw new Error('rate limited');
+		};
+		expect((await provider.getRun('sbx1', 'r1')).status).toBe('running');
+		expect(logs.join('\n')).toContain('could not extend the run limit');
+	});
+
 	it('relays the loop terminal, not ralph serve', async () => {
 		const { provider, claude } = await launched();
 		await provider.getRun('sbx1', 'r1');

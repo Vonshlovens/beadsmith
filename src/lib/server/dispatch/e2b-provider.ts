@@ -37,7 +37,9 @@
  * two hc terminals in the checkout: `ralph serve --no-web` (loopback only)
  * and `ralph <mode>` with the loop's flags, then writes `started`. Status,
  * iterations, events and stop go to ralph's `/v1` as curl commands over the
- * process channel (`../e2b/ralph-transport.ts`). When the loop ends, its
+ * process channel (`../e2b/ralph-transport.ts`). Each read that finds more
+ * iterations finished gives the sandbox the full run limit again, so a loop
+ * may outlast the limit as long as each iteration fits in it. When the loop ends, its
  * result is written to `result.json` and the sandbox gets a short timeout
  * after which E2B destroys it: a loop takes no follow-up, so nothing would
  * resume it. A restart in that window is run `r2` (and so on) in the same
@@ -460,6 +462,8 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 	const wait_ms = deps.timing?.wait_ms ?? 2_000;
 	/** Terminal results already read, so a paused sandbox is not resumed to re-read them. */
 	const finished = new Map<string, AgentRunUpdate>();
+	/** Per running loop run: how many iterations had finished when its sandbox last got more time. */
+	const extended = new Map<string, number>();
 	const sink = deps.log ?? ((message: string) => console.warn(message));
 	// E2B errors can echo request headers; strip credential shapes first.
 	const log = (message: string) => sink(sanitizeResultSummary(message, '') ?? message);
@@ -985,7 +989,39 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 
 	/** A loop has ended: E2B destroys its sandbox after the idle window. */
 	async function retireLoop(sandbox: SandboxRef): Promise<void> {
+		for (const key of extended.keys()) {
+			if (key.startsWith(`${sandbox.id}/`)) extended.delete(key);
+		}
 		await sandbox.setTimeout(idle_ms).catch(() => undefined);
+	}
+
+	/**
+	 * A loop may run for longer than the run limit, as long as it keeps
+	 * finishing iterations: each time a reader sees ralph alive with more
+	 * finished iterations than at the last extension, the sandbox gets the
+	 * full run limit again from now. One iteration still has to fit in the
+	 * run limit, so a loop stuck in an iteration (or a dead ralph) is cut off
+	 * there rather than kept alive and billed. ralph's own iteration limit
+	 * and iteration timeout bound an honest loop; E2B's longest sandbox
+	 * session bounds the rest. The first sight of a run after Beadsmith
+	 * starts counts as progress, so a restart costs at most one extension.
+	 *
+	 * Extension, not pause and resume: a paused sandbox loses its tailnet
+	 * node and the agent's open model connection mid-iteration, and nothing
+	 * would resume it unasked. The dispatch follower keeps reading a loop
+	 * until it ends (`dispatch/service.ts`), so the extension happens even
+	 * with no browser open.
+	 */
+	async function extendLoop(sandbox: SandboxRef, run_id: string, finished_count: number) {
+		const key = `${sandbox.id}/${run_id}`;
+		const last = extended.get(key);
+		if (last !== undefined && finished_count <= last) return;
+		try {
+			await sandbox.setTimeout(max_run_ms);
+			extended.set(key, finished_count);
+		} catch (error) {
+			log(`Sand loop ${sandbox.id}: could not extend the run limit: ${String(error)}`);
+		}
 	}
 
 	/** Stop a loop now: ralph records the operator stop, then its terminal goes. */
@@ -1147,7 +1183,13 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			observed.iterations === undefined || observed.iterations.length === 0
 				? {}
 				: { iterations: observed.iterations };
-		if ('running' in observed) return { status: 'running', ...iterations };
+		if ('running' in observed) {
+			// Iterations come back only when ralph reports the run alive.
+			if (observed.iterations !== undefined) {
+				await extendLoop(sandbox, run_id, observed.iterations.length);
+			}
+			return { status: 'running', ...iterations };
+		}
 		await retireLoop(sandbox);
 		return { ...publicUpdate(observed.done), ...iterations };
 	}

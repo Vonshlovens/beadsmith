@@ -229,8 +229,12 @@ Nothing ships with this record. Planned, each in its own change:
   reaches `/v1` with curl to loopback over the E2B process channel
   (`src/lib/server/e2b/ralph-transport.ts`). Its observer is off because
   Beadsmith keeps none of its summaries. A loop sandbox is created to be
-  destroyed, not paused, on timeout; a loop that outlives
-  `BDX_E2B_MAX_RUN_MINUTES` is cut off with it. Pushing: the loop's checkout
+  destroyed, not paused, on timeout. Each status read that sees ralph
+  alive with another iteration finished gives the sandbox
+  `BDX_E2B_MAX_RUN_MINUTES` again, and the dispatch follower reads a loop
+  until it ends, so a loop may outlast the run limit as long as each
+  iteration fits in it; an iteration that does not is cut off with the
+  sandbox (docs/sand-e2b.md, "How a loop runs"). Pushing: the loop's checkout
   gets a write-scoped GitHub token at the egress, as Tackle's does, and
   ralph's prompts decide when to push;
 - loop controls and the loop UI on project, epic, issue and mission pages;
