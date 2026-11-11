@@ -63,7 +63,16 @@ reality**. Search `src/` before treating a spec as implemented.
   or inbound path in the sandbox. Beads changes stay delegated to missions,
   which record their chat and report their outcome back to it as a crew
   notice ([ADR-0020](decisions/0020-first-mate-crew-tools.md)).
-- Target, partly shipped (0016, 0018): **agents run in scoped sandboxes**. A beads sandbox
+- Accepted, being implemented: **every agent runs in an hc terminal**
+  (herdr-core) inside its sandbox, as the interactive CLI (Claude Code
+  first), for chats and missions on Sand and forge. Only Beadsmith, or the
+  forge runner, speaks hc, through `hc connect` over the E2B process channel
+  or the runner's SSH; no hc socket or port leaves the sandbox. Members still
+  see sanitized MissionEvents, now derived from the CLI's transcript; admins
+  may watch or take over the raw terminal through an audited console relay
+  that stores no bytes. hc is pinned by version and SHA-256 in one file
+  ([ADR-0021](decisions/0021-hc-terminal-runtime.md)).
+- Target, partly shipped (0016, 0018, 0021): **agents run in scoped sandboxes**. A beads sandbox
   (the orchestrator) holds per-project Dolt grants and asks for repository
   work through dispatch; a repo sandbox reaches one repository. Model and
   repository keys stay outside sandboxes, behind a proxy. Beadsmith may
@@ -146,6 +155,7 @@ Follow the `architecture` skill at
 | [0017-native-desktop-client.md](decisions/0017-native-desktop-client.md) | [`desktop/`](../desktop/README.md) | Native Rune client reading Dolt directly with the web app's read contract; macOS bundle and release workflow |
 | [0018-sand-e2b-sandboxes.md](decisions/0018-sand-e2b-sandboxes.md) | [`src/lib/server/e2b/`](../src/lib/server/e2b/), [`src/lib/server/dispatch/e2b-provider.ts`](../src/lib/server/dispatch/e2b-provider.ts), [`src/lib/server/mate/e2b-runner.ts`](../src/lib/server/mate/e2b-runner.ts), [`sandbox/e2b/`](../sandbox/e2b/) | Sand: E2B sandboxes for missions and chats; several runners, picked in First Mate |
 | [0020-first-mate-crew-tools.md](decisions/0020-first-mate-crew-tools.md) | [`src/lib/server/crew/`](../src/lib/server/crew/) | Crew tools: one transport-free MCP tool module for First Mate chats (read tools, todo writes and mission launches as the chat's owner), relayed into Sand chats by [`src/lib/server/mate/crew-bridge.ts`](../src/lib/server/mate/crew-bridge.ts) |
+| [0021-hc-terminal-runtime.md](decisions/0021-hc-terminal-runtime.md) | Not yet; today [`sandbox/e2b/beadsmith-run`](../sandbox/e2b/beadsmith-run) and [`src/lib/mate-runner/`](../src/lib/mate-runner/) still run headless stream-json | hc terminal runtime for every agent: `hc connect` over the sandbox's own channel, transcript-derived MissionEvents, admin relay with audited attach and take-over |
 
 ## UI map
 

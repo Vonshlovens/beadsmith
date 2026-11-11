@@ -144,3 +144,8 @@ is undocumented.
 
 Unit tests cover these paths against fakes. The first live mission and chat
 are the acceptance check listed in the operator guide.
+
+[ADR-0021](./0021-hc-terminal-runtime.md) moves Sand missions and chats from
+headless `claude -p` to an interactive Claude Code in an hc terminal inside
+the sandbox, reached with `hc connect` over the E2B process channel, and lifts
+"Not doing: Sand terminal relay" for admins. Keys stay with E2B's egress.

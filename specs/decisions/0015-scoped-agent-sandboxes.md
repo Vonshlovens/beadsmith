@@ -221,3 +221,10 @@ architecture bullet is in [`specs/README.md`](../README.md).
 The initial persistent chat runtime and host credential boundary are defined in
 [ADR-0016](0016-first-mate-worker-runtime.md). This does not activate repository
 dispatch, Dolt access, or terminal relay.
+
+[ADR-0021](0021-hc-terminal-runtime.md) decides the terminal runtime
+(herdr-core, inside each sandbox, reached only over the sandbox's own process
+channel or the forge runner's SSH) and the relay (a console route keyed by
+chat or mission, watch by default, audited take-over). It covers the
+"`AgentProvider` over a terminal runtime" and "relay route" pieces above for
+Sand and the forge guest; the sandbox registry stays planned.

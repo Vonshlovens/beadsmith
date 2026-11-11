@@ -129,7 +129,11 @@ can run in a Firecracker guest on a self-hosted host
 missions and chats can run on Sand, one E2B sandbox each, with model and
 GitHub keys added by E2B's egress and mission sandboxes on the tailnet under
 their own tag ([ADR-0018](../specs/decisions/0018-sand-e2b-sandboxes.md)).
-Beadsmith holds no terminal connection to any agent machine.
+Accepted and being implemented: every agent runs as an interactive CLI in an
+hc (herdr-core) terminal inside its sandbox or guest
+([ADR-0021](../specs/decisions/0021-hc-terminal-runtime.md)). Today agents
+still run headless and Beadsmith holds no terminal connection to any agent
+machine.
 
 A machine that runs agents is classified by what it holds, not by where it
 runs:
@@ -167,6 +171,11 @@ The rules that keep those scopes real:
 - A beads sandbox asks for repository work through the dispatch API, under
   the same arm, allow, idempotency and record as any other request. It holds
   no connection to repo sandboxes.
+- hc has no authentication, so it never leaves the sandbox: no hc socket or
+  port is forwarded or published. Only Beadsmith (Sand, through the E2B
+  process channel) or the forge runner (through its SSH to the guest) speaks
+  hc, with `hc connect`. The browser, personal devices and other sandboxes
+  never do.
 - An agent on a personal device reaches Beadsmith instead: through an MCP
   server its user authorizes with OAuth, whose tools are a facade over the
   authorized HTTP API and limited by that user's role.
@@ -291,11 +300,14 @@ launch prompt, raw worker logs, or credentials. `operation: "discuss"`
 agent to talk an issue through, rewrite it, or close it; the agent makes any
 Beads change with `bd`.
 
-Target, **not implemented yet**: the **terminal relay**. An admin may open an
-agent's terminal on a registered beads or repo sandbox
-([Where agents run](#where-agents-run)) from a route under `/api/console/`.
-The relay carries the program's raw output and, when the admin takes over,
-their keystrokes. It never reaches a personal device and is never offered to
+Target, **not implemented yet**: the **terminal relay**
+([ADR-0021](../specs/decisions/0021-hc-terminal-runtime.md)). An admin may
+open the agent terminal of a First Mate chat or a mission on a registered
+beads or repo sandbox ([Where agents run](#where-agents-run)) from a route
+under `/api/console/`. The route names the chat or mission, never a machine
+or terminal address. The browser is the one exception to "no PTY or ANSI":
+the relay carries the program's raw output, watch-only by default, and, when
+the admin explicitly takes over, their keystrokes. It never reaches a personal device and is never offered to
 members. Beadsmith does not scrub, store or log relayed bytes: what the
 sandbox prints, the admin sees, which is why keys stay outside the sandbox
 and the one credential it may hold, its Dolt account, is scoped. Each attach and take-over is recorded with its actor
@@ -381,7 +393,8 @@ At minimum, tests must demonstrate:
 ### Initial First Mate runtime
 
 [ADR-0016](../specs/decisions/0016-first-mate-worker-runtime.md) defines the
-first persistent Claude Code guest. The host runner uses signed requests over
+first persistent Claude Code guest; [ADR-0021](../specs/decisions/0021-hc-terminal-runtime.md)
+moves it into an hc terminal. The host runner uses signed requests over
 tailnet HTTPS; the web integration must enforce admin and chat ownership.
 Model and signing credentials remain on the host. The guest proxy admits only
 the Anthropic message surface, with no administration endpoints. This is a
