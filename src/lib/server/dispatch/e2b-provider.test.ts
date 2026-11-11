@@ -11,6 +11,7 @@ import {
 	LOOP_TERMINAL,
 	loopTerminalName,
 	parseRunFiles,
+	parseTranscriptEnd,
 	ralphArgv,
 	SERVE_TERMINAL,
 	settledUpdate,
@@ -151,6 +152,12 @@ class FakeSandbox implements SandboxRef {
 		return run.claimed_s;
 	}
 
+	/** The transcript's line count, as `wc -l` gives it for the path in a command. */
+	transcriptLines(command: string): number {
+		const path = /\[ -e '([^']+)' \]/.exec(command)![1];
+		return (this.claude.core.files.get(path) ?? '').split('\n').length - 1;
+	}
+
 	async exec(command: string) {
 		await this.hold?.(command);
 		const run_of = (re: RegExp) => this.runs.get(re.exec(command)?.[1] ?? '');
@@ -167,6 +174,37 @@ class FakeSandbox implements SandboxRef {
 					`prev_claimed=${this.previousStart(id) ?? ''}\n` +
 					`turn=${this.file(id, 'turn.json') ?? ''}\nresult=${this.file(id, 'result.json') ?? ''}\n`
 			};
+		}
+		if (/^d='[^']+\/(r[0-9]+)'; mkdir "\$d\/claim"/.test(command)) {
+			const id = /runs\/(r[0-9]+)'/.exec(command)![1];
+			const run = this.runs.get(id)!;
+			if (run.claimed_s !== undefined) return { exit_code: 1, stdout: '' };
+			run.claimed_s = 1000;
+			this.files.set(`${RUNS_DIR}/${id}/start-line`, `${this.transcriptLines(command)}\n`);
+			return { exit_code: 0, stdout: '' };
+		}
+		if (/^d='[^']+\/(r[0-9]+)'; if \[ -f "\$d\/end" \]/.test(command)) {
+			const id = /runs\/(r[0-9]+)'/.exec(command)![1];
+			const end = this.file(id, 'end');
+			if (end !== undefined) return { exit_code: 0, stdout: `end=${end.trim()}\n` };
+			const later = [...this.runs.keys()]
+				.map((r) => Number(r.slice(1)))
+				.filter((n) => n > Number(id.slice(1)))
+				.sort((a, b) => a - b)
+				.map(
+					(n) =>
+						`later=${this.file(`r${n}`, 'start-line')?.trim() ?? ''}|${this.file(`r${n}`, 'turn.json') ?? ''}\n`
+				);
+			return {
+				exit_code: 0,
+				stdout: `lines=${this.transcriptLines(command)}\n${later.join('')}`
+			};
+		}
+		if (command.includes('(set -C; printf')) {
+			const id = /runs\/(r[0-9]+)'/.exec(command)![1];
+			const value = /printf '%s\\n' ([0-9]+)/.exec(command)![1];
+			if (this.file(id, 'end') === undefined) this.files.set(`${RUNS_DIR}/${id}/end`, `${value}\n`);
+			return { exit_code: 0, stdout: this.file(id, 'end')! };
 		}
 		if (command.startsWith("mkdir '") && command.includes('/claim')) {
 			const run = run_of(/runs\/(r[0-9]+)\/claim/)!;
@@ -888,6 +926,55 @@ describe('E2B provider', () => {
 		const after: MissionEvent[] = [];
 		await provider.streamMissionEvents!('sbx1', 'r1', async (e) => void after.push(e));
 		expect(after).toEqual(before);
+	});
+
+	it('keeps a cancelled run to the end taken before a follow-up wrote past it', async () => {
+		const { provider, claude, sandboxes } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		await provider.getRun('sbx1', 'r1');
+		await provider.cancelRun!('sbx1', 'r1');
+		const sandbox = sandboxes.get('sbx1')!;
+		// The stop keeps the transcript's end once the CLI is gone.
+		expect(sandbox.file('r1', 'end')).toBe('2\n');
+
+		// A run from before stored ends has none: the replay takes the bound
+		// itself, before it connects to hc. Hold that connection while r2 runs.
+		sandbox.files.delete(`${RUNS_DIR}/r1/end`);
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => (release = resolve));
+		let holding = true;
+		sandbox.hold = (command) => {
+			if (!holding || command !== `${HC_CARRIER} connect`) return undefined;
+			holding = false;
+			return held;
+		};
+		const events: MissionEvent[] = [];
+		const streaming = provider.streamMissionEvents!('sbx1', 'r1', async (e) => void events.push(e));
+		while (holding) await later(1);
+
+		claude.auto = true;
+		expect(await provider.createRun!('sbx1', 'Try again')).toEqual({ run_id: 'r2' });
+		expect((await provider.getRun('sbx1', 'r2')).status).toBe('succeeded');
+		expect(sandbox.file('r2', 'start-line')).toBe('2\n');
+		release();
+		expect(await streaming).toBe('terminal');
+		expect(events.map((e) => e.type)).toEqual(['tool_call', 'result']);
+		expect(events.at(-1)).toMatchObject({ id: '2.9000', status: 'cancelled' });
+		expect(sandbox.file('r1', 'end')).toBe('2\n');
+	});
+
+	it('bounds a run by the transcript and the first later run that claimed its start', () => {
+		expect(parseTranscriptEnd('end=7\n')).toBe(7);
+		expect(parseTranscriptEnd('lines=9\n')).toBe(9);
+		// A later run that has not claimed its start wrote nothing before the count.
+		expect(parseTranscriptEnd('lines=9\nlater=|\nlater=6|\n')).toBe(6);
+		expect(parseTranscriptEnd('lines=4\nlater=6|\n')).toBe(4);
+		// A run from before start lines: its turn's first line.
+		expect(parseTranscriptEnd('lines=9\nlater=|{"base":1,"first_line":5}\n')).toBe(4);
+		// An unreadable transcript is bounded by a later start, or not at all.
+		expect(parseTranscriptEnd('lines=\nlater=3|\n')).toBe(3);
+		expect(parseTranscriptEnd('lines=\nlater=|\n')).toBeUndefined();
 	});
 
 	it('resumes a live stream after the last id the client saw', async () => {

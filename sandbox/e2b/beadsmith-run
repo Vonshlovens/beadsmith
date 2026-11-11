@@ -20,8 +20,10 @@
 #   setup.log    this script's own output (its end goes to Beadsmith's server
 #                log on failure, never to the browser)
 #
-# Beadsmith adds claim/, turn.json and result.json as it starts and follows
-# the run's turn.
+# Beadsmith adds claim/ with start-line (the transcript's length when the
+# start was claimed), turn.json, start-done and result.json as it starts and
+# follows the run's turn, and end (the turn's last transcript line) once a run
+# that stored no result's line is stopped or replayed.
 #
 # Environment from the sandbox: BEADSMITH_REPO_URL/_REF, BEADSMITH_TS_TAGS,
 # BEADSMITH_DOLT_TAILNET_HOST/_PORT, BEADS_DOLT_* (the project's own scoped

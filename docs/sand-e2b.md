@@ -406,6 +406,12 @@ rows: 40 }) })` and read the body: an `open` frame, then `output` frames
    the next message to the same CLI. If the terminal is gone, it starts
    `claude --resume <id>` first. Cancel marks the run cancelled and ends the
    CLI (`terminal.kill`); during setup it stops the setup script instead.
+   With the CLI gone, it records the transcript's length as the run's `end`,
+   so replaying the cancelled run's thread stops there even after a
+   follow-up writes to the same transcript. Each start also records the
+   transcript's length as `start-line` when it claims the start, before it
+   touches the CLI; a run with no `end` (stopped before this existed, or
+   with hc unreachable) is cut at the first later `start-line`.
 6. A run still working at the time limit pauses with the sandbox and is
    reported failed. A follow-up resumes the sandbox, ends that turn's CLI
    and continues in a resumed one.

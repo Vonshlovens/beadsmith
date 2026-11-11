@@ -249,8 +249,10 @@ Shipped:
   metadata; a follow-up is the next message to the running CLI. A stream of
   a finished run replays its turn's transcript lines (`AgentSession.replay`,
   file reads only) from the turn mark's first line to the line the stored
-  result's event id names, then the stored result, so a follow-up's events
-  never appear in an earlier run's thread. The dispatch stream-json
+  result's event id names (for a run cancelled before it stored a result,
+  its `end`: the transcript's length when it was stopped, cut at the
+  `start-line` a later run records as it claims its start), then the stored
+  result, so a follow-up's events never appear in an earlier run's thread. The dispatch stream-json
   mapping is gone.
 - First Mate chats run on the session core on both runners
   (`src/lib/mate-runner/session.ts`, `ChatAgent`), and the mate runner's

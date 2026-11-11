@@ -288,6 +288,64 @@ function cancelCommand(run_id: string): string {
 	);
 }
 
+/**
+ * Claim a run's start (an atomic `mkdir`; exit 1: someone else has it) and
+ * record the transcript's line count as `start-line`, in the same command
+ * and so before this run attaches to the CLI: every line after it is this
+ * run's or later. `transcriptEndCommand` bounds earlier runs by it.
+ */
+function claimTurnCommand(run_id: string, transcript: string): string {
+	return (
+		`d='${RUNS_DIR}/${run_id}'; mkdir "$d/claim" 2>/dev/null || exit 1; ` +
+		`if [ -e '${transcript}' ]; then wc -l < '${transcript}'; else echo 0; fi > "$d/start-line" 2>/dev/null; true`
+	);
+}
+
+/**
+ * Where a finished run's turn ends in the transcript, as one snapshot: the
+ * run's stored `end` if it has one; otherwise the transcript's line count,
+ * then each later run's `start-line` and `turn.json` in run order. The count
+ * comes first, so a later run without a start line had not yet claimed its
+ * start when it was taken, and wrote nothing before it.
+ */
+function transcriptEndCommand(run_id: string, transcript: string): string {
+	const n = runNumber(run_id);
+	return [
+		`d='${RUNS_DIR}/${run_id}'`,
+		`if [ -f "$d/end" ]; then printf 'end=%s\\n' "$(cat "$d/end")"; exit 0; fi`,
+		`printf 'lines=%s\\n' "$(if [ -e '${transcript}' ]; then wc -l < '${transcript}'; else echo 0; fi)"`,
+		`for m in $(ls -1 '${RUNS_DIR}' 2>/dev/null | grep -E '^r[0-9]+$' | cut -c2- | sort -n); do ` +
+			`[ "$m" -gt ${n} ] || continue; ` +
+			`printf 'later=%s|%s\\n' "$(cat '${RUNS_DIR}'/r$m/start-line 2>/dev/null)" "$(head -c 4096 '${RUNS_DIR}'/r$m/turn.json 2>/dev/null)"; ` +
+			`done`
+	].join('; ');
+}
+
+/**
+ * The bound `transcriptEndCommand` reports: the stored end, or the smaller
+ * of the transcript's count and the first later run's start (its start line,
+ * or for a run from before start lines, its turn's first line less one).
+ * Undefined when nothing bounds it: the transcript could not be counted and
+ * no later run started.
+ */
+export function parseTranscriptEnd(stdout: string): number | undefined {
+	let lines: number | undefined;
+	for (const line of stdout.split('\n')) {
+		if (line.startsWith('end=')) return readInt(line.slice(4).trim());
+		if (line.startsWith('lines=')) lines = readInt(line.slice(6).trim());
+		if (!line.startsWith('later=')) continue;
+		const bar = line.indexOf('|');
+		const start =
+			readInt(line.slice(6, bar).trim()) ??
+			(() => {
+				const turn = parseTurn(parseJson(line.slice(bar + 1).trim()));
+				return turn === undefined ? undefined : turn.first_line - 1;
+			})();
+		if (start !== undefined) return lines === undefined ? start : Math.min(lines, start);
+	}
+	return lines;
+}
+
 function readInt(value: string | undefined): number | undefined {
 	if (value === undefined || !/^[0-9]{1,15}$/.test(value)) return undefined;
 	return Number(value);
@@ -731,7 +789,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		redact: string
 	): Promise<void> {
 		const dir = `${RUNS_DIR}/${run_id}`;
-		const claim = await sandbox.exec(`mkdir '${dir}/claim' 2>/dev/null`);
+		const claim = await sandbox.exec(claimTurnCommand(run_id, transcriptOf(info)));
 		if (claim.exit_code !== 0) return;
 		const claimed_at = Date.now();
 		/** Still this run's to act on; false once the next run may have started. */
@@ -844,6 +902,10 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 				session.close();
 				client.close();
 			}
+			// The CLI is gone, so the transcript's end is this turn's: keep it
+			// before a follow-up writes past it (see `turnEndLine`).
+			if (files.turn !== undefined)
+				await transcriptEnd(sandbox, info, run_id).catch(() => undefined);
 		}
 		return true;
 	}
@@ -904,30 +966,57 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		return { turn: files.turn };
 	}
 
+	/** The CLI session's transcript in the sandbox. */
+	function transcriptOf(info: SandboxInfo): string {
+		return claudeCode.transcriptPath({
+			session_id: sessionIdOf(info)!,
+			cwd: WORK_DIR,
+			config_dir: CLAUDE_CONFIG_DIR
+		});
+	}
+
+	/**
+	 * A finished run's transcript end, kept in its `end` file: read once
+	 * (see `transcriptEndCommand`), then stored if no other reader stored
+	 * one first, so every replay of the run reads the same range.
+	 */
+	async function transcriptEnd(
+		sandbox: SandboxRef,
+		info: SandboxInfo,
+		run_id: string
+	): Promise<number | undefined> {
+		const { stdout } = await sandbox.exec(transcriptEndCommand(run_id, transcriptOf(info)));
+		const end = parseTranscriptEnd(stdout);
+		if (end === undefined || stdout.startsWith('end=')) return end;
+		const stored = await sandbox
+			.exec(
+				`d='${RUNS_DIR}/${run_id}'; (set -C; printf '%s\\n' ${end} > "$d/end") 2>/dev/null; cat "$d/end"`
+			)
+			.catch(() => undefined);
+		return readInt(stored?.stdout.trim()) ?? end;
+	}
+
 	/**
 	 * The last transcript line of a finished run's turn. The result's event
 	 * id names it (the session core gives its own events the last line it
-	 * read). A run cancelled before a result was stored has none: then the
-	 * earliest later run with a turn starts after it. Later runs without a
-	 * turn (cancelled or failed in setup, or setup still running) wrote
-	 * nothing to the transcript, so they are skipped rather than taken as
-	 * the end; with no later turn at all, the transcript's current end is
-	 * still this run's.
+	 * read). A run cancelled before a result was stored has none: then its
+	 * stored `end`, which `stopRun` writes once the CLI is gone. A run
+	 * without one (an older run, or a stop that could not reach hc) takes
+	 * the bound now, in one command before anything is awaited: the
+	 * transcript's current end, cut at the first later run that claimed its
+	 * start. Later runs that never started wrote nothing to the transcript,
+	 * so they are skipped. Undefined: no bound could be taken, and nothing is
+	 * replayed rather than running on into a follow-up's turn.
 	 */
 	async function turnEndLine(
 		sandbox: SandboxRef,
+		info: SandboxInfo,
 		run_id: string,
 		files: RunFiles
 	): Promise<number | undefined> {
 		const stored = parseSessionEventId(files.result?.event_id);
 		if (stored !== undefined) return stored.line;
-		const latest = await latestRunId(sandbox);
-		const last = latest === undefined ? 0 : runNumber(latest);
-		for (let n = runNumber(run_id) + 1; n <= last; n++) {
-			const later = await readRun(sandbox, `r${n}`);
-			if (later.turn !== undefined) return later.turn.first_line - 1;
-		}
-		return undefined;
+		return transcriptEnd(sandbox, info, run_id);
 	}
 
 	/**
@@ -946,11 +1035,12 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		after: string | undefined
 	): Promise<number | undefined> {
 		if (files.turn === undefined || sessionIdOf(info) === undefined) return undefined;
-		const end = await turnEndLine(sandbox, run_id, files);
 		const events: MissionEvent[] = [];
 		let client: HcClient | undefined;
 		let last: number;
 		try {
+			const end = await turnEndLine(sandbox, info, run_id, files);
+			if (end === undefined) throw new Error('no transcript bound for this run');
 			client = await connectHc(sandbox);
 			const session = newSession(info, redact, (event) => void events.push(event), { after });
 			last = await session.replay(client, files.turn, end);
