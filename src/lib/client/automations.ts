@@ -9,7 +9,10 @@ import type {
 	AutomationRunOutcome,
 	AutomationTrigger
 } from '#lib/automations.js';
+import type { AgentChoice } from '#lib/client/agent-choice.js';
 import type { StatusKey } from '#lib/client/format.js';
+import type { LoopLaunch } from '#lib/client/loop.js';
+import type { RalphHarness } from '#lib/ralph.js';
 
 const DAY_WORDS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const DAY_ABBREVIATIONS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -206,4 +209,36 @@ export function browserTimeZone(): string {
 	} catch {
 		return 'UTC';
 	}
+}
+
+/** What a new automation's loop works on, as the dialog offers it. */
+export type AutomationTarget = 'build' | 'plan' | 'bead';
+
+/** The `launch` of a new automation: a loop, with any model and effort. */
+export type AutomationLoopLaunch = { operation: 'loop' } & LoopLaunch & AgentChoice;
+
+/**
+ * The launch a new automation saves. The model and effort go inside it, not
+ * beside it as on a launch by hand, because the automation stores its launch
+ * as the mission payload each fire repeats (`dispatch/payload.ts`).
+ *
+ * @param target - Build the plan, plan it, or build one bead.
+ * @param settings - The bead (for `bead`), the iteration limit and the agent CLI.
+ * @param choice - The viewer's model and effort, already narrowed to what the
+ *   server offers and the runner takes (`agent_choice.forLaunch`).
+ */
+export function automationLaunch(
+	target: AutomationTarget,
+	settings: { bead: string; max_iterations: number; harness?: RalphHarness },
+	choice: AgentChoice
+): AutomationLoopLaunch {
+	return {
+		operation: 'loop',
+		mode: target === 'plan' ? 'plan' : 'build',
+		max_iterations: settings.max_iterations,
+		...(target === 'bead' ? { issue_id: settings.bead.trim() } : {}),
+		...(settings.harness === undefined ? {} : { harness: settings.harness }),
+		...(choice.model === undefined ? {} : { model: choice.model }),
+		...(choice.effort === undefined ? {} : { effort: choice.effort })
+	};
 }

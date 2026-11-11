@@ -50,6 +50,7 @@ import type { Todo, TodoComment, TodoStatus } from '#lib/server/todos/store.js';
 import type { RouteIssue } from '#lib/todos/route-state.js';
 import type { AgentChoice } from '#lib/client/agent-choice.js';
 import type { LoopLaunch } from '#lib/client/loop.js';
+import type { AutomationLoopLaunch } from '#lib/client/automations.js';
 import type {
 	MateChat,
 	MateChatDetail,
@@ -620,7 +621,7 @@ export const api = {
 			cron: string;
 			time_zone: string;
 			overlap: AutomationOverlap;
-			launch: { operation: 'loop' } & LoopLaunch;
+			launch: AutomationLoopLaunch;
 		},
 		init?: RequestInitLike
 	) {

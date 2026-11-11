@@ -1,6 +1,7 @@
 import { createClient } from '@libsql/client';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { IssueDetail, Project } from '#lib/types.js';
+import { EFFORT_NOT_OFFERED_MESSAGE, MODEL_NOT_OFFERED_MESSAGE } from '../dispatch/agent-choice.js';
 import { initStateSchema } from '../state/db.js';
 import {
 	automationUpcoming,
@@ -30,7 +31,8 @@ beforeEach(async () => {
 		resolveProject: async (id) => (id === PROJECT.id ? PROJECT : undefined),
 		getIssue: async (_project, issue_id) =>
 			issue_id === 'bw-1' ? ({ id: 'bw-1' } as IssueDetail) : undefined,
-		now: () => NOW
+		now: () => NOW,
+		agent_choices: { models: ['opus'], efforts: ['high'] }
 	};
 });
 
@@ -118,6 +120,47 @@ describe('createAutomation', () => {
 				deps
 			)
 		).toMatchObject({ ok: false, code: 'not_found', message: 'issue not found' });
+		expect(await store.list()).toEqual([]);
+	});
+
+	it('keeps an offered model and effort in the payload each fire repeats', async () => {
+		const result = await createAutomation(
+			request({
+				launch: {
+					operation: 'loop',
+					mode: 'plan',
+					max_iterations: 3,
+					model: 'opus',
+					effort: 'high'
+				}
+			}),
+			CREATOR,
+			deps
+		);
+		expect(result.ok && result.automation.payload).toEqual({
+			operation: 'loop',
+			mode: 'plan',
+			max_iterations: 3,
+			model: 'opus',
+			effort: 'high'
+		});
+	});
+
+	it('refuses a model or effort the operator does not offer', async () => {
+		expect(
+			await createAutomation(
+				request({ launch: { operation: 'loop', mode: 'plan', max_iterations: 3, model: 'haiku' } }),
+				CREATOR,
+				deps
+			)
+		).toEqual({ ok: false, code: 'bad_request', message: MODEL_NOT_OFFERED_MESSAGE });
+		expect(
+			await createAutomation(
+				request({ launch: { operation: 'loop', mode: 'plan', max_iterations: 3, effort: 'max' } }),
+				CREATOR,
+				deps
+			)
+		).toEqual({ ok: false, code: 'bad_request', message: EFFORT_NOT_OFFERED_MESSAGE });
 		expect(await store.list()).toEqual([]);
 	});
 

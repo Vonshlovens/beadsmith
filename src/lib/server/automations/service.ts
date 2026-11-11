@@ -11,6 +11,11 @@ import {
 	type AutomationView
 } from '#lib/automations.js';
 import type { DispatchProviderId, IssueDetail, Project } from '#lib/types.js';
+import {
+	agentChoiceProblem,
+	configuredAgentChoices,
+	type AgentChoices
+} from '../dispatch/agent-choice.js';
 import { launchPayload, payloadIssueId } from '../dispatch/payload.js';
 import { publicLoop } from '../dispatch/service.js';
 import type { LaunchBody } from '../validation.js';
@@ -118,6 +123,8 @@ export interface CreateAutomationDeps {
 	resolveProject(id: string): Promise<Project | undefined>;
 	getIssue(project: Project, issue_id: string): Promise<IssueDetail | undefined>;
 	now(): Date;
+	/** The operator's models and efforts; the server environment's by default. */
+	agent_choices?: AgentChoices;
 }
 
 export type CreateAutomationResult =
@@ -126,9 +133,11 @@ export type CreateAutomationResult =
 
 /**
  * Save an automation for `creator`, an admin's account. The schedule, the
- * project and the bead are checked now so a typo is refused at once rather
- * than recorded as a failed run every night; dispatch policy (armed, the
- * project's allow, the runner) is checked at each fire, as for a launch.
+ * project, the bead and the model and effort are checked now so a typo is
+ * refused at once rather than recorded as a failed run every night; dispatch
+ * policy (armed, the project's allow, the runner) is checked at each fire, as
+ * for a launch, and so is the model and effort again, since the operator can
+ * withdraw one after the automation is saved.
  */
 export async function createAutomation(
 	input: CreateAutomationRequest,
@@ -137,6 +146,9 @@ export async function createAutomation(
 ): Promise<CreateAutomationResult> {
 	const schedule = checkSchedule(input.cron, input.time_zone, deps.now());
 	if (!schedule.ok) return { ok: false, code: 'bad_request', message: schedule.message };
+
+	const choice = agentChoiceProblem(input.launch, deps.agent_choices ?? configuredAgentChoices());
+	if (choice !== undefined) return { ok: false, code: 'bad_request', message: choice };
 
 	const project = await deps.resolveProject(input.project_id);
 	if (project === undefined) return { ok: false, code: 'not_found', message: 'project not found' };

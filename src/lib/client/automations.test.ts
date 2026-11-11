@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	automationLaunch,
 	automationOutcomeKey,
 	describeSchedule,
 	formatSlot,
@@ -68,5 +69,36 @@ describe('run outcomes and times', () => {
 		expect(relativeUntil('2026-11-14T12:00:00Z', now)).toBe('in 3d');
 		expect(relativeUntil('2026-11-11T11:59:00Z', now)).toBe('due');
 		expect(relativeUntil(undefined, now)).toBe('—');
+	});
+});
+
+describe('automationLaunch', () => {
+	it('puts the model and effort inside the loop launch', () => {
+		expect(
+			automationLaunch(
+				'build',
+				{ bead: '', max_iterations: 20, harness: 'codex' },
+				{ model: 'opus', effort: 'high' }
+			)
+		).toEqual({
+			operation: 'loop',
+			mode: 'build',
+			max_iterations: 20,
+			harness: 'codex',
+			model: 'opus',
+			effort: 'high'
+		});
+	});
+
+	it('names the bead only for a one-bead build, and leaves defaults out', () => {
+		expect(automationLaunch('bead', { bead: ' bw-1 ', max_iterations: 10 }, {})).toEqual({
+			operation: 'loop',
+			mode: 'build',
+			max_iterations: 10,
+			issue_id: 'bw-1'
+		});
+		expect(
+			automationLaunch('plan', { bead: 'bw-1', max_iterations: 5 }, { effort: 'low' })
+		).toEqual({ operation: 'loop', mode: 'plan', max_iterations: 5, effort: 'low' });
 	});
 });

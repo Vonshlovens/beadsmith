@@ -2,9 +2,11 @@
 	/**
 	 * Schedule a ralph loop (ADR-0019 rule 7): what it builds, when, and what
 	 * to do when the previous run is still going. The loop fields are the loop
-	 * dialog's (presets, agent CLI, iteration limit); the schedule previews its
-	 * next fire times from the server, which owns the cron parser. Saving
-	 * lands on the automation's page. The server checks everything again.
+	 * dialog's (presets, agent CLI, iteration limit, model and effort); the
+	 * model and effort ride inside the saved launch so every fire repeats
+	 * them. The schedule previews its next fire times from the server, which
+	 * owns the cron parser. Saving lands on the automation's page. The server
+	 * checks everything again.
 	 */
 	import { goto } from '$app/navigation';
 	import { untrack } from 'svelte';
@@ -14,13 +16,18 @@
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import RunnerSelect from '#lib/components/runner-select.svelte';
 	import SelectField from '#lib/components/select-field.svelte';
+	import AgentChoiceSelect from '#lib/components/agent-choice-select.svelte';
+	import { agent_choice } from '#lib/client/agent-choice.svelte.js';
+	import { launchTakesChoice } from '#lib/client/agent-choice.js';
 	import { ApiError, api, errorMessage } from '#lib/client/api.js';
 	import { run_place } from '#lib/client/agent-runner.svelte.js';
 	import {
+		automationLaunch,
 		browserTimeZone,
 		describeSchedule,
 		formatSlot,
-		SCHEDULE_PRESETS
+		SCHEDULE_PRESETS,
+		type AutomationTarget
 	} from '#lib/client/automations.js';
 	import { iterationLimitError, loopAvailability, loopPresets } from '#lib/client/loop.js';
 	import { projectList, statusSnapshot } from '#lib/client/projects.svelte.js';
@@ -36,9 +43,8 @@
 
 	let { open = $bindable(false), project_id }: Props = $props();
 
-	type WhatId = 'build' | 'plan' | 'bead';
 	const [BUILD, PLAN] = loopPresets('project');
-	const WHAT: { id: WhatId; label: string; hint: string; max_iterations: number }[] = [
+	const WHAT: { id: AutomationTarget; label: string; hint: string; max_iterations: number }[] = [
 		{ id: 'build', label: BUILD!.label, hint: BUILD!.hint, max_iterations: BUILD!.max_iterations },
 		{ id: 'plan', label: PLAN!.label, hint: PLAN!.hint, max_iterations: PLAN!.max_iterations },
 		{
@@ -63,7 +69,7 @@
 	const project_items = $derived(projects.map((p) => ({ value: p.id, label: p.name })));
 
 	let project = $state('');
-	let what = $state<WhatId>('build');
+	let what = $state<AutomationTarget>('build');
 	let bead = $state('');
 	let harness = $state<HarnessChoice>('default');
 	let iterations = $state('20');
@@ -98,6 +104,11 @@
 			projects.find((p) => p.id === project)?.allow,
 			run_place.launchField().provider
 		)
+	);
+	// As in the loop dialog: only when the runner runs loops and can choose a
+	// model, since the server refuses a choice anywhere else.
+	const choice_takes = $derived(
+		availability.enabled && launchTakesChoice(statusSnapshot(), run_place.launchField().provider)
 	);
 	const can_save = $derived(
 		!submitting &&
@@ -169,7 +180,7 @@
 		};
 	});
 
-	function pick(next: WhatId) {
+	function pick(next: AutomationTarget) {
 		what = next;
 		iterations = String(WHAT.find((entry) => entry.id === next)!.max_iterations);
 	}
@@ -187,13 +198,15 @@
 				cron: cron.trim(),
 				time_zone: time_zone.trim(),
 				overlap,
-				launch: {
-					operation: 'loop',
-					mode: what === 'plan' ? 'plan' : 'build',
-					max_iterations: Number(iterations.trim()),
-					...(what === 'bead' ? { issue_id: bead.trim() } : {}),
-					...(harness === 'default' ? {} : { harness })
-				}
+				launch: automationLaunch(
+					what,
+					{
+						bead,
+						max_iterations: Number(iterations.trim()),
+						...(harness === 'default' ? {} : { harness })
+					},
+					agent_choice.forLaunch(statusSnapshot(), run_place.launchField().provider)
+				)
 			});
 			open = false;
 			toast.success('Automation saved', {
@@ -305,6 +318,11 @@
 							{#if limit_error}<span class="err" id="au-limit-err">{limit_error}</span>{/if}
 						</label>
 					</div>
+					{#if choice_takes}
+						<div class="mt-3">
+							<AgentChoiceSelect takes={choice_takes} disabled={submitting} />
+						</div>
+					{/if}
 				</fieldset>
 
 				<fieldset class="group mt-4">
