@@ -397,6 +397,11 @@ first persistent Claude Code guest; [ADR-0021](../specs/decisions/0021-hc-termin
 moves it into an hc terminal. The host runner uses signed requests over
 tailnet HTTPS; the web integration must enforce admin and chat ownership.
 Model and signing credentials remain on the host. The guest proxy admits only
-the Anthropic message surface, with no administration endpoints. This is a
+the Anthropic message surface, with no administration endpoints. The
+model pool behind it (Underclass) is administered from the console by admins
+only: Beadsmith calls a fixed allowlist of its admin API server-side with a
+token read from a file, which never reaches the browser or `state.db`, and
+never handles subscription credentials
+([ADR-0022](../specs/decisions/0022-underclass-model-gateway.md)). This is a
 sanitized MissionEvent stream, not raw terminal relay. Dolt access, repository
 workers and production app activation are separate acceptance gates.

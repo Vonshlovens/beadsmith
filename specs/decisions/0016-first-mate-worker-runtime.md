@@ -101,3 +101,8 @@ browser acceptance.
 process with an interactive Claude Code in an hc terminal, keeps the SSH key
 and model credential on the host as above, and builds the guest's `hc` from
 the version and hash pinned in the repository.
+
+[ADR-0022](0022-underclass-model-gateway.md) records Underclass as the model
+gateway: it stays on loopback, this filter stays the guest's only door and
+keeps injecting the key (widened per harness, never to the UI or admin API),
+and the console reads Underclass's admin API server-side.
