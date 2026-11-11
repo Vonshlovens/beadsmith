@@ -26,6 +26,9 @@ pub const TITLE_BAR_H: f32 = 44.0;
 /// shows (type, assignee) leave the table, so the title keeps its room: the
 /// design standards ask for identifying fields first at narrow widths.
 const ROOMY_W: f32 = 1280.0;
+/// The table's Blockers column, shared with its skeleton: the narrowest that
+/// shows the whole heading, so titles keep what is left at the minimum window.
+const BLOCKERS_W: f32 = 84.0;
 
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let th = Theme::new(cx.system_dark());
@@ -595,12 +598,9 @@ fn status_tabs(s: &State, th: &Theme) -> El {
     let t = &th.t;
     let issues = s.issues.ready();
     let mut tabs = row().key("status-filter").role("radiogroup").label("Status").focus_group().w_full().px(10.0);
-    for (i, (label, status)) in STATUS_FILTERS.iter().enumerate() {
+    for (i, (label, filter)) in STATUS_FILTERS.iter().enumerate() {
         let on = s.status_filter == i;
-        let count = issues.map(|all| match status {
-            Some(status) => all.iter().filter(|issue| issue.status == *status).count(),
-            None => all.len(),
-        });
+        let count = issues.map(|all| all.iter().filter(|issue| filter.admits(issue)).count());
         let name = match count {
             Some(n) => format!("{label}, {n}"),
             None => (*label).to_string(),
@@ -682,6 +682,9 @@ fn issue_table(s: &State, th: &Theme, roomy: bool) -> El {
     .column(TableColumn::new("id", "ID").width(80.0).min(56.0).sortable())
     .column(TableColumn::new("title", "Title").flex(3.0).min(160.0).sortable())
     .column(TableColumn::new("status", "Status").width(108.0).min(96.0).sortable())
+    // Beside the status it qualifies: an open issue with a number here is
+    // open but not ready.
+    .column(TableColumn::new("blockers", "Blockers").width(BLOCKERS_W).min(64.0).sortable())
     .column(TableColumn::new("priority", "Pri").width(46.0).min(44.0).sortable());
     if roomy {
         table = table
@@ -698,6 +701,14 @@ fn issue_table(s: &State, th: &Theme, roomy: bool) -> El {
                 "title" if issue.status == "closed" => Cell::text(&issue.title).color(t.tx_dim),
                 "title" => Cell::text(&issue.title),
                 "status" => Cell::el(status_word(&issue.status, look.get(&issue.status), xs)),
+                // Most issues wait on nothing, and a column of zeros would
+                // bury the ones that do: only a count that blocks is drawn.
+                "blockers" if issue.blocker_count == 0 => Cell::text(""),
+                // Closed work is not held up by what it once waited on.
+                "blockers" if issue.status == "closed" => {
+                    Cell::text(issue.blocker_count.to_string()).mono().color(t.tx_dim)
+                }
+                "blockers" => Cell::text(issue.blocker_count.to_string()).mono().color(t.amber_tx),
                 "priority" => Cell::text(format!("P{}", issue.priority))
                     .mono()
                     .color(priority[issue.priority.clamp(0, 3) as usize]),
@@ -764,7 +775,13 @@ fn detail_pane(s: &State, th: &Theme, roomy: bool) -> El {
         (Some(_), Load::Failed(f)) => failure_state(*f, s.is_loading(), th),
         (Some(_), _) => detail_skeleton(th),
     };
-    let pane = col().key("detail").w(if roomy { 380.0 } else { 320.0 }).h_full().child(inner);
+    let mut pane = col().key("detail").w(if roomy { 380.0 } else { 320.0 }).h_full();
+    // Above every state of the pane, so an issue that failed to load or has
+    // left the server still shows the way back to the one that linked to it.
+    if let Some(bar) = trail_bar(s, th) {
+        pane = pane.child(bar);
+    }
+    let pane = pane.child(col().w_full().grow(1.0).min_h(0.0).child(inner));
     // Enter hands plain keys to this pane (`Pane::Detail`); nothing in it
     // holds Rune's focus then, so the pane draws the ring itself.
     if s.pane == Pane::Detail && s.issue.is_some() {
@@ -772,6 +789,49 @@ fn detail_pane(s: &State, th: &Theme, roomy: bool) -> El {
     } else {
         pane
     }
+}
+
+/// Back and forward along the dependency links followed to get here
+/// (`app::Trail`), each named by the issue it leads to. Drawn only once a
+/// link has been followed: an issue chosen from the list has no trail.
+fn trail_bar(s: &State, th: &Theme) -> Option<El> {
+    if s.trail.is_empty() {
+        return None;
+    }
+    let t = &th.t;
+    let step = |to: &str, back: bool| {
+        let (key, words, command, chord) = if back {
+            ("trail-back", format!("Back to {to}"), Command::TrailBack, "⌘[")
+        } else {
+            ("trail-forward", format!("Forward to {to}"), Command::TrailForward, "⌘]")
+        };
+        let arrow = text(if back { "←" } else { "→" }).font(th.ty.sm).color(t.tx_mid).a11y_hidden();
+        let id = text(to.to_string()).font(th.ty.xs).color(t.tx_mid).a11y_hidden();
+        let button = row()
+            .key(key)
+            .role("button")
+            .help(format!("{words} ({})", keys::key_label(chord)))
+            .label(words)
+            .focusable(true)
+            .focus_ring(2.0, 1.0, t.em_400)
+            .h(24.0)
+            .px(8.0)
+            .gap(6.0)
+            .center_y()
+            .radius(th.k.radius.sm)
+            .hover(th.k.c.hover)
+            .on_press_tx(move |s: &mut State, tx: &mut Tx| keys::perform(s, command, tx));
+        if back { button.child(arrow).child(id) } else { button.child(id).child(arrow) }
+    };
+    let mut bar = row().key("trail").role("navigation").label("Followed links").w_full().h(36.0).px(12.0).center_y();
+    if let Some(to) = s.trail.back.last() {
+        bar = bar.child(step(to, true));
+    }
+    bar = bar.child(el().grow(1.0));
+    if let Some(to) = s.trail.forward.last() {
+        bar = bar.child(step(to, false));
+    }
+    Some(col().w_full().child(bar).child(rule_h(th)))
 }
 
 fn detail(d: &IssueDetail, th: &Theme) -> El {
@@ -883,25 +943,35 @@ fn refs(items: &[IssueRef], prefix: &str, th: &Theme) -> El {
         let look = th.status(r.status.as_deref().unwrap_or(""));
         let title = r.title.clone().unwrap_or_else(|| "(not found)".into());
         let status = r.status.as_deref().unwrap_or("missing").replace('_', " ");
-        list = list.child(
-            row()
-                .key(format!("{prefix}-{}", r.id))
-                .role("link")
-                .label(format!("{}, {status}: {title}", r.id))
-                .focusable(true)
-                .focus_ring(2.0, 1.0, t.em_400)
-                .w_full()
-                .px(8.0)
-                .h(30.0)
-                .gap(8.0)
-                .center_y()
-                .radius(th.k.radius.sm)
-                .hover(th.k.c.hover)
-                .on_press(move |s: &mut State| s.select_issue(&id))
-                .child(bead(look))
-                .child(text(r.id.clone()).font(th.ty.xs).color(t.tx_dim))
-                .child(text(title).font(th.ty.sm).color(t.tx).truncate().grow(1.0).min_w(0.0)),
-        );
+        // Only a `blocks` link holds work back, and most links are that
+        // type, so the others say what they are instead.
+        let kind = r.dep_type.as_deref().filter(|kind| *kind != "blocks");
+        let label = match kind {
+            Some(kind) => format!("{}, {status}, {kind}: {title}", r.id),
+            None => format!("{}, {status}: {title}", r.id),
+        };
+        let mut link = row()
+            .key(format!("{prefix}-{}", r.id))
+            .role("link")
+            .label(label)
+            .focusable(true)
+            .focus_ring(2.0, 1.0, t.em_400)
+            .w_full()
+            .px(8.0)
+            .h(30.0)
+            .gap(8.0)
+            .center_y()
+            .radius(th.k.radius.sm)
+            .hover(th.k.c.hover)
+            // Through the trail, so the reader can come back.
+            .on_press_tx(move |s: &mut State, tx: &mut Tx| keys::follow_link(s, &id, tx))
+            .child(bead(look))
+            .child(text(r.id.clone()).font(th.ty.xs).color(t.tx_dim))
+            .child(text(title).font(th.ty.sm).color(t.tx).truncate().grow(1.0).min_w(0.0));
+        if let Some(kind) = kind {
+            link = link.child(text(kind.to_string()).font(th.ty.xs).color(t.tx_dim).a11y_hidden());
+        }
+        list = list.child(link);
     }
     list
 }
@@ -1085,7 +1155,7 @@ fn projects_skeleton(th: &Theme) -> El {
 /// The issue table's header and rows, in its column widths.
 fn table_skeleton(th: &Theme, roomy: bool) -> El {
     let cell = |w: f32, bar: El| row().w(w).px(10.0).center_y().child(bar);
-    let line = |n: usize, h: f32, bars: [f32; 5], title: f32, thick: f32| {
+    let line = |n: usize, h: f32, bars: [f32; 6], title: f32, thick: f32| {
         let mut r = row()
             .key(format!("row-{n}"))
             .w_full()
@@ -1094,16 +1164,23 @@ fn table_skeleton(th: &Theme, roomy: bool) -> El {
             .child(cell(80.0, bar(th, bars[0], thick)))
             .child(row().grow(1.0).min_w(0.0).px(10.0).center_y().child(flex_bar(th, title, thick)))
             .child(cell(108.0, bar(th, bars[1], thick)))
-            .child(cell(46.0, bar(th, bars[2], thick)));
+            .child(cell(BLOCKERS_W, bar(th, bars[2], thick)))
+            .child(cell(46.0, bar(th, bars[3], thick)));
         if roomy {
-            r = r.child(cell(72.0, bar(th, bars[3], thick))).child(cell(84.0, bar(th, bars[3], thick)));
+            r = r.child(cell(72.0, bar(th, bars[4], thick))).child(cell(84.0, bar(th, bars[4], thick)));
         }
-        col().w_full().child(r.child(cell(76.0, bar(th, bars[4], thick)))).child(rule_h(th).a11y_hidden())
+        col().w_full().child(r.child(cell(76.0, bar(th, bars[5], thick)))).child(rule_h(th).a11y_hidden())
     };
-    let mut table =
-        pending("issues-loading", "Loading issues").child(line(0, 30.0, [18.0, 44.0, 22.0, 34.0, 52.0], 0.12, 8.0));
+    let mut table = pending("issues-loading", "Loading issues").child(line(
+        0,
+        30.0,
+        [18.0, 44.0, 52.0, 22.0, 34.0, 52.0],
+        0.12,
+        8.0,
+    ));
     for (n, title) in RAGGED.into_iter().enumerate() {
-        table = table.child(line(n + 1, 32.0, [40.0, 64.0, 18.0, 40.0, 44.0], title, 10.0));
+        // Few issues are blocked, so the rows leave that column empty.
+        table = table.child(line(n + 1, 32.0, [40.0, 64.0, 0.0, 18.0, 40.0, 44.0], title, 10.0));
     }
     table
 }

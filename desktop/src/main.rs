@@ -129,7 +129,7 @@ fn empty_project_scene(s: &mut State) {
 /// Filters that hide every issue.
 fn no_matches_scene(s: &mut State) {
     sample_scene(s);
-    s.status_filter = 4; // Closed
+    s.status_filter = 5; // Closed
     s.search.replace_text("gasket");
     s.refilter();
 }
@@ -197,6 +197,43 @@ fn connection_invalid_scene(s: &mut State) {
     form.error = Some(FormError::Port);
 }
 
+/// The Ready tab: open issues nothing blocks, ordered as the web app's Ready
+/// deck is (`listReadyIssues`: priority, then the most recently updated).
+fn ready_scene(s: &mut State) {
+    sample_scene(s);
+    s.status_filter = 1; // Ready
+    s.sort("updated", rune_kit::SortDir::Descending);
+    s.sort("priority", rune_kit::SortDir::Ascending);
+    s.issue = Some("lh-2".into());
+    s.table.select("lh-2");
+    s.detail = Load::Ready(Sample.issue("lighthouse", "lh-2").ok().flatten());
+}
+
+/// Two dependency links followed from `lh-1` and one step back: the trail
+/// bar offers both directions.
+fn trail_scene(s: &mut State) {
+    sample_scene(s);
+    s.trail.back = vec!["lh-1".into()];
+    s.trail.forward = vec!["lh-5".into()];
+    s.issue = Some("lh-4".into());
+    s.table.select("lh-4");
+    s.detail = Load::Ready(Sample.issue("lighthouse", "lh-4").ok().flatten());
+    s.pane = Pane::Detail;
+}
+
+/// A link to an issue that is not in the project: its pane says so, and the
+/// trail is the way back.
+fn trail_gone_scene(s: &mut State) {
+    s.projects = Load::Ready(Sample.projects().unwrap_or_default());
+    s.project = Some("pantry".into());
+    s.issues = Load::Ready(Sample.issues("pantry").unwrap_or_default());
+    s.refilter();
+    s.trail.back = vec!["pa-3".into()];
+    s.issue = Some("pa-7".into());
+    s.table.select("pa-7");
+    s.detail = Load::Ready(None);
+}
+
 /// Enter on an issue: plain keys now scroll it, and the pane wears the ring.
 fn reading_scene(s: &mut State) {
     sample_scene(s);
@@ -249,6 +286,9 @@ fn main() {
             ("connection-failed", connection_failed_scene),
             ("connection-ok", connection_ok_scene),
             ("connection-invalid", connection_invalid_scene),
+            ("ready", ready_scene),
+            ("trail", trail_scene),
+            ("trail-gone", trail_gone_scene),
             ("reading", reading_scene),
             ("shortcuts", shortcuts_scene),
         ],

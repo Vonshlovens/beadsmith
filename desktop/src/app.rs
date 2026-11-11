@@ -52,18 +52,65 @@ impl Stale {
 /// The issue table's element key.
 pub const TABLE_KEY: &str = "issues";
 
-/// The status filter above the issue table.
-pub const STATUS_FILTERS: [(&str, Option<&str>); 5] = [
-    ("All", None),
-    ("Open", Some("open")),
-    ("In progress", Some("in_progress")),
-    ("Blocked", Some("blocked")),
-    ("Closed", Some("closed")),
+/// What one tab of the filter above the issue table lets through.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Filter {
+    All,
+    /// Open with nothing blocking it (`IssueSummary::is_ready`).
+    Ready,
+    /// A lifecycle status, as stored.
+    Status(&'static str),
+}
+
+impl Filter {
+    pub fn admits(self, issue: &IssueSummary) -> bool {
+        match self {
+            Filter::All => true,
+            Filter::Ready => issue.is_ready(),
+            Filter::Status(status) => issue.status == status,
+        }
+    }
+}
+
+/// The filter above the issue table. Ready sits before the statuses because
+/// it is the question a list of work is opened to answer: what can be picked
+/// up now. It is a subset of Open, not a status of its own.
+pub const STATUS_FILTERS: [(&str, Filter); 6] = [
+    ("All", Filter::All),
+    ("Ready", Filter::Ready),
+    ("Open", Filter::Status("open")),
+    ("In progress", Filter::Status("in_progress")),
+    ("Blocked", Filter::Status("blocked")),
+    ("Closed", Filter::Status("closed")),
 ];
 
 /// The columns `s` steps the sort through: the ones the table shows at every
 /// window width, so the header always names the sort the key chose.
-pub const SORT_CYCLE: [&str; 5] = ["id", "title", "status", "priority", "updated"];
+pub const SORT_CYCLE: [&str; 6] = ["id", "title", "status", "blockers", "priority", "updated"];
+
+/// The issues walked through by following dependency links, so a reader who
+/// follows a blocker to its own blocker can come back the way they came, as
+/// in a browser. Only links add to it: choosing an issue in the list starts
+/// over (`State::select_issue`), since stepping through rows is not a path
+/// anyone wants to retrace.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Trail {
+    /// Issues to go back to, the most recent last.
+    pub back: Vec<String>,
+    /// Issues gone back from, the next one forward last.
+    pub forward: Vec<String>,
+}
+
+impl Trail {
+    pub fn is_empty(&self) -> bool {
+        self.back.is_empty() && self.forward.is_empty()
+    }
+
+    fn clear(&mut self) {
+        self.back.clear();
+        self.forward.clear();
+    }
+}
 
 /// Which pane plain keys drive. Rune can move keyboard focus to a text field
 /// but not to an arbitrary element, so "the detail pane has the keyboard" is
@@ -146,6 +193,7 @@ pub struct State {
     pub status_filter: usize,
     pub table: TableState,
     pub issue: Option<String>,
+    pub trail: Trail,
     pub detail: Load<Option<IssueDetail>>,
     pub stale: Stale,
     pub pane: Pane,
@@ -199,6 +247,7 @@ impl State {
             // reveal and `keys` scroll the same element.
             table: TableState::new().key(TABLE_KEY),
             issue: None,
+            trail: Trail::default(),
             detail: Load::Idle,
             stale: Stale::default(),
             pane: Pane::List,
@@ -245,6 +294,7 @@ impl State {
             self.visible.clear();
             self.table.clear_selection();
             self.issue = None;
+            self.trail.clear();
             self.pane = Pane::List;
             self.detail = Load::Idle;
             self.detail_req.cancel();
@@ -261,7 +311,53 @@ impl State {
         });
     }
 
+    /// Choose an issue from the list. Choosing another one ends the trail of
+    /// followed links; asking again for the one on screen (a refresh, a
+    /// retry) keeps it.
     pub fn select_issue(&mut self, id: &str) {
+        if self.issue.as_deref() != Some(id) {
+            self.trail.clear();
+        }
+        self.show_issue(id);
+    }
+
+    /// Follow a dependency link from the issue on screen, remembering the
+    /// way back. Like a link in a browser, it drops whatever was forward.
+    pub fn follow_link(&mut self, id: &str) {
+        if self.issue.as_deref() == Some(id) {
+            return;
+        }
+        if let Some(from) = self.issue.clone() {
+            self.trail.back.push(from);
+        }
+        self.trail.forward.clear();
+        self.show_issue(id);
+    }
+
+    /// Back to the issue the last link was followed from. Returns it, for
+    /// the caller to scroll the list to; `None` when there is no way back.
+    pub fn go_back(&mut self) -> Option<String> {
+        let to = self.trail.back.pop()?;
+        if let Some(from) = self.issue.clone() {
+            self.trail.forward.push(from);
+        }
+        self.show_issue(&to);
+        Some(to)
+    }
+
+    /// Forward again along a trail `go_back` walked back.
+    pub fn go_forward(&mut self) -> Option<String> {
+        let to = self.trail.forward.pop()?;
+        if let Some(from) = self.issue.clone() {
+            self.trail.back.push(from);
+        }
+        self.show_issue(&to);
+        Some(to)
+    }
+
+    /// Put an issue in the detail pane and ask the server for it. The list
+    /// selects it too, even when the filters hide its row.
+    fn show_issue(&mut self, id: &str) {
         let Some(db) = self.project.clone() else { return };
         if self.issue.as_deref() != Some(id) {
             self.issue = Some(id.to_string());
@@ -326,6 +422,7 @@ impl State {
     pub fn clear_selection(&mut self) {
         self.table.clear_selection();
         self.issue = None;
+        self.trail.clear();
         self.pane = Pane::List;
         self.detail = Load::Idle;
         self.detail_req.cancel();
@@ -493,6 +590,7 @@ impl State {
         self.visible.clear();
         self.table.clear_selection();
         self.issue = None;
+        self.trail.clear();
         self.pane = Pane::List;
         self.detail = Load::Idle;
         self.stale = Stale::default();
@@ -592,7 +690,7 @@ impl State {
     /// Recompute `visible` from the search text and status filter.
     pub fn refilter(&mut self) {
         let query = self.search.text.trim().to_lowercase();
-        let status = STATUS_FILTERS.get(self.status_filter).and_then(|(_, s)| *s);
+        let filter = STATUS_FILTERS.get(self.status_filter).map_or(Filter::All, |(_, f)| *f);
         let Some(issues) = self.issues.ready() else {
             self.visible.clear();
             return;
@@ -600,7 +698,7 @@ impl State {
         self.visible = issues
             .iter()
             .enumerate()
-            .filter(|(_, i)| status.is_none_or(|s| i.status == s))
+            .filter(|(_, i)| filter.admits(i))
             .filter(|(_, i)| {
                 query.is_empty()
                     || i.title.to_lowercase().contains(&query)
@@ -632,6 +730,7 @@ impl State {
                 "id" => rune_kit::natural_cmp(&a.id, &b.id),
                 "title" => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
                 "status" => status_rank(&a.status).cmp(&status_rank(&b.status)),
+                "blockers" => a.blocker_count.cmp(&b.blocker_count),
                 "priority" => a.priority.cmp(&b.priority),
                 "type" => a.issue_type.cmp(&b.issue_type),
                 "assignee" => a.assignee.cmp(&b.assignee),
@@ -811,7 +910,7 @@ mod tests {
     fn filters_combine_status_and_search() {
         let mut s = loaded();
         assert_eq!(s.visible.len(), 9);
-        s.status_filter = 1; // Open
+        s.status_filter = 2; // Open
         s.refilter();
         assert!(s.visible.iter().all(|&i| s.issues.ready().unwrap()[i].status == "open"));
         s.search.replace_text("gasket");
@@ -822,6 +921,92 @@ mod tests {
         s.status_filter = 0;
         s.refilter();
         assert_eq!(s.visible.len(), 2, "labels match, case-insensitively");
+    }
+
+    #[test]
+    fn the_ready_filter_keeps_open_issues_nothing_blocks() {
+        let mut s = loaded();
+        assert_eq!(STATUS_FILTERS[1], ("Ready", Filter::Ready));
+        s.status_filter = 1;
+        s.refilter();
+        let mut ready = ids(&s);
+        ready.sort();
+        assert_eq!(ready, ["lh-2", "lh-3", "lh-5", "lh-7"]);
+        // A subset of Open: lh-6 is open but waits on lh-2.
+        s.status_filter = 2;
+        s.refilter();
+        assert!(ids(&s).contains(&"lh-6".to_string()) && ids(&s).len() == ready.len() + 1);
+        // Ready combines with the text filter like any status.
+        s.status_filter = 1;
+        s.search.replace_text("gasket");
+        s.refilter();
+        assert_eq!(ids(&s), ["lh-5"]);
+    }
+
+    #[test]
+    fn sorting_by_blockers_groups_the_blocked_issues() {
+        let mut s = loaded();
+        s.sort("blockers", SortDir::Descending);
+        let mut blocked: Vec<_> = ids(&s)[..3].to_vec();
+        blocked.sort();
+        assert_eq!(blocked, ["lh-1", "lh-4", "lh-6"]);
+        assert_eq!(s.visible_issue(3).unwrap().blocker_count, 0);
+    }
+
+    #[test]
+    fn following_links_leaves_a_trail_to_walk_back_and_forward() {
+        let mut s = loaded();
+        s.select_issue("lh-1");
+        s.follow_link("lh-4");
+        s.follow_link("lh-5");
+        assert_eq!(s.issue.as_deref(), Some("lh-5"));
+        assert!(s.table.is_selected("lh-5"), "the list follows the pane");
+        assert_eq!((s.trail.back.as_slice(), s.trail.forward.len()), (&["lh-1".to_string(), "lh-4".into()][..], 0));
+
+        assert_eq!(s.go_back().as_deref(), Some("lh-4"));
+        assert_eq!(s.go_back().as_deref(), Some("lh-1"));
+        assert_eq!(s.go_back(), None, "the start of the trail");
+        assert_eq!(s.issue.as_deref(), Some("lh-1"));
+        assert_eq!(s.go_forward().as_deref(), Some("lh-4"));
+        assert_eq!((s.trail.back.len(), s.trail.forward.len()), (1, 1));
+
+        // A link followed from the middle drops what was forward.
+        s.follow_link("lh-1");
+        assert_eq!(s.go_forward(), None);
+        assert_eq!(s.trail.back, ["lh-1", "lh-4"]);
+        s.follow_link("lh-1");
+        assert_eq!(s.trail.back.len(), 2, "a link to the issue on screen goes nowhere");
+
+        // A refresh re-reads the same issue and keeps the trail.
+        s.refresh();
+        assert_eq!(s.trail.back.len(), 2);
+        // Choosing in the list, clearing, or leaving the project ends it.
+        s.select_issue("lh-2");
+        assert!(s.trail.is_empty());
+        s.follow_link("lh-6");
+        s.move_selection(Step::Next);
+        assert!(s.trail.is_empty());
+        s.select_issue("lh-6");
+        s.follow_link("lh-2");
+        s.clear_selection();
+        assert!(s.trail.is_empty());
+        s.select_issue("lh-6");
+        s.follow_link("lh-2");
+        s.select_project("pantry");
+        assert!(s.trail.is_empty());
+    }
+
+    #[test]
+    fn a_link_can_be_followed_out_of_the_filtered_rows_and_back() {
+        let mut s = loaded();
+        s.status_filter = 1; // Ready
+        s.refilter();
+        s.select_issue("lh-3");
+        s.follow_link("lh-9"); // closed, so not among the ready rows
+        assert_eq!((s.issue.as_deref(), s.selected_row()), (Some("lh-9"), None));
+        assert_eq!(s.detail, Load::Loading);
+        assert_eq!(s.go_back().as_deref(), Some("lh-3"));
+        assert!(s.selected_row().is_some());
     }
 
     #[test]
@@ -964,7 +1149,7 @@ mod tests {
     #[test]
     fn clearing_filters_restores_every_issue() {
         let mut s = loaded();
-        s.status_filter = 4;
+        s.status_filter = 5; // Closed
         s.search.replace_text("no such issue");
         s.refilter();
         assert!(s.visible.is_empty());
@@ -1015,7 +1200,7 @@ mod tests {
         assert_eq!(s.move_selection(Step::Next), Some(after));
 
         // Filtered: only matching rows are stops.
-        s.status_filter = 1; // Open
+        s.status_filter = 2; // Open
         s.refilter();
         let open = ids(&s);
         assert!(open.len() > 1 && open.len() < sorted.len());

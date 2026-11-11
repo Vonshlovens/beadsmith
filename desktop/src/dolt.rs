@@ -17,6 +17,35 @@ use crate::settings::{self, Lookup, SecretStore};
 const SYSTEM_DATABASES: [&str; 4] = ["information_schema", "mysql", "performance_schema", "sys"];
 const ISSUE_LIMIT: usize = 1000;
 
+/// The per-issue counts both issue reads select, as subqueries of the one
+/// statement: a list of a thousand issues costs no query per row.
+///
+/// `blocker_count` is the web app's Ready rule turned into a number. Its
+/// `listReadyIssues` (`src/lib/server/dolt/client.ts`) keeps an open issue
+/// when no row matches `d.type = 'blocks' AND (blocker.id IS NULL OR
+/// blocker.status <> 'closed')`; this counts the rows of that same predicate,
+/// so "ready" is `status = 'open'` with a count of zero
+/// (`IssueSummary::is_ready`) and the table can also say how many.
+///
+/// The two `?` are bound by [`blocker_params`], ahead of any parameter in the
+/// statement's `WHERE`.
+fn count_columns(db: &str) -> String {
+    format!(
+        "(SELECT COUNT(*) FROM {db}.dependencies d WHERE d.issue_id = i.id) AS dependency_count,
+         (SELECT COUNT(*) FROM {db}.dependencies d WHERE d.depends_on_issue_id = i.id) AS dependent_count,
+         (SELECT COUNT(*) FROM {db}.comments c WHERE c.issue_id = i.id) AS comment_count,
+         (SELECT COUNT(*) FROM {db}.dependencies d
+            LEFT JOIN {db}.issues blocker ON blocker.id = d.depends_on_issue_id
+           WHERE d.issue_id = i.id AND d.type = ?
+             AND (blocker.id IS NULL OR blocker.status <> ?)) AS blocker_count"
+    )
+}
+
+/// The values for the placeholders in [`count_columns`].
+fn blocker_params() -> Vec<Value> {
+    vec![Value::from("blocks"), Value::from("closed")]
+}
+
 /// The server to read and the account to read it as. Where these come from
 /// (environment, settings file) is `settings.rs`'s business.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -194,14 +223,13 @@ impl Source for Dolt {
         let db = quote(database)?;
         let sql = format!(
             "SELECT i.id, i.title, i.status, i.priority, i.issue_type, i.assignee, i.updated_at,
-                    (SELECT COUNT(*) FROM {db}.dependencies d WHERE d.issue_id = i.id) AS dependency_count,
-                    (SELECT COUNT(*) FROM {db}.dependencies d WHERE d.depends_on_issue_id = i.id) AS dependent_count,
-                    (SELECT COUNT(*) FROM {db}.comments c WHERE c.issue_id = i.id) AS comment_count
+                    {counts}
              FROM {db}.issues i
              ORDER BY i.updated_at DESC
-             LIMIT {ISSUE_LIMIT}"
+             LIMIT {ISSUE_LIMIT}",
+            counts = count_columns(&db)
         );
-        let rows = self.select(&sql, vec![])?;
+        let rows = self.select(&sql, blocker_params())?;
         let mut issues: Vec<IssueSummary> = rows.iter().map(summary).filter(|i| !i.id.is_empty()).collect();
         let ids: Vec<String> = issues.iter().map(|i| i.id.clone()).collect();
         let mut labels = self.labels_for(&db, &ids)?;
@@ -216,12 +244,13 @@ impl Source for Dolt {
         let sql = format!(
             "SELECT i.id, i.title, i.description, i.design, i.acceptance_criteria, i.notes,
                     i.status, i.priority, i.issue_type, i.assignee, i.created_at, i.created_by, i.updated_at,
-                    (SELECT COUNT(*) FROM {db}.dependencies d WHERE d.issue_id = i.id) AS dependency_count,
-                    (SELECT COUNT(*) FROM {db}.dependencies d WHERE d.depends_on_issue_id = i.id) AS dependent_count,
-                    (SELECT COUNT(*) FROM {db}.comments c WHERE c.issue_id = i.id) AS comment_count
-             FROM {db}.issues i WHERE i.id = ? LIMIT 1"
+                    {counts}
+             FROM {db}.issues i WHERE i.id = ? LIMIT 1",
+            counts = count_columns(&db)
         );
-        let rows = self.select(&sql, vec![Value::from(id)])?;
+        let mut params = blocker_params();
+        params.push(Value::from(id));
+        let rows = self.select(&sql, params)?;
         let Some(row) = rows.first() else { return Ok(None) };
         let mut s = summary(row);
         s.labels = self.labels_for(&db, &[id.to_string()])?.remove(id).unwrap_or_default();
@@ -288,6 +317,7 @@ fn summary(r: &Row) -> IssueSummary {
         dependency_count: number(r, "dependency_count").max(0) as u64,
         dependent_count: number(r, "dependent_count").max(0) as u64,
         comment_count: number(r, "comment_count").max(0) as u64,
+        blocker_count: number(r, "blocker_count").max(0) as u64,
     }
 }
 
@@ -387,7 +417,43 @@ mod live {
         assert_eq!(d.summary.id, linked.id);
         assert_eq!(d.dependencies.len() as u64, linked.dependency_count);
         assert_eq!(d.comments.len() as u64, linked.comment_count);
+        assert_eq!(d.summary.blocker_count, linked.blocker_count, "the list and the issue count blockers alike");
         assert!(dolt.issue(&p.name, "no-such-issue").unwrap().is_none());
+    }
+
+    /// The web app's Ready statement (`listReadyIssues` in
+    /// `src/lib/server/dolt/client.ts`), run as written, must pick the issues
+    /// this client calls ready from its blocker counts.
+    #[test]
+    #[ignore = "needs a Dolt server"]
+    fn ready_matches_the_web_apps_query() {
+        let dolt = from_env(|_| {});
+        let mut compared = 0;
+        for p in dolt.projects().expect("projects") {
+            let db = quote(&p.name).unwrap();
+            let sql = format!(
+                "SELECT i.id FROM {db}.issues i
+                 WHERE i.status = ?
+                   AND NOT EXISTS (
+                     SELECT 1 FROM {db}.dependencies d
+                     LEFT JOIN {db}.issues blocker ON blocker.id = d.depends_on_issue_id
+                     WHERE d.issue_id = i.id
+                       AND d.type = ?
+                       AND (blocker.id IS NULL OR blocker.status <> ?)
+                   )"
+            );
+            let params = vec![Value::from("open"), Value::from("blocks"), Value::from("closed")];
+            let mut web: Vec<String> =
+                dolt.select(&sql, params).expect("web query").iter().filter_map(|r| text(r, "id")).collect();
+            let issues = dolt.issues(&p.name).expect("issues");
+            assert!(issues.len() < ISSUE_LIMIT, "{}: the comparison needs the whole project", p.name);
+            let mut ours: Vec<String> = issues.iter().filter(|i| i.is_ready()).map(|i| i.id.clone()).collect();
+            web.sort();
+            ours.sort();
+            assert_eq!(ours, web, "{}", p.name);
+            compared += issues.len();
+        }
+        assert!(compared > 0, "the server has issues to compare");
     }
 
     #[test]

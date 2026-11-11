@@ -55,6 +55,21 @@ pub struct IssueSummary {
     pub dependency_count: u64,
     pub dependent_count: u64,
     pub comment_count: u64,
+    /// How many issues still block this one: its `blocks` dependencies whose
+    /// target is not closed, or is missing. A missing blocker counts, as it
+    /// does in the web app's Ready query: nothing says that work is done.
+    pub blocker_count: u64,
+}
+
+impl IssueSummary {
+    /// Ready to be picked up: open, with nothing blocking it. The rule of
+    /// `listReadyIssues` in `src/lib/server/dolt/client.ts` (the web app's
+    /// Ready deck), applied to rows that already carry their blocker count.
+    /// An issue someone has started, or one marked blocked by hand, is not
+    /// ready whatever its dependencies say.
+    pub fn is_ready(&self) -> bool {
+        self.status == "open" && self.blocker_count == 0
+    }
 }
 
 /// A related issue: a dependency or a dependent.

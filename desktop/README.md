@@ -17,9 +17,14 @@ The decision record is
   and last-activity summaries.
 - Shows a project's issues in a sortable, virtualised table, filtered by
   status and by text (title, id, label or assignee).
+- Answers "what can be picked up now?": the Ready filter keeps the open
+  issues nothing blocks, by the rule of the web app's Ready deck, and the
+  Blockers column says how many unfinished issues each of the others waits
+  on. See [Ready and blockers](#ready-and-blockers).
 - Shows the selected issue: Markdown description, design, acceptance
-  criteria and notes, labels, dependencies both ways (click one to open it)
-  and comments.
+  criteria and notes, labels, dependencies both ways and comments. A
+  dependency is a link: follow it, and the ones after it, then come back the
+  way you came with the arrows above the issue or `⌘[` and `⌘]`.
 - Works from the keyboard: every action has a key, listed under
   [Keyboard](#keyboard) and in the app on `?`.
 - Refreshes on the Refresh button above the table, `r` or `⌘R`. A refresh
@@ -33,8 +38,31 @@ The decision record is
   in the macOS Keychain, set from a connection screen that can test them
   first.
 
-It reads only. Dispatch, accounts, the console, backups, the board, Ready,
-todos and the command palette are web-only.
+It reads only. Dispatch, accounts, the console, backups, the board, the
+Ready deck across projects, todos and the command palette are web-only.
+
+## Ready and blockers
+
+An issue is ready when its status is `open` and none of its `blocks`
+dependencies points at an issue that is not closed. A blocker that is not in
+the project counts as unfinished, because nothing says it is done. Work in
+progress and issues marked `blocked` by hand are never ready. This is the
+web app's rule, `listReadyIssues` in
+[`src/lib/server/dolt/client.ts`](../src/lib/server/dolt/client.ts); the
+desktop app selects the same predicate as a count per issue
+(`count_columns` in [`src/dolt.rs`](src/dolt.rs)), inside the one statement
+that lists a project, so Ready costs no query of its own and none per row.
+A test that needs a server (`ready_matches_the_web_apps_query`) runs the web
+app's statement beside it and compares the answers.
+
+The Blocked filter is still the stored status. The Blockers column is the
+computed side: an open issue with a number there is open but not ready.
+Dependencies of other types (`related`, `parent-child`, `discovered-from`)
+link issues without blocking; the issue pane names the type beside them.
+
+Following a dependency link leaves a trail, shown as back and forward
+arrows above the issue. Choosing an issue in the list starts a new one: the
+trail is for a chain of blockers, not for every row passed on the way.
 
 ## How it looks
 
@@ -76,6 +104,8 @@ is Ctrl off macOS. Plain keys never fire while you type in a field.
 | `k` / `↑` / `⇧Space` | Page up                                                                        |
 | `Home` / `End`       | Top or bottom                                                                  |
 | `Tab`                | Step through its links                                                         |
+| `⌘[`                 | Back to the issue a link was followed from                                     |
+| `⌘]`                 | Forward again                                                                  |
 | `Esc`                | Back: leave the field or the issue, then clear the filters, then the selection |
 | `⌘1–9`               | Switch to that project in the sidebar                                          |
 | `r` / `⌘R`           | Refresh                                                                        |
@@ -244,14 +274,15 @@ cargo run -- --tree tree.json --scene filtered     # the element tree as JSON
 ```
 
 Scenes fill state directly, so they need no server. `--list-scenes` names
-them all: the data (`sample`, `filtered`), every pane while it loads
+them all: the data (`sample`, `filtered`, `ready`), every pane while it loads
 (`loading`, `loading-issues`, `loading-issue`), the empty and failed states
 (`no-projects`, `empty-project`, `no-matches`, `issue-gone`, `unconfigured`,
 `unreachable`, `auth-rejected`, `credential-unavailable`, `issues-failed`,
 `issue-failed`), a failed refresh over loaded data (`stale`), the
 connection screen (`connection` for a first launch, then `connection-*`),
-an issue being read from the keyboard (`reading`) and the shortcuts list
-(`shortcuts`).
+an issue being read from the keyboard (`reading`), one reached by
+following dependency links (`trail`, and `trail-gone` for a link to an issue
+that is not there) and the shortcuts list (`shortcuts`).
 A headless run reads no environment, settings file
 or keychain, so an image depends on its scene alone. The screenshots above
 are `--snap docs/sample-dark.png --scene sample`, the same with
@@ -321,5 +352,5 @@ pin is in [`Cargo.toml`](Cargo.toml).
   accounts and the project gate (see the ADR's alternatives).
 - A release: downloadable builds, Developer ID signing and notarization.
   Bundles for Linux and Windows.
-- The board, Ready, the activity feed, search across projects, and any
-  writes.
+- The board, the Ready deck across projects, the activity feed, search
+  across projects, and any writes.

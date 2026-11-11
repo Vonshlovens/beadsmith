@@ -47,6 +47,10 @@ pub enum Command {
     Shortcuts,
     /// Scroll the issue being read.
     Scroll(Scroll),
+    /// Back to the issue a dependency link was followed from (`app::Trail`).
+    TrailBack,
+    /// Forward again after `TrailBack`.
+    TrailForward,
     CloseWindow,
     Quit,
 }
@@ -73,6 +77,9 @@ pub fn command(key: &KeyEvent, pane: Pane, typing: bool) -> Option<Command> {
             'r' => Some(Command::Refresh),
             ',' => Some(Command::Connection),
             '1'..='9' => Some(Command::Project(c as usize - '1' as usize)),
+            // The browser's and Finder's history keys.
+            '[' => Some(Command::TrailBack),
+            ']' => Some(Command::TrailForward),
             // macOS closes and quits from its own menus (`App::standard_menus`
             // and the app menu); elsewhere nothing would answer these.
             'w' if !cfg!(target_os = "macos") => Some(Command::CloseWindow),
@@ -176,10 +183,30 @@ pub fn run(s: &mut State, command: Command, tx: &mut Tx) -> bool {
         Command::Scroll(Scroll::PageUp) => tx.scroll_page(DETAIL_ANCHOR, -1),
         Command::Scroll(Scroll::Top) => tx.scroll_to_y(DETAIL_ANCHOR, 0.0),
         Command::Scroll(Scroll::Bottom) => tx.scroll_to_bottom_instant(DETAIL_ANCHOR),
+        Command::TrailBack | Command::TrailForward => {
+            let moved = if command == Command::TrailBack { s.go_back() } else { s.go_forward() };
+            let Some(id) = moved else { return false };
+            reveal(s, &id, tx);
+        }
         Command::CloseWindow => tx.close_window(),
         Command::Quit => tx.quit(),
     }
     true
+}
+
+/// Follow a dependency link in the issue being read (`State::follow_link`).
+pub fn follow_link(s: &mut State, id: &str, tx: &mut Tx) {
+    s.follow_link(id);
+    reveal(s, id, tx);
+}
+
+/// Bring an issue's row into view after the detail pane moved to it without
+/// the list: by a link, or along the trail. The filters may hide the row,
+/// and then the list stays where it is.
+fn reveal(s: &State, id: &str, tx: &mut Tx) {
+    if s.selected_row().is_some() {
+        tx.scroll_into_view_in(TABLE_KEY, id.to_string());
+    }
 }
 
 /// `run` for a caller with no key to pass on: a menu item or a button.
@@ -243,6 +270,9 @@ pub fn menu() -> Vec<MenuItem<State>> {
         MenuItem::new("Previous Issue", |s, tx| perform(s, Command::Select(Step::Previous), tx)).menu("Go"),
         MenuItem::new("Read Issue", |s, tx| perform(s, Command::Open, tx)).menu("Go"),
         MenuItem::new("Back", |s, tx| perform(s, Command::Back, tx)).menu("Go"),
+        MenuItem::separator().menu("Go"),
+        keyed("Back Along Links", |s, tx| perform(s, Command::TrailBack, tx), "cmd+[").menu("Go"),
+        keyed("Forward Along Links", |s, tx| perform(s, Command::TrailForward, tx), "cmd+]").menu("Go"),
         MenuItem::new("Keyboard Shortcuts", |s, tx| perform(s, Command::Shortcuts, tx)).menu("Help"),
     ]
 }
@@ -272,6 +302,8 @@ pub const SHORTCUTS: &[(&str, &[Shortcut])] = &[
             (&["k", "↑", "⇧Space"], "Page up"),
             (&["Home", "End"], "Top or bottom"),
             (&["Tab"], "Step through its links"),
+            (&["⌘["], "Back to the issue a link was followed from"),
+            (&["⌘]"], "Forward again"),
         ],
     ),
     (
@@ -349,6 +381,8 @@ mod tests {
         assert_eq!(typing(cmd('1')), Some(Command::Project(0)));
         assert_eq!(typing(cmd('9')), Some(Command::Project(8)));
         assert_eq!(typing(cmd('0')), None);
+        assert_eq!(typing(cmd('[')), Some(Command::TrailBack));
+        assert_eq!(typing(cmd(']')), Some(Command::TrailForward));
         assert_eq!(typing(Key::Escape.into()), Some(Command::Back));
         for key in [text("j"), text("r"), text("/"), text("?"), Key::Down.into(), Key::Enter.into()] {
             assert_eq!(typing(key), None);
@@ -363,6 +397,7 @@ mod tests {
     fn only_moving_and_scrolling_repeat_while_held() {
         assert!(Command::Select(Step::Next).repeats() && Command::Scroll(Scroll::PageDown).repeats());
         assert!(!Command::Refresh.repeats() && !Command::Open.repeats() && !Command::Back.repeats());
+        assert!(!Command::TrailBack.repeats() && !Command::TrailForward.repeats());
     }
 
     #[test]

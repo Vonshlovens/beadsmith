@@ -75,8 +75,24 @@ fn rows(database: &str) -> Option<&'static [Row]> {
     }
 }
 
-/// `(from, to)`: `from` depends on `to` and is blocked by it until `to` closes.
-const DEPENDENCIES: &[(&str, &str)] = &[("lh-4", "lh-5"), ("lh-1", "lh-4"), ("lh-3", "lh-9")];
+/// `(from, to, type)`: `from` depends on `to`. A `blocks` dependency holds
+/// `from` back until `to` closes; other types only link the two. Between them
+/// these cover every case Ready turns on: an open blocker (`lh-4`, `lh-1`,
+/// and `lh-6`, which is open but not ready), a closed one (`lh-3` is ready
+/// again), a link that does not block (`lh-7`), and a blocker that is not in
+/// the project, which blocks because nothing says it is done (`pa-3`).
+const DEPENDENCIES: &[(&str, &str, &str)] = &[
+    ("lh-4", "lh-5", "blocks"),
+    ("lh-1", "lh-4", "blocks"),
+    ("lh-3", "lh-9", "blocks"),
+    ("lh-6", "lh-2", "blocks"),
+    ("lh-7", "lh-6", "related"),
+    ("pa-3", "pa-7", "blocks"),
+];
+
+fn find(id: &str) -> Option<&'static Row> {
+    LIGHTHOUSE.iter().chain(PANTRY).find(|r| r.id == id)
+}
 
 fn summary(r: &Row) -> IssueSummary {
     IssueSummary {
@@ -88,9 +104,15 @@ fn summary(r: &Row) -> IssueSummary {
         assignee: r.assignee.map(Into::into),
         labels: r.labels.iter().map(|l| l.to_string()).collect(),
         updated_at: r.updated.into(),
-        dependency_count: DEPENDENCIES.iter().filter(|(from, _)| *from == r.id).count() as u64,
-        dependent_count: DEPENDENCIES.iter().filter(|(_, to)| *to == r.id).count() as u64,
+        dependency_count: DEPENDENCIES.iter().filter(|(from, ..)| *from == r.id).count() as u64,
+        dependent_count: DEPENDENCIES.iter().filter(|(_, to, _)| *to == r.id).count() as u64,
         comment_count: comments(r.id).len() as u64,
+        blocker_count: DEPENDENCIES
+            .iter()
+            .filter(|(from, to, kind)| {
+                *from == r.id && *kind == "blocks" && find(to).is_none_or(|blocker| blocker.status != "closed")
+            })
+            .count() as u64,
     }
 }
 
@@ -113,7 +135,7 @@ fn comments(id: &str) -> Vec<Comment> {
 }
 
 fn reference(id: &str, dep_type: &str) -> IssueRef {
-    let found = LIGHTHOUSE.iter().chain(PANTRY).find(|r| r.id == id);
+    let found = find(id);
     IssueRef {
         id: id.into(),
         title: found.map(|r| r.title.into()),
@@ -163,9 +185,9 @@ impl Source for Sample {
     fn issue(&self, database: &str, id: &str) -> Result<Option<IssueDetail>, Failure> {
         let Some(r) = rows(database).unwrap_or_default().iter().find(|r| r.id == id) else { return Ok(None) };
         let dependencies =
-            DEPENDENCIES.iter().filter(|(from, _)| *from == id).map(|(_, to)| reference(to, "blocks")).collect();
+            DEPENDENCIES.iter().filter(|(from, ..)| *from == id).map(|(_, to, kind)| reference(to, kind)).collect();
         let dependents =
-            DEPENDENCIES.iter().filter(|(_, to)| *to == id).map(|(from, _)| reference(from, "blocks")).collect();
+            DEPENDENCIES.iter().filter(|(_, to, _)| *to == id).map(|(from, _, kind)| reference(from, kind)).collect();
         let lh1 = id == "lh-1";
         Ok(Some(IssueDetail {
             summary: summary(r),
@@ -205,5 +227,24 @@ mod tests {
         assert_eq!(d.dependencies[0].id, "lh-5");
         assert_eq!(d.dependents[0].id, "lh-1");
         assert!(Sample.issue("lighthouse", "nope").unwrap().is_none());
+    }
+
+    #[test]
+    fn sample_issues_cover_ready_and_blocked() {
+        let issues = Sample.issues("lighthouse").unwrap();
+        let of = |id: &str| issues.iter().find(|i| i.id == id).unwrap();
+        let ready: Vec<_> = issues.iter().filter(|i| i.is_ready()).map(|i| i.id.as_str()).collect();
+        assert_eq!(ready, ["lh-2", "lh-3", "lh-5", "lh-7"]);
+        assert_eq!((of("lh-6").status.as_str(), of("lh-6").blocker_count), ("open", 1), "open, but not ready");
+        assert_eq!((of("lh-3").dependency_count, of("lh-3").blocker_count), (1, 0), "a closed blocker lets go");
+        assert_eq!((of("lh-7").dependency_count, of("lh-7").blocker_count), (1, 0), "a related link never blocks");
+        assert_eq!(of("lh-1").blocker_count, 1, "counted on work in progress too");
+        assert!(!of("lh-1").is_ready() && !of("lh-4").is_ready(), "only open issues are ready");
+
+        let pantry = Sample.issues("pantry").unwrap();
+        let pa3 = pantry.iter().find(|i| i.id == "pa-3").unwrap();
+        assert_eq!(pa3.blocker_count, 1, "a blocker that is not in the project still blocks");
+        let d = Sample.issue("pantry", "pa-3").unwrap().unwrap();
+        assert_eq!((d.dependencies[0].id.as_str(), &d.dependencies[0].status), ("pa-7", &None));
     }
 }
