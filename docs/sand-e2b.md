@@ -447,6 +447,10 @@ pinned version. The checkout must already be a ralph project
    time, after which E2B destroys it.
 5. Cancel marks the run cancelled, asks ralph to stop now, and ends the loop
    terminal. A loop takes no follow-up.
+6. A steer note from the thread goes to ralph's `POST /v1/runs/<name>/steer`
+   and Stop after iteration to its `/stop` with `graceful: true`, both over
+   the same channel; ralph reads them between iterations. Neither reaches a
+   loop still in setup or already ended (`409`).
 
 A loop still running at `BDX_E2B_MAX_RUN_MINUTES` is destroyed with its
 sandbox and reported failed; anything it had not pushed is lost. Keep the
@@ -471,7 +475,14 @@ and [`ralph-transport.test.ts`](../src/lib/server/e2b/ralph-transport.test.ts)):
 5. Start another and cancel it mid-iteration: the thread says cancelled,
    `ralph show <name>` in the sandbox (before it goes) shows an operator
    stop, and `hc ls --all` shows `ralph-loop` finished.
-6. In the sandbox, `tr '\0' '\n' < /proc/<ralph's pid>/environ` lists the
+6. Start a `build` loop with `max_iterations` 3 and send a steer note from
+   the thread during iteration 1: the thread shows it as a steer turn, and
+   when iteration 2 starts the live stream shows the note and
+   `ralph show <name>` lists it consumed. Then press Stop after iteration:
+   the button reads "Stopping after this iteration" (also after a reload),
+   iteration 2 finishes, iteration 3 never starts, and the mission ends
+   cancelled with an operator stop.
+7. In the sandbox, `tr '\0' '\n' < /proc/<ralph's pid>/environ` lists the
    placeholders and `BEADS_DOLT_*`, and no real model key or GitHub token.
 
 ## How a chat runs
