@@ -6,13 +6,11 @@
 use std::borrow::Cow;
 
 use rune::TextEdit;
-use rune::{Color, Cx, El, ScrollSpec, Tx, col, el, row, text};
-use rune_kit::{
-    Button, ButtonVariant, Cell, Dialog, Field, Kit, Markdown, Spinner, Table, TableColumn, TableStyle, TextInput,
-};
+use rune::{Color, Cx, El, LoopSpec, ScrollSpec, Tx, col, el, row, text};
+use rune_kit::{Button, ButtonVariant, Cell, Dialog, Field, Kit, Markdown, Table, TableColumn, TableStyle, TextInput};
 
 use crate::app::{Check, Connection, Load, STATUS_FILTERS, State};
-use crate::model::{IssueDetail, IssueRef, Project};
+use crate::model::{Failure, IssueDetail, IssueRef, Project};
 use crate::theme::{StatusLook, Theme};
 
 /// The web app's `--rail-w`.
@@ -30,18 +28,18 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let th = Theme::new(cx.system_dark());
     // Unknown until the first layout; the window opens wider than `ROOMY_W`.
     let roomy = cx.layout_size("shell").is_none_or(|size| size[0] >= ROOMY_W);
-    let panes = row()
-        .key("panes")
-        .w_full()
-        .grow(1.0)
-        .min_h(0.0)
-        .child(sidebar(s, &th))
-        .child(rule_v(&th))
-        .child(main_pane(s, &th, roomy))
-        .child(rule_v(&th))
-        .child(detail_pane(s, &th, roomy));
-    let body =
-        col().key("shell").w_full().h_full().fill(th.t.bg).child(title_bar(&th, cx.titlebar_inset())).child(panes);
+    let panes = row().key("panes").w_full().grow(1.0).min_h(0.0).child(sidebar(s, &th)).child(rule_v(&th));
+    // With no project list there is no table or issue to frame, so the
+    // reason takes the room of both panes instead of repeating in each.
+    let panes = match server_state(s, &th) {
+        Some(state) => panes.child(state),
+        None => panes.child(main_pane(s, &th, roomy)).child(rule_v(&th)).child(detail_pane(s, &th, roomy)),
+    };
+    let mut body = col().key("shell").w_full().h_full().fill(th.t.bg).child(title_bar(&th, cx.titlebar_inset()));
+    if let Some(failure) = s.stale.failure() {
+        body = body.child(stale_banner(s, failure, &th));
+    }
+    let body = body.child(panes);
     let mut layer = Vec::new();
     if let Some(form) = &s.connection {
         connection_dialog(s, form, &th.k, &mut layer);
@@ -90,6 +88,82 @@ fn brand_mark(th: &Theme) -> El {
         .child(bead(th.t.tx_hi))
 }
 
+/// Shown when a refresh failed over data that is still on screen
+/// (`State::stale`): the window keeps what it had and says it may be out of
+/// date, with the way to recover. It sits above every pane because all of
+/// them may be stale. `.banner-warn` in `src/app.css`.
+fn stale_banner(s: &State, failure: Failure, th: &Theme) -> El {
+    let (k, t) = (&th.k, &th.t);
+    let words = col()
+        .grow(1.0)
+        .min_w(0.0)
+        .child(text("Refresh failed. Showing the last loaded data.").font(th.ty.sm_strong).color(t.tx_hi).truncate())
+        .child(text(failure.message()).font(th.ty.xs).color(t.tx_mid).wrap());
+    let mut banner = row()
+        .key("stale")
+        .role("status")
+        .label(format!("Refresh failed. Showing the last loaded data. {}", failure.message()))
+        .w_full()
+        .pl(20.0)
+        .pr(16.0)
+        .py(8.0)
+        .gap(12.0)
+        .center_y()
+        .fill(t.s2)
+        .child(el().size(7.0, 7.0).radius(3.5).fill(t.amber).a11y_hidden())
+        .child(words);
+    for action in failure_actions(failure, s.is_loading(), k) {
+        banner = banner.child(action);
+    }
+    col().w_full().child(banner).child(rule_h(th))
+}
+
+/// The buttons that recover from `failure`, the likelier fix first and
+/// filled. An unreachable server is usually cured by waiting, so Retry
+/// leads; a rejected or missing password by the settings, so they lead.
+fn failure_actions(failure: Failure, busy: bool, k: &Kit) -> Vec<El> {
+    let settings_first = !matches!(failure, Failure::Unreachable | Failure::Unknown);
+    let lead = |first: bool| if first { ButtonVariant::Contrast } else { ButtonVariant::Neutral };
+    let settings = Button::new("Connection settings")
+        .variant(lead(settings_first))
+        .on_press(|s: &mut State| s.open_connection())
+        .build(k)
+        .key("open-connection");
+    if !failure.retryable() {
+        return vec![settings];
+    }
+    let retry = Button::new(if busy { "Retrying" } else { "Retry" })
+        .variant(if busy { ButtonVariant::Loading } else { lead(!settings_first) })
+        .on_press(|s: &mut State| s.refresh())
+        .build(k)
+        .key("retry");
+    if settings_first { vec![settings, retry] } else { vec![retry, settings] }
+}
+
+/// What fills the window beside the sidebar when the server gave no
+/// projects to show: why it failed, or that it has none.
+fn server_state(s: &State, th: &Theme) -> Option<El> {
+    let state = match &s.projects {
+        Load::Failed(f) => failure_state(*f, s.is_loading(), th),
+        Load::Ready(projects) if projects.is_empty() => {
+            let refresh = Button::new(if s.is_loading() { "Refreshing" } else { "Refresh" })
+                .variant(if s.is_loading() { ButtonVariant::Loading } else { ButtonVariant::Neutral })
+                .on_press(|s: &mut State| s.refresh())
+                .build(&th.k)
+                .key("refresh");
+            state(
+                th,
+                false,
+                "No projects on this server",
+                "Each Beads project is a database on the Dolt server. Create one with bd init, then refresh.",
+                vec![refresh],
+            )
+        }
+        _ => return None,
+    };
+    Some(col().key("main").grow(1.0).min_w(0.0).h_full().child(state))
+}
+
 // ---------------------------------------------------------------------------------------------
 // Sidebar
 
@@ -107,7 +181,7 @@ fn sidebar(s: &State, th: &Theme) -> El {
         .child(text(count).font(th.ty.xs).color(t.tx_dim));
 
     let list = match &s.projects {
-        Load::Ready(projects) if projects.is_empty() => note(th, "No projects on this server."),
+        Load::Ready(projects) if projects.is_empty() => note(th, "No projects."),
         Load::Ready(projects) => {
             let mut list = col().key("projects").px(12.0).gap(1.0);
             for p in projects {
@@ -115,8 +189,9 @@ fn sidebar(s: &State, th: &Theme) -> El {
             }
             list.scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0)
         }
-        Load::Failed(f) => note(th, f.message()),
-        Load::Idle | Load::Loading => loading(th, "Finding projects"),
+        // The pane beside this one says why and what to do.
+        Load::Failed(_) => note(th, "Projects appear here once the server answers."),
+        Load::Idle | Load::Loading => projects_skeleton(th),
     };
 
     // The server's name is the way into its settings: the one place the
@@ -202,6 +277,8 @@ fn project_row(p: &Project, selected: bool, th: &Theme) -> El {
 
 fn connection_color(s: &State, th: &Theme) -> Color {
     match s.projects {
+        // Connected once, but the last refresh did not get through.
+        Load::Ready(_) if s.stale.failure().is_some() => th.t.amber,
         Load::Ready(_) => th.t.mint,
         Load::Failed(_) => th.t.em_500,
         _ => th.t.tx_dim,
@@ -410,7 +487,7 @@ fn main_pane(s: &State, th: &Theme, roomy: bool) -> El {
                 .w_full()
                 .center_y()
                 .gap(10.0)
-                .child(text(title).font(th.ty.md_strong).color(t.tx_hi).truncate().min_w(0.0))
+                .child(text(title.clone()).font(th.ty.md_strong).color(t.tx_hi).truncate().min_w(0.0))
                 .child(text(count).font(th.ty.xs).color(t.tx_dim))
                 .child(el().grow(1.0))
                 .child(refresh),
@@ -418,11 +495,16 @@ fn main_pane(s: &State, th: &Theme, roomy: bool) -> El {
         .child(search.w_full());
 
     let content = match &s.issues {
-        Load::Ready(_) if s.visible.is_empty() => note(th, "No issues match."),
+        Load::Ready(all) if all.is_empty() => {
+            state(th, false, "No issues yet", &format!("Issues filed in {title} with bd appear here."), Vec::new())
+        }
+        Load::Ready(_) if s.visible.is_empty() => no_matches(s, th),
         Load::Ready(_) => issue_table(s, th, roomy),
-        Load::Failed(f) => note(th, f.message()),
-        Load::Loading => loading(th, "Loading issues"),
-        Load::Idle => note(th, if s.projects.ready().is_some() { "Choose a project." } else { "" }),
+        Load::Failed(f) => failure_state(*f, s.is_loading(), th),
+        Load::Loading => table_skeleton(th, roomy),
+        // The project list is still on its way: the table it will fill.
+        Load::Idle if s.projects.ready().is_none() => table_skeleton(th, roomy),
+        Load::Idle => note(th, "Choose a project."),
     };
 
     col()
@@ -480,6 +562,24 @@ fn status_tabs(s: &State, th: &Theme) -> El {
         );
     }
     tabs
+}
+
+/// Filters that hide every issue: say which ones, and offer the way out.
+fn no_matches(s: &State, th: &Theme) -> El {
+    let query = s.search.text.trim();
+    let status = STATUS_FILTERS.get(s.status_filter).filter(|_| s.status_filter != 0).map(|(l, _)| l.to_lowercase());
+    let what = match (query.is_empty(), status) {
+        (false, Some(status)) => format!("Nothing {status} matches “{query}”."),
+        (false, None) => format!("Nothing matches “{query}”."),
+        (true, Some(status)) => format!("No issues are {status}."),
+        (true, None) => String::new(),
+    };
+    let clear = Button::new("Clear filters")
+        .variant(ButtonVariant::Neutral)
+        .on_press(|s: &mut State| s.clear_filters())
+        .build(&th.k)
+        .key("clear-filters");
+    state(th, false, "No matching issues", &what, vec![clear])
 }
 
 fn issue_table(s: &State, th: &Theme, roomy: bool) -> El {
@@ -579,9 +679,15 @@ fn detail_pane(s: &State, th: &Theme, roomy: bool) -> El {
     let inner = match (&s.issue, &s.detail) {
         (None, _) => note(th, "Select an issue to read it."),
         (Some(_), Load::Ready(Some(d))) => detail(d, th),
-        (Some(id), Load::Ready(None)) => note(th, &format!("{id} is no longer on the server.")),
-        (Some(_), Load::Failed(f)) => note(th, f.message()),
-        (Some(_), _) => loading(th, "Loading issue"),
+        (Some(id), Load::Ready(None)) => state(
+            th,
+            false,
+            &format!("{id} is gone"),
+            "It is no longer on the server. It may have been deleted or renamed since the list loaded.",
+            Vec::new(),
+        ),
+        (Some(_), Load::Failed(f)) => failure_state(*f, s.is_loading(), th),
+        (Some(_), _) => detail_skeleton(th),
     };
     col().key("detail").w(if roomy { 380.0 } else { 320.0 }).h_full().child(inner)
 }
@@ -803,15 +909,139 @@ fn note(th: &Theme, message: &str) -> El {
         .child(text(message.to_string()).font(th.ty.sm).color(th.t.tx_mid).wrap().align(rune::Align::Center))
 }
 
-fn loading(th: &Theme, message: &str) -> El {
-    col()
-        .key("loading")
-        .w_full()
-        .h_full()
-        .center()
-        .gap(10.0)
-        .child(Spinner::new().build(&th.k))
-        .child(text(message.to_string()).font(th.ty.sm).color(th.t.tx_dim))
+/// A pane with nothing to list (`src/lib/components/empty-state.svelte`):
+/// the mark, what is missing, why, and what to do about it. `lit` is for a
+/// failure, which wears the red bead; an empty pane wears the web app's
+/// thread with the bead missing from it.
+fn state(th: &Theme, lit: bool, title: &str, description: &str, actions: Vec<El>) -> El {
+    let t = &th.t;
+    let bead = if lit {
+        el().absolute(17.5, 17.5).size(9.0, 9.0).radius(4.5).fill(t.em_500)
+    } else {
+        el().absolute(15.5, 15.5).size(13.0, 13.0).radius(6.5).fill(t.bg).border(1.0, t.tx_dim).border_dash(2.5, 2.5)
+    };
+    let mark =
+        el().size(44.0, 44.0).a11y_hidden().child(el().absolute(21.5, 4.0).w(1.0).h(36.0).fill(t.line_2)).child(bead);
+    let mut body = col().key("state").w_full().h_full().center().padding(24.0).child(mark).child(
+        text(title.to_string()).font(th.ty.base_strong).color(t.tx_hi).wrap().align(rune::Align::Center).mt(12.0),
+    );
+    if lit {
+        // A failure is announced; an empty list is only read.
+        body = body.role("alert").label(format!("{title}. {description}"));
+    }
+    if !description.is_empty() {
+        body = body.child(
+            text(description.to_string())
+                .font(th.ty.sm)
+                .color(t.tx_mid)
+                .wrap()
+                .align(rune::Align::Center)
+                .max_w(460.0)
+                .mt(6.0),
+        );
+    }
+    if !actions.is_empty() {
+        let mut buttons = row().key("actions").gap(8.0).center().flex_wrap().mt(16.0);
+        for action in actions {
+            buttons = buttons.child(action);
+        }
+        body = body.child(buttons);
+    }
+    body
+}
+
+/// A read that failed with nothing to show in its place: one of the fixed
+/// failure classes in words, never driver text, and its recovery actions.
+fn failure_state(failure: Failure, busy: bool, th: &Theme) -> El {
+    state(th, true, failure.title(), failure.message(), failure_actions(failure, busy, &th.k))
+}
+
+// ---------------------------------------------------------------------------------------------
+// Skeletons: a pending pane keeps the geometry of what will fill it, as the
+// web app's do (`src/lib/components/skeleton-rows.svelte`), so content lands
+// in place instead of replacing a spinner.
+
+/// One placeholder bar (`.skel`). The pulse is Rune's shared loop, which
+/// holds still under reduced motion.
+fn bar(th: &Theme, w: f32, h: f32) -> El {
+    el().w(w).h(h).radius(th.k.radius.xs).fill(th.t.line).a11y_hidden().looping(LoopSpec::opacity(1.4, 0.0, 0.45, 1.0))
+}
+
+/// A bar that takes `frac` of the room its column leaves it.
+fn flex_bar(th: &Theme, frac: f32, h: f32) -> El {
+    el().grow(1.0).min_w(0.0).a11y_hidden().child(
+        el().w_frac(frac).h(h).radius(th.k.radius.xs).fill(th.t.line).looping(LoopSpec::opacity(1.4, 0.0, 0.45, 1.0)),
+    )
+}
+
+/// Titles are ragged; so are their placeholders.
+const RAGGED: [f32; 8] = [0.68, 0.54, 0.74, 0.46, 0.62, 0.58, 0.7, 0.5];
+
+/// The pending pane as assistive technology hears it: one status, no bars.
+fn pending(key: &'static str, label: &'static str) -> El {
+    col().key(key).role("status").label(label).w_full().h_full()
+}
+
+fn projects_skeleton(th: &Theme) -> El {
+    let mut list = pending("projects-loading", "Finding projects").px(12.0).gap(1.0);
+    for (n, w) in [96.0, 64.0, 112.0, 80.0].into_iter().enumerate() {
+        list = list.child(
+            row()
+                .key(format!("row-{n}"))
+                .w_full()
+                .px(8.0)
+                .py(6.0)
+                .gap(12.0)
+                .child(el().ml(4.0).mt(7.0).size(7.0, 7.0).radius(3.5).fill(th.t.line).a11y_hidden())
+                .child(col().grow(1.0).gap(8.0).py(5.0).child(bar(th, w, 10.0)).child(bar(th, w * 0.7, 8.0))),
+        );
+    }
+    list
+}
+
+/// The issue table's header and rows, in its column widths.
+fn table_skeleton(th: &Theme, roomy: bool) -> El {
+    let cell = |w: f32, bar: El| row().w(w).px(10.0).center_y().child(bar);
+    let line = |n: usize, h: f32, bars: [f32; 5], title: f32, thick: f32| {
+        let mut r = row()
+            .key(format!("row-{n}"))
+            .w_full()
+            .h(h)
+            .center_y()
+            .child(cell(80.0, bar(th, bars[0], thick)))
+            .child(row().grow(1.0).min_w(0.0).px(10.0).center_y().child(flex_bar(th, title, thick)))
+            .child(cell(108.0, bar(th, bars[1], thick)))
+            .child(cell(46.0, bar(th, bars[2], thick)));
+        if roomy {
+            r = r.child(cell(72.0, bar(th, bars[3], thick))).child(cell(84.0, bar(th, bars[3], thick)));
+        }
+        col().w_full().child(r.child(cell(76.0, bar(th, bars[4], thick)))).child(rule_h(th).a11y_hidden())
+    };
+    let mut table =
+        pending("issues-loading", "Loading issues").child(line(0, 30.0, [18.0, 44.0, 22.0, 34.0, 52.0], 0.12, 8.0));
+    for (n, title) in RAGGED.into_iter().enumerate() {
+        table = table.child(line(n + 1, 32.0, [40.0, 64.0, 18.0, 40.0, 44.0], title, 10.0));
+    }
+    table
+}
+
+/// The detail pane: id, title, chips, facts, then a section of prose.
+fn detail_skeleton(th: &Theme) -> El {
+    let fact = |w: f32| row().gap(16.0).center_y().h(20.0).child(bar(th, 72.0, 8.0)).child(bar(th, w, 10.0));
+    let mut body = pending("issue-loading", "Loading issue")
+        .px(20.0)
+        .pt(20.0)
+        .gap(14.0)
+        .child(col().w_full().gap(10.0).child(bar(th, 44.0, 8.0)).child(row().w_full().child(flex_bar(th, 0.8, 14.0))))
+        .child(
+            row().gap(10.0).center_y().child(bar(th, 72.0, 22.0)).child(bar(th, 20.0, 10.0)).child(bar(th, 40.0, 10.0)),
+        )
+        .child(col().gap(6.0).child(fact(64.0)).child(fact(148.0)).child(fact(96.0)))
+        .child(col().w_full().pt(8.0).gap(8.0).child(bar(th, 88.0, 8.0)).child(rule_h(th).a11y_hidden()));
+    for (n, frac) in [1.0, 0.92, 0.97, 0.6].into_iter().enumerate() {
+        body = body.child(row().key(format!("line-{n}")).w_full().child(flex_bar(th, frac, 10.0)));
+    }
+    body
 }
 
 /// `2026-11-06 13:05` → `Nov 6 13:05`.

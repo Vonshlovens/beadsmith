@@ -103,6 +103,25 @@ pub enum Failure {
 }
 
 impl Failure {
+    /// A heading for the failure where it takes over a pane.
+    pub fn title(self) -> &'static str {
+        match self {
+            Failure::NotConfigured => "No server configured",
+            Failure::CredentialUnavailable => "No password for this server",
+            Failure::AuthenticationRejected => "Sign-in rejected",
+            Failure::Unreachable => "Server unreachable",
+            Failure::Unknown => "Connection failed",
+        }
+    }
+
+    /// Whether asking again could succeed with nothing changed in the
+    /// settings. With no server configured it cannot, so that failure offers
+    /// only connection settings. A missing password can: the Keychain may
+    /// have been locked, or its prompt dismissed.
+    pub fn retryable(self) -> bool {
+        self != Failure::NotConfigured
+    }
+
     pub fn message(self) -> &'static str {
         match self {
             Failure::NotConfigured => "No Dolt server is configured. Open connection settings to add one.",

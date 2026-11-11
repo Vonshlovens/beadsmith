@@ -20,8 +20,13 @@ The decision record is
 - Shows the selected issue: Markdown description, design, acceptance
   criteria and notes, labels, dependencies both ways (click one to open it)
   and comments.
-- Refreshes on the Refresh button above the table or Ctrl/Cmd-R. It follows the system's
-  light or dark theme.
+- Refreshes on the Refresh button above the table or Ctrl/Cmd-R. A refresh
+  that fails keeps what was on screen under a banner that says it may be out
+  of date; a failed read never shows as an empty list.
+- Says what is happening in every pane: outlines of the rows while they
+  load, an empty project, filters that match nothing (with Clear filters),
+  and each connection failure with Retry and Connection settings.
+- Follows the system's light or dark theme.
 - Keeps its connection: host, port and user in a settings file, the password
   in the macOS Keychain, set from a connection screen that can test them
   first.
@@ -193,10 +198,14 @@ cargo run -- --snap sample.png --scene sample [--theme light]
 cargo run -- --tree tree.json --scene filtered     # the element tree as JSON
 ```
 
-Scenes fill state directly, so they need no server: `sample`, `filtered`,
-`unconfigured`, `unreachable`, and the connection screen as `connection`
-(first launch), `connection-testing`, `connection-failed`, `connection-ok`
-and `connection-invalid`. A headless run reads no environment, settings file
+Scenes fill state directly, so they need no server. `--list-scenes` names
+them all: the data (`sample`, `filtered`), every pane while it loads
+(`loading`, `loading-issues`, `loading-issue`), the empty and failed states
+(`no-projects`, `empty-project`, `no-matches`, `issue-gone`, `unconfigured`,
+`unreachable`, `auth-rejected`, `credential-unavailable`, `issues-failed`,
+`issue-failed`), a failed refresh over loaded data (`stale`), and the
+connection screen (`connection` for a first launch, then `connection-*`).
+A headless run reads no environment, settings file
 or keychain, so an image depends on its scene alone. The screenshots above
 are `--snap docs/sample-dark.png --scene sample`, the same with
 `--theme light`, and `--scene connection-ok`.

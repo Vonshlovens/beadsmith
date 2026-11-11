@@ -30,6 +30,25 @@ impl<T> Load<T> {
     }
 }
 
+/// Refreshes that failed while the answer before them stayed on screen. A
+/// failed re-read never replaces data the window already shows (the design
+/// standards: "retain useful existing content during refresh and identify
+/// stale data"); it is recorded here, and the view says so in a banner.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Stale {
+    pub projects: Option<Failure>,
+    pub issues: Option<Failure>,
+    pub detail: Option<Failure>,
+}
+
+impl Stale {
+    /// Why what is on screen may be out of date, if it may be. One refresh
+    /// usually fails every read the same way, so the widest read speaks.
+    pub fn failure(&self) -> Option<Failure> {
+        self.projects.or(self.issues).or(self.detail)
+    }
+}
+
 /// The status filter above the issue table.
 pub const STATUS_FILTERS: [(&str, Option<&str>); 5] = [
     ("All", None),
@@ -101,6 +120,7 @@ pub struct State {
     pub table: TableState,
     pub issue: Option<String>,
     pub detail: Load<Option<IssueDetail>>,
+    pub stale: Stale,
     projects_req: Latest<Result<Vec<Project>, Failure>>,
     issues_req: Latest<IssuesAnswer>,
     detail_req: Latest<DetailAnswer>,
@@ -148,6 +168,7 @@ impl State {
             table: TableState::new(),
             issue: None,
             detail: Load::Idle,
+            stale: Stale::default(),
             projects_req: Latest::default(),
             issues_req: Latest::default(),
             detail_req: Latest::default(),
@@ -192,6 +213,11 @@ impl State {
             self.issue = None;
             self.detail = Load::Idle;
             self.detail_req.cancel();
+            self.stale.issues = None;
+            self.stale.detail = None;
+        } else if self.issues.ready().is_none() {
+            // A retry after a failed first read: show it as pending again.
+            self.issues = Load::Loading;
         }
         let source = self.source.clone();
         self.issues_req.request(name.to_string(), move |db| {
@@ -205,6 +231,9 @@ impl State {
         if self.issue.as_deref() != Some(id) {
             self.issue = Some(id.to_string());
             self.detail = Load::Loading;
+            self.stale.detail = None;
+        } else if self.detail.ready().is_none() {
+            self.detail = Load::Loading;
         }
         if !self.table.is_selected(id) {
             self.table.select(id.to_string());
@@ -216,7 +245,9 @@ impl State {
         });
     }
 
-    /// Re-read everything on screen.
+    /// Re-read everything on screen. This is also "Retry": a read that
+    /// failed with nothing to show goes back to loading, and one that failed
+    /// over earlier data keeps that data until the new answer lands.
     pub fn refresh(&mut self) {
         self.load_projects();
         if let Some(p) = self.project.clone() {
@@ -350,6 +381,7 @@ impl State {
         self.table.clear_selection();
         self.issue = None;
         self.detail = Load::Idle;
+        self.stale = Stale::default();
         self.load_projects();
     }
 
@@ -376,12 +408,14 @@ impl State {
                     let first = projects.first().map(|p| p.name.clone());
                     let current_gone = self.project.as_ref().is_some_and(|c| !projects.iter().any(|p| &p.name == c));
                     self.projects = Load::Ready(projects);
+                    self.stale.projects = None;
                     if (self.project.is_none() || current_gone)
                         && let Some(first) = first
                     {
                         self.select_project(&first);
                     }
                 }
+                Err(f) if self.projects.ready().is_some() => self.stale.projects = Some(f),
                 Err(f) => self.projects = Load::Failed(f),
             }
         }
@@ -392,9 +426,11 @@ impl State {
             match answer {
                 Ok(issues) => {
                     self.issues = Load::Ready(issues);
+                    self.stale.issues = None;
                     self.resort();
                     self.refilter();
                 }
+                Err(f) if self.issues.ready().is_some() => self.stale.issues = Some(f),
                 Err(f) => self.issues = Load::Failed(f),
             }
         }
@@ -403,10 +439,14 @@ impl State {
             && self.issue.as_deref() == Some(id.as_str())
         {
             changed = true;
-            self.detail = match answer {
-                Ok(d) => Load::Ready(d),
-                Err(f) => Load::Failed(f),
-            };
+            match answer {
+                Ok(d) => {
+                    self.detail = Load::Ready(d);
+                    self.stale.detail = None;
+                }
+                Err(f) if self.detail.ready().is_some() => self.stale.detail = Some(f),
+                Err(f) => self.detail = Load::Failed(f),
+            }
         }
         if let Some(answer) = self.test_req.take()
             && let Some(form) = &mut self.connection
@@ -456,6 +496,12 @@ impl State {
             })
             .map(|(n, _)| n)
             .collect();
+    }
+
+    pub fn clear_filters(&mut self) {
+        self.search.replace_text("");
+        self.status_filter = 0;
+        self.refilter();
     }
 
     pub fn sort(&mut self, column: &str, dir: SortDir) {
@@ -669,6 +715,147 @@ mod tests {
         let mut s = loaded();
         s.sort("priority", SortDir::Ascending);
         assert_eq!(s.visible_issue(0).unwrap().id, "lh-2");
+    }
+
+    /// The sample data behind a switch: while `down` holds a failure, every
+    /// read fails with it.
+    struct Flaky {
+        down: std::sync::Mutex<Option<Failure>>,
+    }
+
+    impl Flaky {
+        fn new(down: Option<Failure>) -> Arc<Flaky> {
+            Arc::new(Flaky { down: std::sync::Mutex::new(down) })
+        }
+        fn set(&self, down: Option<Failure>) {
+            *self.down.lock().unwrap() = down;
+        }
+        fn check(&self) -> Result<(), Failure> {
+            self.down.lock().unwrap().map_or(Ok(()), Err)
+        }
+    }
+
+    impl Source for Flaky {
+        fn projects(&self) -> Result<Vec<Project>, Failure> {
+            self.check().and_then(|()| Sample.projects())
+        }
+        fn issues(&self, database: &str) -> Result<Vec<IssueSummary>, Failure> {
+            self.check().and_then(|()| Sample.issues(database))
+        }
+        fn issue(&self, database: &str, id: &str) -> Result<Option<IssueDetail>, Failure> {
+            self.check().and_then(|()| Sample.issue(database, id))
+        }
+        fn label(&self) -> String {
+            "Flaky".into()
+        }
+    }
+
+    /// Land answers until no request is pending.
+    fn drain(s: &mut State) {
+        for _ in 0..500 {
+            s.land();
+            if !s.is_loading() {
+                s.land();
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("requests never finished");
+    }
+
+    #[test]
+    fn a_first_read_that_fails_shows_the_failure_and_a_retry_recovers() {
+        let source = Flaky::new(Some(Failure::Unreachable));
+        let mut s = State::new(source.clone(), Backing::detached());
+        s.load_projects();
+        assert_eq!(s.projects, Load::Loading);
+        drain(&mut s);
+        assert_eq!(s.projects, Load::Failed(Failure::Unreachable));
+        assert_eq!(s.stale, Stale::default(), "nothing was on screen, so nothing is stale");
+
+        source.set(None);
+        s.refresh();
+        assert_eq!(s.projects, Load::Loading, "a retry is shown as pending, not as the old failure");
+        drain(&mut s);
+        assert!(s.projects.ready().is_some());
+        assert!(s.issues.ready().is_some_and(|i| !i.is_empty()), "the first project's issues follow");
+    }
+
+    #[test]
+    fn a_failed_refresh_keeps_what_was_on_screen_and_marks_it_stale() {
+        let source = Flaky::new(None);
+        let mut s = State::new(source.clone(), Backing::detached());
+        s.load_projects();
+        drain(&mut s);
+        let first = s.visible_issue(0).unwrap().id.clone();
+        s.select_issue(&first);
+        drain(&mut s);
+        let before = (s.projects.clone(), s.issues.clone(), s.detail.clone(), s.visible.clone());
+        assert!(matches!(before.2, Load::Ready(Some(_))));
+
+        source.set(Some(Failure::Unreachable));
+        s.refresh();
+        assert_eq!((&s.projects, &s.issues, &s.detail), (&before.0, &before.1, &before.2), "no pane blanks");
+        drain(&mut s);
+        assert_eq!((&s.projects, &s.issues, &s.detail, &s.visible), (&before.0, &before.1, &before.2, &before.3));
+        let all = Some(Failure::Unreachable);
+        assert_eq!(s.stale, Stale { projects: all, issues: all, detail: all });
+        assert_eq!(s.stale.failure(), all);
+        assert_eq!(s.issue.as_deref(), Some(first.as_str()), "the selection survives");
+
+        // The next failure replaces the reason; the next success clears it.
+        source.set(Some(Failure::AuthenticationRejected));
+        s.refresh();
+        drain(&mut s);
+        assert_eq!(s.stale.failure(), Some(Failure::AuthenticationRejected));
+        source.set(None);
+        s.refresh();
+        drain(&mut s);
+        assert_eq!(s.stale, Stale::default());
+        assert_eq!((&s.projects, &s.detail), (&before.0, &before.2));
+    }
+
+    #[test]
+    fn stale_marks_do_not_follow_the_view_to_other_data() {
+        let source = Flaky::new(None);
+        let mut s = State::new(source.clone(), Backing::detached());
+        s.load_projects();
+        drain(&mut s);
+        s.select_issue("lh-1");
+        drain(&mut s);
+        source.set(Some(Failure::Unknown));
+        s.refresh();
+        drain(&mut s);
+
+        // Another issue has no earlier answer to keep: it fails in its pane.
+        s.select_issue("lh-2");
+        assert_eq!((s.stale.detail, &s.detail), (None, &Load::Loading));
+        drain(&mut s);
+        assert_eq!(s.detail, Load::Failed(Failure::Unknown));
+        // So does another project, and its failure is not a stale mark.
+        s.select_project("pantry");
+        assert_eq!((s.stale.issues, &s.issues), (None, &Load::Loading));
+        drain(&mut s);
+        assert_eq!(s.issues, Load::Failed(Failure::Unknown));
+        assert_eq!(s.stale.failure(), Some(Failure::Unknown), "the project list is still the old one");
+
+        source.set(None);
+        s.refresh();
+        assert_eq!(s.issues, Load::Loading, "retrying a failed pane shows it loading");
+        drain(&mut s);
+        assert!(s.issues.ready().is_some());
+        assert_eq!(s.stale, Stale::default());
+    }
+
+    #[test]
+    fn clearing_filters_restores_every_issue() {
+        let mut s = loaded();
+        s.status_filter = 4;
+        s.search.replace_text("no such issue");
+        s.refilter();
+        assert!(s.visible.is_empty());
+        s.clear_filters();
+        assert_eq!((s.visible.len(), s.status_filter, s.search.text.as_str()), (9, 0, ""));
     }
 
     #[test]

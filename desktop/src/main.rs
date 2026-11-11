@@ -71,6 +71,93 @@ fn unreachable_scene(s: &mut State) {
     s.projects = Load::Failed(Failure::Unreachable);
 }
 
+/// A read that failed before anything was on screen, one scene per class
+/// with its own recovery (see `view::failure_actions`).
+fn auth_rejected_scene(s: &mut State) {
+    s.source = example_server();
+    s.projects = Load::Failed(Failure::AuthenticationRejected);
+}
+
+fn credential_unavailable_scene(s: &mut State) {
+    s.source = example_server();
+    s.projects = Load::Failed(Failure::CredentialUnavailable);
+}
+
+/// Launch, before the server has answered.
+fn loading_scene(s: &mut State) {
+    s.source = example_server();
+    s.projects = Load::Loading;
+}
+
+/// A project just chosen: its issues are on their way.
+fn loading_issues_scene(s: &mut State) {
+    s.projects = Load::Ready(Sample.projects().unwrap_or_default());
+    s.project = Some("pantry".into());
+    s.issues = Load::Loading;
+}
+
+/// An issue just chosen: the list is there, its body is on its way.
+fn loading_issue_scene(s: &mut State) {
+    sample_scene(s);
+    s.issue = Some("lh-2".into());
+    s.table.select("lh-2");
+    s.detail = Load::Loading;
+}
+
+/// A server with no Beads databases.
+fn no_projects_scene(s: &mut State) {
+    s.source = example_server();
+    s.projects = Load::Ready(Vec::new());
+}
+
+/// A project nothing has been filed in yet. The sample data has none, so
+/// the scene adds one to the list.
+fn empty_project_scene(s: &mut State) {
+    let mut projects = Sample.projects().unwrap_or_default();
+    projects.push(model::Project {
+        name: "orchard".into(),
+        counts: Some(model::Counts::default()),
+        last_activity: None,
+    });
+    s.projects = Load::Ready(projects);
+    s.project = Some("orchard".into());
+    s.issues = Load::Ready(Vec::new());
+    s.refilter();
+}
+
+/// Filters that hide every issue.
+fn no_matches_scene(s: &mut State) {
+    sample_scene(s);
+    s.status_filter = 4; // Closed
+    s.search.replace_text("gasket");
+    s.refilter();
+}
+
+/// A refresh that failed after a good load: everything stays, under a banner.
+fn stale_scene(s: &mut State) {
+    sample_scene(s);
+    s.source = example_server();
+    s.stale.projects = Some(Failure::Unreachable);
+}
+
+/// One project's issues failed while the project list loaded.
+fn issues_failed_scene(s: &mut State) {
+    s.projects = Load::Ready(Sample.projects().unwrap_or_default());
+    s.project = Some("pantry".into());
+    s.issues = Load::Failed(Failure::Unknown);
+}
+
+/// One issue failed to load, and another has left the server.
+fn issue_failed_scene(s: &mut State) {
+    loading_issue_scene(s);
+    s.detail = Load::Failed(Failure::Unreachable);
+}
+
+fn issue_gone_scene(s: &mut State) {
+    loading_issue_scene(s);
+    s.detail = Load::Ready(None);
+}
+
 /// The connection screen as a first launch shows it.
 fn connection_scene(s: &mut State) {
     unconfigured_scene(s);
@@ -140,6 +227,18 @@ fn main() {
             ("filtered", filtered_scene),
             ("unconfigured", unconfigured_scene),
             ("unreachable", unreachable_scene),
+            ("auth-rejected", auth_rejected_scene),
+            ("credential-unavailable", credential_unavailable_scene),
+            ("loading", loading_scene),
+            ("loading-issues", loading_issues_scene),
+            ("loading-issue", loading_issue_scene),
+            ("no-projects", no_projects_scene),
+            ("empty-project", empty_project_scene),
+            ("no-matches", no_matches_scene),
+            ("stale", stale_scene),
+            ("issues-failed", issues_failed_scene),
+            ("issue-failed", issue_failed_scene),
+            ("issue-gone", issue_gone_scene),
             ("connection", connection_scene),
             ("connection-testing", connection_testing_scene),
             ("connection-failed", connection_failed_scene),
