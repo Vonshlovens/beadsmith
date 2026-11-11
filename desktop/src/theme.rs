@@ -146,6 +146,62 @@ fn scale() -> Scale {
     }
 }
 
+/// Which theme the window wears: the system's, or one chosen here. The web
+/// app's three-state preference (`src/lib/client/theme.ts`), with its cycle
+/// order and stored names.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Appearance {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl Appearance {
+    const ALL: [Appearance; 3] = [Appearance::System, Appearance::Light, Appearance::Dark];
+
+    /// The name the settings file holds.
+    pub fn name(self) -> &'static str {
+        match self {
+            Appearance::System => "system",
+            Appearance::Light => "light",
+            Appearance::Dark => "dark",
+        }
+    }
+
+    /// An unknown or missing name follows the system.
+    pub fn from_name(name: Option<&str>) -> Appearance {
+        Appearance::ALL.into_iter().find(|a| Some(a.name()) == name).unwrap_or_default()
+    }
+
+    /// The word the title bar shows. It names the preference, not the theme
+    /// in effect, so "auto" stays distinct from whichever it resolves to
+    /// (`theme-toggle.svelte`).
+    pub fn word(self) -> &'static str {
+        match self {
+            Appearance::System => "auto",
+            other => other.name(),
+        }
+    }
+
+    /// system → light → dark → system.
+    pub fn next(self) -> Appearance {
+        match self {
+            Appearance::System => Appearance::Light,
+            Appearance::Light => Appearance::Dark,
+            Appearance::Dark => Appearance::System,
+        }
+    }
+
+    pub fn dark(self, system_dark: bool) -> bool {
+        match self {
+            Appearance::System => system_dark,
+            Appearance::Light => false,
+            Appearance::Dark => true,
+        }
+    }
+}
+
 impl Theme {
     pub fn new(dark: bool) -> Theme {
         let t = tokens(dark);
@@ -298,6 +354,20 @@ pub struct StatusLook {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_appearance_cycles_and_survives_its_name() {
+        let mut a = Appearance::System;
+        for expected in [Appearance::Light, Appearance::Dark, Appearance::System] {
+            a = a.next();
+            assert_eq!(a, expected);
+            assert_eq!(Appearance::from_name(Some(a.name())), a);
+        }
+        assert_eq!(Appearance::from_name(Some("sepia")), Appearance::System);
+        assert_eq!(Appearance::from_name(None), Appearance::System);
+        assert!(Appearance::Dark.dark(false) && !Appearance::Light.dark(true));
+        assert!(Appearance::System.dark(true) && !Appearance::System.dark(false));
+    }
 
     fn contrast(a: Color, b: Color) -> f32 {
         let (a, b) = (a.luminance(), b.luminance());

@@ -33,7 +33,7 @@ const ROOMY_W: f32 = 1280.0;
 const BLOCKERS_W: f32 = 84.0;
 
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
-    let th = Theme::new(cx.system_dark());
+    let th = Theme::new(s.appearance.dark(cx.system_dark()));
     // Unknown until the first layout; the window opens wider than `ROOMY_W`.
     let roomy = cx.layout_size("shell").is_none_or(|size| size[0] >= ROOMY_W);
     let panes = row().key("panes").w_full().grow(1.0).min_h(0.0).child(sidebar(s, &th)).child(rule_v(&th));
@@ -44,7 +44,21 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         Some(state) => panes.child(state),
         None => panes.child(main_pane(s, &th, roomy, &mut layer)).child(rule_v(&th)).child(detail_pane(s, &th, roomy)),
     };
-    let mut body = col().key("shell").w_full().h_full().fill(th.t.bg).child(title_bar(&th, cx.titlebar_inset()));
+    // On macOS a window without its buttons is in full screen: the display's
+    // size, which is not one to reopen a window at.
+    let full_screen = cfg!(target_os = "macos") && cx.titlebar_inset() == 0.0;
+    let mut body = col()
+        .key("shell")
+        .w_full()
+        .h_full()
+        .fill(th.t.bg)
+        // The shell fills the window, so its size is the window's: kept for
+        // `State::remember_window`. Nothing drawn reads it from the state.
+        .on_layout_tx(move |s: &mut State, [_, _, w, h], tx: &mut Tx| {
+            s.window = (!full_screen).then_some((w, h));
+            tx.live_only();
+        })
+        .child(title_bar(s, &th, cx.titlebar_inset()));
     if let Some(failure) = s.stale.failure() {
         body = body.child(stale_banner(s, failure, &th));
     }
@@ -64,7 +78,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
 /// the one standing fact about this client. `lights` is where the window
 /// buttons end (0 when there are none: full screen, other platforms). The
 /// whole bar drags the window.
-fn title_bar(th: &Theme, lights: f32) -> El {
+fn title_bar(s: &State, th: &Theme, lights: f32) -> El {
     let t = &th.t;
     let bar = row()
         .key("title-bar")
@@ -79,8 +93,31 @@ fn title_bar(th: &Theme, lights: f32) -> El {
         .child(text("Beadsmith").font(th.ty.base_strong).color(t.tx_hi))
         .child(el().grow(1.0))
         // Said once, here, so no pane has to explain its missing actions.
-        .child(text("Read-only").font(th.ty.xs).color(t.tx_dim));
+        .child(text("Read-only").font(th.ty.xs).color(t.tx_dim))
+        .child(theme_toggle(s, th));
     col().w_full().child(bar).child(el().w_full().h(2.0).fill(t.rule))
+}
+
+/// The web app's three-state theme control (`theme-toggle.svelte`): the
+/// bracketed word names the preference, and a press steps to the next one.
+fn theme_toggle(s: &State, th: &Theme) -> El {
+    let t = &th.t;
+    let (now, next) = (s.appearance, s.appearance.next());
+    let words = format!("Theme: {}. Switch to {}.", now.name(), next.name());
+    row()
+        .key("theme-toggle")
+        .role("button")
+        .help(format!("{words} ({})", keys::key_label("t")))
+        .label(words)
+        .focusable(true)
+        .focus_ring(2.0, 1.0, t.em_400)
+        .h(24.0)
+        .px(6.0)
+        .center_y()
+        .radius(th.k.radius.sm)
+        .hover(th.k.c.hover)
+        .on_press_tx(|s: &mut State, tx: &mut Tx| keys::perform(s, Command::Theme, tx))
+        .child(text(format!("[{}]", now.word())).font(th.ty.xs).color(t.tx_mid).a11y_hidden())
 }
 
 /// Three beads on a rod, the middle one lit: the beads of the Beadsmith mark
@@ -662,10 +699,7 @@ fn status_tabs(s: &State, th: &Theme) -> El {
                 .focus_ring(2.0, -2.0, t.em_400)
                 .position_in_set(i + 1, STATUS_FILTERS.len())
                 .hover(th.k.c.hover)
-                .on_press(move |s: &mut State| {
-                    s.status_filter = i;
-                    s.refilter();
-                })
+                .on_press(move |s: &mut State| s.set_status_filter(i))
                 .child(words)
                 .child(el().w_full().h(2.0).fill(if on { t.em_500 } else { Color::TRANSPARENT })),
         );

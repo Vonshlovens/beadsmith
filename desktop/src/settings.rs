@@ -54,6 +54,93 @@ pub fn save_refresh(prefs: &mut Prefs, secs: u32) -> Result<(), PrefsError> {
     prefs.set(REFRESH_KEY, &secs)
 }
 
+/// The window's content size in points when nothing is remembered, and the
+/// smallest it goes: below that the table's columns no longer fit.
+pub const DEFAULT_WINDOW: (f32, f32) = (1440.0, 880.0);
+pub const MIN_WINDOW: (f32, f32) = (1100.0, 560.0);
+/// Larger than any display: a size beyond it is a damaged file, not a window.
+const MAX_WINDOW: f32 = 16384.0;
+
+const WINDOW_KEY: &str = "window.size";
+const PROJECT_KEY: &str = "view.project";
+const STATUS_KEY: &str = "view.status";
+const SORT_KEY: &str = "view.sort";
+const SORT_DESCENDING_KEY: &str = "view.sort_descending";
+/// The web app's name for the same preference (`THEME_SETTING_KEY` in
+/// `src/lib/client/theme.ts`), with the same three values.
+const THEME_KEY: &str = "ui.theme";
+
+/// The size the window was closed at, to open at again. A missing or
+/// unusable value is the default; one smaller than the minimum is raised to
+/// it, as the window itself would be.
+pub fn load_window(prefs: &Prefs) -> (f32, f32) {
+    match prefs.get::<(f32, f32)>(WINDOW_KEY) {
+        Some((w, h)) if w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 => {
+            (w.clamp(MIN_WINDOW.0, MAX_WINDOW), h.clamp(MIN_WINDOW.1, MAX_WINDOW))
+        }
+        _ => DEFAULT_WINDOW,
+    }
+}
+
+pub fn save_window(prefs: &mut Prefs, size: (f32, f32)) -> Result<(), PrefsError> {
+    if prefs.get::<(f32, f32)>(WINDOW_KEY) == Some(size) {
+        return Ok(());
+    }
+    prefs.set(WINDOW_KEY, &size)
+}
+
+/// What the window was showing, so the next launch opens on the same view:
+/// the project, the status tab, the sort and the theme preference. The
+/// values are kept as the names the app uses (a project's database, a tab's
+/// label, a column's key) and are not checked here: the app drops a name it
+/// no longer has, so a file from another version, or edited by hand, costs
+/// only the memory of that one choice.
+///
+/// The filter text is left out on purpose: a list that opens already
+/// narrowed by words typed last week reads as missing issues.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Session {
+    pub project: Option<String>,
+    pub status: Option<String>,
+    /// The sorted column and whether it runs descending.
+    pub sort: Option<(String, bool)>,
+    /// `system`, `light` or `dark` (`theme::Appearance::name`).
+    pub theme: Option<String>,
+}
+
+impl Session {
+    pub fn load(prefs: &Prefs) -> Session {
+        let text = |key: &str| prefs.get::<String>(key).filter(|v| !v.is_empty());
+        Session {
+            project: text(PROJECT_KEY),
+            status: text(STATUS_KEY),
+            sort: text(SORT_KEY).map(|column| (column, prefs.get::<bool>(SORT_DESCENDING_KEY).unwrap_or(false))),
+            theme: text(THEME_KEY),
+        }
+    }
+
+    /// Write what differs from the file. Every `Prefs::set` rewrites and
+    /// syncs the whole file, and this runs on each change of view, so a
+    /// change of one thing costs one write and no change costs none.
+    pub fn save(&self, prefs: &mut Prefs) -> Result<(), PrefsError> {
+        let old = Session::load(prefs);
+        let mut put = |key: &str, was: Option<&String>, now: Option<&String>| match now {
+            _ if was == now => Ok(()),
+            Some(value) => prefs.set(key, value),
+            None => prefs.remove(key),
+        };
+        put(PROJECT_KEY, old.project.as_ref(), self.project.as_ref())?;
+        put(STATUS_KEY, old.status.as_ref(), self.status.as_ref())?;
+        put(THEME_KEY, old.theme.as_ref(), self.theme.as_ref())?;
+        put(SORT_KEY, old.sort.as_ref().map(|s| &s.0), self.sort.as_ref().map(|s| &s.0))?;
+        match (old.sort.map(|s| s.1), self.sort.as_ref().map(|s| s.1)) {
+            (was, now) if was == now => Ok(()),
+            (_, Some(descending)) => prefs.set(SORT_DESCENDING_KEY, &descending),
+            (_, None) => prefs.remove(SORT_DESCENDING_KEY),
+        }
+    }
+}
+
 /// The connection the settings file holds. No password: see the module docs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stored {
@@ -401,6 +488,73 @@ mod tests {
         {
             std::fs::write(&path, bad).unwrap();
             assert_eq!(load_refresh(&Prefs::at(&path)), DEFAULT_REFRESH, "{bad}");
+        }
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    fn session() -> Session {
+        Session {
+            project: Some("lighthouse".into()),
+            status: Some("Ready".into()),
+            sort: Some(("priority".into(), true)),
+            theme: Some("dark".into()),
+        }
+    }
+
+    #[test]
+    fn the_session_round_trips_and_forgets_what_is_cleared() {
+        let path = scratch("session");
+        assert_eq!(Session::load(&Prefs::at(&path)), Session::default(), "a missing file is no memory");
+        let mut prefs = Prefs::at(&path);
+        session().save(&mut prefs).unwrap();
+        assert_eq!(Session::load(&Prefs::at(&path)), session(), "a second open reads it back");
+
+        let written = std::fs::metadata(&path).unwrap().modified().unwrap();
+        session().save(&mut prefs).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), written, "no change, no write");
+
+        stored().save(&mut prefs).unwrap();
+        let ascending = Session { sort: Some(("priority".into(), false)), ..session() };
+        ascending.save(&mut prefs).unwrap();
+        assert_eq!(Session::load(&Prefs::at(&path)), ascending);
+        Session::default().save(&mut prefs).unwrap();
+        assert_eq!(Session::load(&Prefs::at(&path)), Session::default(), "cleared choices leave the file");
+        assert_eq!(Stored::load(&Prefs::at(&path)), Some(stored()), "and the connection stays");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_corrupt_session_falls_back_field_by_field() {
+        let path = scratch("session-corrupt");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "{ not json").unwrap();
+        assert_eq!(Session::load(&Prefs::at(&path)), Session::default());
+        assert_eq!(load_window(&Prefs::at(&path)), DEFAULT_WINDOW);
+        let partial =
+            r#"{"view.project":7,"view.status":"","view.sort":"title","view.sort_descending":"yes","ui.theme":[]}"#;
+        std::fs::write(&path, partial).unwrap();
+        let expected = Session { sort: Some(("title".into(), false)), ..Session::default() };
+        assert_eq!(Session::load(&Prefs::at(&path)), expected, "values of the wrong type are unset");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn the_window_size_round_trips_within_its_bounds() {
+        let path = scratch("window");
+        assert_eq!(load_window(&Prefs::at(&path)), DEFAULT_WINDOW, "a missing file is the default");
+        let mut prefs = Prefs::at(&path);
+        save_window(&mut prefs, (1280.0, 760.5)).unwrap();
+        assert_eq!(load_window(&Prefs::at(&path)), (1280.0, 760.5));
+        for (saved, opened) in [
+            (r#"[640, 300]"#, MIN_WINDOW),
+            (r#"[1e9, 900]"#, (MAX_WINDOW, 900.0)),
+            (r#"[0, 900]"#, DEFAULT_WINDOW),
+            (r#"[-1200, 900]"#, DEFAULT_WINDOW),
+            (r#"[1200]"#, DEFAULT_WINDOW),
+            (r#""wide""#, DEFAULT_WINDOW),
+        ] {
+            std::fs::write(&path, format!(r#"{{"window.size":{saved}}}"#)).unwrap();
+            assert_eq!(load_window(&Prefs::at(&path)), opened, "{saved}");
         }
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }

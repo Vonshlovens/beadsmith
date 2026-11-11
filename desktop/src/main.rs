@@ -38,6 +38,17 @@ fn init() -> State {
     State::launch(Backing::system())
 }
 
+/// The size to open at: the one the window was last closed at. Rune wants it
+/// before it makes the state, so the settings file is read here once more
+/// than `init` reads it. A headless run opens at the default, like the rest
+/// of what it renders.
+fn window_size() -> (f32, f32) {
+    if rune::tooling::is_headless() {
+        return settings::DEFAULT_WINDOW;
+    }
+    settings::load_window(&rune::prefs::Prefs::open(settings::APP_ID))
+}
+
 /// Scenes fill state synchronously, so a headless `--snap` shows content on
 /// its first frame without a server.
 fn sample_scene(s: &mut State) {
@@ -254,6 +265,19 @@ fn reading_scene(s: &mut State) {
     s.pane = Pane::Detail;
 }
 
+/// The theme chosen in the window, whatever the system's: the title bar's
+/// word names the choice. One scene per choice, so each is drawn under both
+/// system themes.
+fn theme_light_scene(s: &mut State) {
+    sample_scene(s);
+    s.appearance = theme::Appearance::Light;
+}
+
+fn theme_dark_scene(s: &mut State) {
+    sample_scene(s);
+    s.appearance = theme::Appearance::Dark;
+}
+
 /// The list of keys, as `?` opens it.
 fn shortcuts_scene(s: &mut State) {
     sample_scene(s);
@@ -277,7 +301,7 @@ fn main() {
     rune::prewarm_gpu();
     rune::tooling::set_app_id("beadsmith-desktop");
     let spec = AppSpec::<State> {
-        min_size: Some((1100.0, 560.0)),
+        min_size: Some(settings::MIN_WINDOW),
         scenes: &[
             ("sample", sample_scene),
             ("filtered", filtered_scene),
@@ -306,15 +330,20 @@ fn main() {
             ("trail", trail_scene),
             ("trail-gone", trail_gone_scene),
             ("reading", reading_scene),
+            ("theme-light", theme_light_scene),
+            ("theme-dark", theme_dark_scene),
             ("shortcuts", shortcuts_scene),
         ],
         setup: Some(|s, waker| s.setup(waker)),
         poll: Some(|s, clock, tx| s.poll(clock, tx)),
         on_key: Some(keys::on_key),
         families: theme::FAMILIES,
-        ..AppSpec::new("Beadsmith", (1440.0, 880.0), init, view::view)
+        ..AppSpec::new("Beadsmith", window_size(), init, view::view)
     };
-    let mut app = App::new(spec).chrome(chrome()).on_focus(|s, focused, tx| s.window_focus(focused, tx));
+    let mut app = App::new(spec)
+        .chrome(chrome())
+        .on_focus(|s, focused, tx| s.window_focus(focused, tx))
+        .on_close(|s, _| s.remember_window());
     // Rune has native menus on macOS only; elsewhere the keys alone answer.
     if cfg!(target_os = "macos") || rune::tooling::is_headless() {
         // Edit and Window menus, so Cmd-W, Cmd-M and the editing keys are the system's.

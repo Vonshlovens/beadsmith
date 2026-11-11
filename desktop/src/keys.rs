@@ -45,6 +45,8 @@ pub enum Command {
     SortNext,
     SortReverse,
     Shortcuts,
+    /// Step the theme preference: system, light, dark.
+    Theme,
     /// Scroll the issue being read.
     Scroll(Scroll),
     /// Back to the issue a dependency link was followed from (`app::Trail`).
@@ -116,6 +118,7 @@ pub fn command(key: &KeyEvent, pane: Pane, typing: bool) -> Option<Command> {
             "r" => Some(Command::Refresh),
             "s" => Some(Command::SortNext),
             "S" => Some(Command::SortReverse),
+            "t" => Some(Command::Theme),
             "?" => Some(Command::Shortcuts),
             _ => None,
         },
@@ -179,6 +182,7 @@ pub fn run(s: &mut State, command: Command, tx: &mut Tx) -> bool {
         Command::SortNext => s.sort_next(),
         Command::SortReverse => return s.sort_reverse(),
         Command::Shortcuts => s.shortcuts = true,
+        Command::Theme => s.cycle_appearance(),
         Command::Scroll(Scroll::PageDown) => tx.scroll_page(DETAIL_ANCHOR, 1),
         Command::Scroll(Scroll::PageUp) => tx.scroll_page(DETAIL_ANCHOR, -1),
         Command::Scroll(Scroll::Top) => tx.scroll_to_y(DETAIL_ANCHOR, 0.0),
@@ -266,6 +270,8 @@ pub fn menu() -> Vec<MenuItem<State>> {
         MenuItem::separator().menu("View"),
         MenuItem::new("Sort by Next Column", |s, tx| perform(s, Command::SortNext, tx)).menu("View"),
         MenuItem::new("Reverse Sort Order", |s, tx| perform(s, Command::SortReverse, tx)).menu("View"),
+        MenuItem::separator().menu("View"),
+        MenuItem::new("Switch Theme", |s, tx| perform(s, Command::Theme, tx)).menu("View"),
         MenuItem::new("Next Issue", |s, tx| perform(s, Command::Select(Step::Next), tx)).menu("Go"),
         MenuItem::new("Previous Issue", |s, tx| perform(s, Command::Select(Step::Previous), tx)).menu("Go"),
         MenuItem::new("Read Issue", |s, tx| perform(s, Command::Open, tx)).menu("Go"),
@@ -313,6 +319,7 @@ pub const SHORTCUTS: &[(&str, &[Shortcut])] = &[
             (&["⌘1–9"], "Switch to that project in the sidebar"),
             (&["r", "⌘R"], "Refresh"),
             (&["⌘,"], "Connection settings"),
+            (&["t"], "Switch theme: auto, light, dark"),
             (&["?"], "Keyboard shortcuts"),
             (&["⌘W"], "Close the window"),
             (&["⌘Q"], "Quit"),

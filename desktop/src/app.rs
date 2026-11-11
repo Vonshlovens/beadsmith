@@ -16,7 +16,8 @@ use rune_kit::{SortDir, TableState};
 
 use crate::dolt::{Config, Credential, Dolt};
 use crate::model::{Failure, IssueDetail, IssueSummary, Project, Source, Unconfigured};
-use crate::settings::{self, Backing, Env, FormError, Lookup, SecretStore, StoreError, Stored};
+use crate::settings::{self, Backing, Env, FormError, Lookup, SecretStore, Session, StoreError, Stored};
+use crate::theme::Appearance;
 
 /// A value that arrives from the server.
 #[derive(Clone, Debug, PartialEq)]
@@ -100,6 +101,9 @@ pub const STATUS_FILTERS: [(&str, Filter); 6] = [
 /// The columns `s` steps the sort through: the ones the table shows at every
 /// window width, so the header always names the sort the key chose.
 pub const SORT_CYCLE: [&str; 6] = ["id", "title", "status", "blockers", "priority", "updated"];
+/// The sortable columns the table shows only in a wide window. With the
+/// cycle, every column a remembered sort may name.
+const WIDE_SORT: [&str; 2] = ["type", "assignee"];
 
 /// The issues walked through by following dependency links, so a reader who
 /// follows a blocker to its own blocker can come back the way they came, as
@@ -204,6 +208,15 @@ pub struct State {
     pub visible: Vec<usize>,
     pub search: TextEdit,
     pub status_filter: usize,
+    /// The theme preference; the view resolves it against the system's.
+    pub appearance: Appearance,
+    /// The window's content size in points, as the view's layout last
+    /// reported it, for `remember_window`. `None` in full screen, whose size
+    /// is the display's and not one to reopen a window at.
+    pub window: Option<(f32, f32)>,
+    /// The project the last session ended on, until the first project list
+    /// lands and it is chosen (or found gone).
+    last_project: Option<String>,
     pub table: TableState,
     pub issue: Option<String>,
     pub trail: Trail,
@@ -268,6 +281,20 @@ impl State {
     }
 
     pub fn new(source: Arc<dyn Source>, backing: Backing) -> State {
+        // The view the last session ended on. A name this version does not
+        // have (a tab or column since renamed, a hand-edited file) is
+        // dropped, and that one choice starts from its default.
+        let session = Session::load(&backing.prefs);
+        let status_filter =
+            session.status.and_then(|name| STATUS_FILTERS.iter().position(|(label, _)| *label == name)).unwrap_or(0);
+        // The key the view's table is built under, so the table's own
+        // reveal and `keys` scroll the same element.
+        let mut table = TableState::new().key(TABLE_KEY);
+        if let Some((column, descending)) = session.sort
+            && (SORT_CYCLE.contains(&column.as_str()) || WIDE_SORT.contains(&column.as_str()))
+        {
+            table.set_sort(&column, if descending { SortDir::Descending } else { SortDir::Ascending });
+        }
         State {
             source,
             projects: Load::Idle,
@@ -275,10 +302,11 @@ impl State {
             issues: Load::Idle,
             visible: Vec::new(),
             search: TextEdit::new(""),
-            status_filter: 0,
-            // The key the view's table is built under, so the table's own
-            // reveal and `keys` scroll the same element.
-            table: TableState::new().key(TABLE_KEY),
+            status_filter,
+            appearance: Appearance::from_name(session.theme.as_deref()),
+            window: None,
+            last_project: session.project,
+            table,
             issue: None,
             trail: Trail::default(),
             detail: Load::Idle,
@@ -366,6 +394,7 @@ impl State {
             self.stale.detail = None;
             self.updated = None;
             self.background = false;
+            self.remember();
         } else if self.issues.ready().is_none() {
             // A retry after a failed first read: show it as pending again.
             self.issues = Load::Loading;
@@ -799,6 +828,9 @@ impl State {
             match answer {
                 Ok(projects) => {
                     let first = projects.first().map(|p| p.name.clone());
+                    // The project the last session ended on, when this
+                    // server still has it; else the first.
+                    let last = self.last_project.take().filter(|l| projects.iter().any(|p| &p.name == l));
                     let current_gone = self.project.as_ref().is_some_and(|c| !projects.iter().any(|p| &p.name == c));
                     // A server with no projects has no list to date but this one.
                     if projects.is_empty() {
@@ -807,9 +839,9 @@ impl State {
                     self.projects = Load::Ready(projects);
                     self.stale.projects = None;
                     if (self.project.is_none() || current_gone)
-                        && let Some(first) = first
+                        && let Some(open) = last.or(first)
                     {
-                        self.select_project(&first);
+                        self.select_project(&open);
                     }
                 }
                 Err(f) if self.projects.ready().is_some() => self.stale.projects = Some(f),
@@ -903,14 +935,54 @@ impl State {
 
     pub fn clear_filters(&mut self) {
         self.search.replace_text("");
-        self.status_filter = 0;
+        self.set_status_filter(0);
+    }
+
+    /// Choose a status tab by its place in `STATUS_FILTERS`.
+    pub fn set_status_filter(&mut self, index: usize) {
+        self.status_filter = index;
         self.refilter();
+        self.remember();
     }
 
     pub fn sort(&mut self, column: &str, dir: SortDir) {
         self.table.set_sort(column, dir);
         self.resort();
         self.refilter();
+        self.remember();
+    }
+
+    /// Step the theme preference: system, light, dark, and round again.
+    pub fn cycle_appearance(&mut self) {
+        self.appearance = self.appearance.next();
+        self.remember();
+    }
+
+    /// Save the view for the next launch (`settings::Session`), at each
+    /// change rather than at quit, so a crash or a forced quit loses nothing.
+    /// A settings file that cannot be written costs only this memory; the
+    /// choice holds for the run, and there is nothing to retry.
+    fn remember(&mut self) {
+        let session = Session {
+            // Before the first project list lands, the project to keep is
+            // still the one the last session ended on.
+            project: self.project.clone().or_else(|| self.last_project.clone()),
+            status: STATUS_FILTERS
+                .get(self.status_filter)
+                .filter(|_| self.status_filter != 0)
+                .map(|(label, _)| (*label).to_string()),
+            sort: self.table.sort().map(|(column, dir)| (column.to_string(), dir == SortDir::Descending)),
+            theme: (self.appearance != Appearance::System).then(|| self.appearance.name().to_string()),
+        };
+        let _ = session.save(&mut self.prefs);
+    }
+
+    /// `App::on_close`: keep the size the window closes at. Its position is
+    /// not kept: Rune can place a window but not say where one is.
+    pub fn remember_window(&mut self) {
+        if let Some(size) = self.window {
+            let _ = settings::save_window(&mut self.prefs, size);
+        }
     }
 
     fn resort(&mut self) {
@@ -1252,6 +1324,104 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         panic!("requests never finished");
+    }
+
+    /// A settings file of this test's own, and a launch that reads it.
+    fn session_file(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("beadsmith-desktop-app-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir.join("prefs.json")
+    }
+
+    fn launch_from(file: &std::path::Path) -> State {
+        let mut s =
+            State::new(Arc::new(Sample), Backing { prefs: rune::prefs::Prefs::at(file), ..Backing::detached() });
+        s.load_projects();
+        drain(&mut s);
+        s
+    }
+
+    #[test]
+    fn a_relaunch_opens_on_the_view_the_last_one_ended_on() {
+        let file = session_file("relaunch");
+        let mut s = launch_from(&file);
+        assert_eq!(s.project.as_deref(), Some("lighthouse"), "nothing remembered: the first project");
+        assert_eq!((s.status_filter, s.table.sort(), s.appearance), (0, None, Appearance::System));
+
+        s.select_project("pantry");
+        drain(&mut s);
+        s.set_status_filter(2); // Open
+        s.sort("priority", SortDir::Descending);
+        s.cycle_appearance();
+        s.search.replace_text("jar");
+        s.refilter();
+        s.window = Some((1280.0, 800.0));
+        s.remember_window();
+        drop(s);
+
+        let s = launch_from(&file);
+        assert_eq!(s.project.as_deref(), Some("pantry"));
+        assert_eq!(s.status_filter, 2);
+        assert_eq!(s.table.sort(), Some(("priority", SortDir::Descending)));
+        assert_eq!(s.appearance, Appearance::Light);
+        assert_eq!(s.search.text, "", "the filter text is not kept");
+        assert_eq!(settings::load_window(&s.prefs), (1280.0, 800.0));
+        let shown: Vec<i64> = (0..s.visible.len()).map(|row| s.visible_issue(row).unwrap().priority).collect();
+        assert!(!shown.is_empty() && shown.is_sorted_by(|a, b| a >= b), "the rows land under the remembered sort");
+        assert!((0..s.visible.len()).all(|row| s.visible_issue(row).unwrap().status == "open"));
+        let _ = std::fs::remove_dir_all(file.parent().unwrap());
+    }
+
+    #[test]
+    fn choices_put_back_to_their_defaults_are_forgotten() {
+        let file = session_file("defaults");
+        let mut s = launch_from(&file);
+        s.set_status_filter(4);
+        s.cycle_appearance();
+        s.clear_filters();
+        s.cycle_appearance();
+        s.cycle_appearance();
+        drop(s);
+        let s = launch_from(&file);
+        assert_eq!((s.status_filter, s.appearance), (0, Appearance::System));
+        let _ = std::fs::remove_dir_all(file.parent().unwrap());
+    }
+
+    #[test]
+    fn a_corrupt_or_outdated_session_opens_on_the_defaults() {
+        let file = session_file("fallback");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        for saved in [
+            "{ not json",
+            r#"{"view.project":"gone","view.status":"Triaged","view.sort":"colour","ui.theme":"sepia","window.size":"big"}"#,
+            r#"{"view.project":3,"view.status":["Open"],"view.sort":true,"view.sort_descending":"yes","ui.theme":1}"#,
+        ] {
+            std::fs::write(&file, saved).unwrap();
+            let s = launch_from(&file);
+            assert_eq!(s.project.as_deref(), Some("lighthouse"), "{saved}");
+            assert_eq!((s.status_filter, s.table.sort(), s.appearance), (0, None, Appearance::System), "{saved}");
+            assert_eq!(settings::load_window(&s.prefs), settings::DEFAULT_WINDOW, "{saved}");
+            assert_eq!(s.visible.len(), Sample.issues("lighthouse").unwrap().len(), "{saved}");
+        }
+        let _ = std::fs::remove_dir_all(file.parent().unwrap());
+    }
+
+    #[test]
+    fn a_choice_made_before_the_projects_land_keeps_the_remembered_project() {
+        let mut b = Backing::detached();
+        Session { project: Some("pantry".into()), ..Session::default() }.save(&mut b.prefs).unwrap();
+        let mut s = State::new(Arc::new(Sample), b);
+        s.set_status_filter(1);
+        assert_eq!(Session::load(&s.prefs).project.as_deref(), Some("pantry"));
+        s.load_projects();
+        drain(&mut s);
+        assert_eq!(s.project.as_deref(), Some("pantry"));
+        // Full screen reports no size, so the last windowed one is kept.
+        s.window = Some((1300.0, 700.0));
+        s.remember_window();
+        s.window = None;
+        s.remember_window();
+        assert_eq!(settings::load_window(&s.prefs), (1300.0, 700.0));
     }
 
     #[test]

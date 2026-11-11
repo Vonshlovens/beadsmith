@@ -38,7 +38,10 @@ The decision record is
 - Says what is happening in every pane: outlines of the rows while they
   load, an empty project, filters that match nothing (with Clear filters),
   and each connection failure with Retry and Connection settings.
-- Follows the system's light or dark theme.
+- Follows the system's light or dark theme, or the one chosen in the title
+  bar (`[auto]`, `[light]`, `[dark]`, as in the web app).
+- Opens where it was left: the same project, status tab, sort, theme choice
+  and window size. See [What a relaunch remembers](#what-a-relaunch-remembers).
 - Keeps its connection: host, port and user in a settings file, the password
   in the macOS Keychain, set from a connection screen that can test them
   first.
@@ -141,6 +144,7 @@ is Ctrl off macOS. Plain keys never fire while you type in a field.
 | `⌘1–9`               | Switch to that project in the sidebar                                          |
 | `r` / `⌘R`           | Refresh                                                                        |
 | `⌘,`                 | Connection settings                                                            |
+| `t`                  | Switch theme: auto, light, dark                                                |
 | `?`                  | Keyboard shortcuts                                                             |
 | `⌘W`                 | Close the window                                                               |
 | `⌘Q`                 | Quit                                                                           |
@@ -315,6 +319,7 @@ scripts/bundle-macos.sh package      # target/bundle/Beadsmith-<version>-macos-<
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Host, port and user | `prefs.json` in the OS config folder: `~/Library/Application Support/Beadsmith` on macOS, `$XDG_CONFIG_HOME/Beadsmith` on Linux, `%APPDATA%\Beadsmith` on Windows |
 | Refresh interval    | `refresh.seconds` in the same `prefs.json` (see [Automatic refresh](#automatic-refresh))                                                                          |
+| The view            | `view.*`, `ui.theme` and `window.size` in the same `prefs.json` (see [What a relaunch remembers](#what-a-relaunch-remembers))                                     |
 | Password, on macOS  | The login Keychain, as a generic password named `Beadsmith Dolt` with the account `user@host:port`                                                                |
 | Password, elsewhere | Not stored: this build has no keychain binding off macOS, so set `BEADS_DOLT_PASSWORD_FILE`                                                                       |
 
@@ -327,6 +332,34 @@ thread, never to fill in the form.
 
 To forget a connection, delete `prefs.json` and remove the `Beadsmith Dolt`
 item in Keychain Access.
+
+## What a relaunch remembers
+
+The window opens on the view it was closed on. Each choice is written to
+`prefs.json` when it is made, not at quit, so a crash loses nothing; the
+window's size is written when the window closes.
+
+| Key                                 | Holds                                                     |
+| ----------------------------------- | --------------------------------------------------------- |
+| `view.project`                      | The project last open                                     |
+| `view.status`                       | The status tab, by its label; absent for All              |
+| `view.sort`, `view.sort_descending` | The sorted column and its direction; absent when unsorted |
+| `ui.theme`                          | `light` or `dark`; absent to follow the system            |
+| `window.size`                       | The window's content size in points, `[width, height]`    |
+
+The filter text is not kept: a list that opens already narrowed by words
+typed last week reads as missing issues. The selected issue is not kept
+either, since the list it was chosen from may have changed.
+
+Nothing here can stop a launch. A file that does not parse is set aside as
+`prefs.json.bad` and the app starts from its defaults. A value it cannot
+use (a project no longer on the server, a tab or column this version does
+not have, a size that is not two positive numbers) is dropped by itself:
+that choice starts from its default and the rest are kept. A full-screen
+window does not overwrite the saved size.
+
+The window's position is not remembered yet: Rune can place a window but
+has no call that says where one is.
 
 The web service's variables still work and win over the settings file, one
 field at a time, so a shell can point a single run somewhere else:
@@ -375,7 +408,8 @@ re-reading by itself (`refreshing`) and its interval being chosen
 connection screen (`connection` for a first launch, then `connection-*`),
 an issue being read from the keyboard (`reading`), one reached by
 following dependency links (`trail`, and `trail-gone` for a link to an issue
-that is not there) and the shortcuts list (`shortcuts`).
+that is not there), a theme chosen against the system's (`theme-light`,
+`theme-dark`) and the shortcuts list (`shortcuts`).
 A headless run reads no environment, settings file
 or keychain, so an image depends on its scene alone. The screenshots above
 are `--snap docs/sample-dark.png --scene sample`, the same with

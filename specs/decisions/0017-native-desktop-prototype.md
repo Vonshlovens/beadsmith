@@ -121,6 +121,11 @@ window: it still needs a running server and gains nothing native.
   overlapping and never repeating a rejected or missing password. It adds no
   statement and no authority; see
   [Automatic refresh](../../desktop/README.md#automatic-refresh).
+- The view a relaunch restores (project, status tab, sort, theme choice,
+  window size) is kept in the same settings file (`settings::Session`); it
+  holds names and numbers only, and an unusable value falls back to its
+  default. See
+  [What a relaunch remembers](../../desktop/README.md#what-a-relaunch-remembers).
 - Tests: `cargo test` in `desktop/` (unit: no server, no keychain);
   `cargo test -- --ignored` against a live server and the real Keychain.
   Headless scenes: `cargo run -- --snap out.png --scene sample`.
