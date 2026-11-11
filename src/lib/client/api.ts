@@ -8,6 +8,14 @@
 import { browser } from '$app/env';
 import { goto } from '$app/navigation';
 import type {
+	AutomationDetailResponse,
+	AutomationOverlap,
+	AutomationPreviewResponse,
+	AutomationRunView,
+	AutomationsResponse,
+	AutomationView
+} from '#lib/automations.js';
+import type {
 	DispatchProviderId,
 	AccountRole,
 	AccountView,
@@ -541,6 +549,66 @@ export const api = {
 	},
 
 	/** Cross-project File/Tackle fleet, optionally scoped to one issue. */
+	/** Automations (ADR-0019 rule 7), all or one project's. */
+	automations(filters: { project?: string } = {}, init?: RequestInitLike) {
+		return request<AutomationsResponse>('GET', '/automations', {
+			...init,
+			query: { project: filters.project }
+		});
+	},
+
+	automation(id: string, init?: RequestInitLike) {
+		return request<AutomationDetailResponse>('GET', `/automations/${encodeURIComponent(id)}`, init);
+	},
+
+	/** The next fire times of a schedule, or a `bad_request` saying why it would be refused. */
+	previewAutomation(cron: string, time_zone: string, init?: RequestInitLike) {
+		return request<AutomationPreviewResponse>('GET', '/automations/preview', {
+			...init,
+			query: { cron, time_zone }
+		});
+	},
+
+	/** Schedule a loop on the viewer's behalf; it launches on the picked runner. */
+	createAutomation(
+		body: {
+			project_id: string;
+			name: string;
+			cron: string;
+			time_zone: string;
+			overlap: AutomationOverlap;
+			launch: { operation: 'loop' } & LoopLaunch;
+		},
+		init?: RequestInitLike
+	) {
+		return request<{ automation: AutomationView }>('POST', '/automations', {
+			...init,
+			body: { ...launch_field(), ...body }
+		});
+	},
+
+	/** Pause (`false`) or resume (`true`) the schedule. */
+	setAutomationEnabled(id: string, enabled: boolean, init?: RequestInitLike) {
+		return request<{ automation: AutomationView }>(
+			'PATCH',
+			`/automations/${encodeURIComponent(id)}`,
+			{ ...init, body: { enabled } }
+		);
+	},
+
+	/** Fire it once now; the run says whether it launched a mission. */
+	runAutomation(id: string, init?: RequestInitLike) {
+		return request<{ run: AutomationRunView }>(
+			'POST',
+			`/automations/${encodeURIComponent(id)}/run`,
+			init
+		);
+	},
+
+	deleteAutomation(id: string, init?: RequestInitLike) {
+		return request<void>('DELETE', `/automations/${encodeURIComponent(id)}`, init);
+	},
+
 	missions(
 		filters: { project_id?: string; issue_id?: string; limit?: number } = {},
 		init?: RequestInitLike

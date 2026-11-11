@@ -27,6 +27,7 @@ with `useHotkeys` (`src/lib/client/hotkeys.svelte.ts`), and
 | `g r` | Ready                                            |
 | `g f` | First Mate (the chat)                            |
 | `g m` | Missions                                         |
+| `g u` | Automations                                      |
 | `g a` | Activity log                                     |
 | `g c` | Console                                          |
 | `g t` | Todos (admins)                                   |

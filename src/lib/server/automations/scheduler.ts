@@ -18,7 +18,8 @@ import type { EnqueueDispatchInput } from '../dispatch/service.js';
 import type { DispatchRecord } from '../dispatch/types.js';
 import { DispatchError } from '../dispatch/types.js';
 import { CronError, latestSlot, parseCron } from './cron.js';
-import type { Automation, AutomationRun, AutomationStore, AutomationTrigger } from './store.js';
+import type { AutomationTrigger } from '#lib/automations.js';
+import type { Automation, AutomationRun, AutomationStore } from './store.js';
 
 export interface AutomationTickDeps {
 	store: AutomationStore;

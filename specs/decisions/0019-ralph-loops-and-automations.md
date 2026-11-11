@@ -250,8 +250,15 @@ Nothing ships with this record. Planned, each in its own change:
   and an automations page. ADR-0004's list of what `state.db` holds and
   `docs/contract.md`'s dispatch section are updated when these ship.
   The tables and ticker shipped in `src/lib/server/automations/`
-  (`cron.ts`, `store.ts`, `scheduler.ts`, `runtime.ts`); the page and its
-  API are still to come. Cron is a small five-field parser in the repository
+  (`cron.ts`, `store.ts`, `scheduler.ts`, `runtime.ts`), and the page and
+  its API (`service.ts`, `/automations`, `/api/automations`) followed. A
+  template is validated with the dispatch body's own schema minus the
+  idempotency key and runner (`launch_schema`), and `launchPayload` builds
+  the stored payload for a launch and a template alike. Creating one checks
+  the schedule (refusing one with no slot in five years, which the ticker
+  would otherwise search for every minute), the project and the bead; the
+  dispatch policy is checked at each fire. The page creates loops only; the
+  API takes any operation. Cron is a small five-field parser in the repository
   rather than a dependency; like ralph's, it refuses an expression that
   restricts both day of month and day of week. Each automation keeps a
   cursor (`last_slot`), starting at creation and reset when it is

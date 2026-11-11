@@ -6,6 +6,11 @@
  */
 import { randomBytes } from 'node:crypto';
 import type { Client } from '@libsql/client';
+import type {
+	AutomationOverlap,
+	AutomationRunOutcome,
+	AutomationTrigger
+} from '#lib/automations.js';
 import type { DispatchProviderId } from '#lib/types.js';
 import type { DispatchPayload } from '../dispatch/types.js';
 
@@ -40,27 +45,6 @@ export const AUTOMATION_SCHEMA_SQL: string[] = [
 	`CREATE INDEX IF NOT EXISTS automation_runs_pending
 		ON automation_runs (outcome, slot) WHERE outcome IN ('firing', 'queued')`
 ];
-
-/**
- * What to do with a slot that falls due while the automation's previous
- * mission is still working: `skip` records it as skipped (the default);
- * `queue` holds one slot and fires it when the previous mission ends, and
- * skips any further slot while one is already waiting.
- */
-export const AUTOMATION_OVERLAPS = ['skip', 'queue'] as const;
-export type AutomationOverlap = (typeof AUTOMATION_OVERLAPS)[number];
-
-/**
- * A slot's history. `firing` is claimed and not yet resolved (a crash leaves
- * it, and the next tick finishes it); `queued` waits for the previous
- * mission; the rest are final. `refused` means dispatch policy or the
- * creator's standing said no; `failed` means the launch could not be
- * attempted (no such project or issue, Dolt unreachable).
- */
-export type AutomationRunOutcome = 'firing' | 'queued' | 'fired' | 'skipped' | 'refused' | 'failed';
-
-/** `schedule` slots are cron instants; `manual` ones are a Run now press. */
-export type AutomationTrigger = 'schedule' | 'manual';
 
 export interface Automation {
 	id: string;

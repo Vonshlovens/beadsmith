@@ -6,6 +6,8 @@ import { parseGitHubRepositoryUrl, parseGitRef } from './dispatch/repositories.j
 import type { TackleRepositoryMapping } from './dispatch/repositories.js';
 import { normalizeEndpoint } from './backup/s3.js';
 import { LOOP_MAX_ITERATIONS, RALPH_HARNESSES, RALPH_MODES } from '#lib/ralph.js';
+import { AUTOMATION_NAME_MAX, AUTOMATION_OVERLAPS } from '#lib/automations.js';
+import { CRON_MAX_LENGTH } from './automations/cron.js';
 import { EFFORT_PATTERN, MODEL_PATTERN } from '#lib/agent-session/claude-code.js';
 import {
 	CHAT_ID_PATTERN,
@@ -74,105 +76,141 @@ export const FOLLOW_UP_TEXT_MAX = 4000;
 /** Optional launch target: one of the configured providers (checked by the service). */
 const dispatch_provider_schema = z.enum(DISPATCH_PROVIDER_IDS).optional();
 
-const file_dispatch_schema = z
-	.object({
-		operation: z.literal('file'),
-		provider: dispatch_provider_schema,
-		idempotency_key: z.string().regex(IDEMPOTENCY_KEY_PATTERN, 'invalid idempotency key'),
-		notes: z.string().trim().min(1).max(8000),
-		title: z.string().trim().min(1).max(200).optional(),
-		issue_type: z.enum(['bug', 'feature', 'task', 'epic', 'chore']).optional(),
-		priority: z.number().int().min(0).max(4).optional(),
-		labels: z.array(label_schema).max(8).optional(),
-		status: z
-			.enum(['open', 'in_progress', 'blocked', 'deferred', 'closed', 'pinned', 'hooked'])
-			.optional()
-	})
-	.strict();
+/**
+ * The fields of each launch operation, without the launch envelope (the
+ * idempotency key and runner). A launch request adds the envelope; an
+ * automation stores the fields alone as its template (ADR-0019 rule 7) and
+ * keeps the runner in its own column, so both validate one shape.
+ */
+const file_launch_shape = {
+	operation: z.literal('file'),
+	notes: z.string().trim().min(1).max(8000),
+	title: z.string().trim().min(1).max(200).optional(),
+	issue_type: z.enum(['bug', 'feature', 'task', 'epic', 'chore']).optional(),
+	priority: z.number().int().min(0).max(4).optional(),
+	labels: z.array(label_schema).max(8).optional(),
+	status: z
+		.enum(['open', 'in_progress', 'blocked', 'deferred', 'closed', 'pinned', 'hooked'])
+		.optional()
+};
 
-const tackle_dispatch_schema = z
-	.object({
-		operation: z.literal('tackle'),
-		provider: dispatch_provider_schema,
-		idempotency_key: z.string().regex(IDEMPOTENCY_KEY_PATTERN, 'invalid idempotency key'),
-		issue_id: issue_id_schema,
-		destination_status: z.enum(['open', 'in_progress', 'blocked', 'deferred', 'closed']).optional()
-	})
-	.strict();
+const tackle_launch_shape = {
+	operation: z.literal('tackle'),
+	issue_id: issue_id_schema,
+	destination_status: z.enum(['open', 'in_progress', 'blocked', 'deferred', 'closed']).optional()
+};
 
-const comment_dispatch_schema = z
-	.object({
-		operation: z.literal('comment'),
-		provider: dispatch_provider_schema,
-		idempotency_key: z.string().regex(IDEMPOTENCY_KEY_PATTERN, 'invalid idempotency key'),
-		issue_id: issue_id_schema,
-		text: z.string().trim().min(1).max(8000)
-	})
-	.strict();
+const comment_launch_shape = {
+	operation: z.literal('comment'),
+	issue_id: issue_id_schema,
+	text: z.string().trim().min(1).max(8000)
+};
 
-const discuss_dispatch_schema = z
-	.object({
-		operation: z.literal('discuss'),
-		provider: dispatch_provider_schema,
-		idempotency_key: z.string().regex(IDEMPOTENCY_KEY_PATTERN, 'invalid idempotency key'),
-		issue_id: issue_id_schema,
-		intent: z.enum(['discuss', 'elaborate', 'close']),
-		message: z.string().trim().min(1).max(FOLLOW_UP_TEXT_MAX).optional()
-	})
-	.strict();
+const discuss_launch_shape = {
+	operation: z.literal('discuss'),
+	issue_id: issue_id_schema,
+	intent: z.enum(['discuss', 'elaborate', 'close']),
+	message: z.string().trim().min(1).max(FOLLOW_UP_TEXT_MAX).optional()
+};
 
 /** Bounds on a loop besides its iteration limit (LOOP_MAX_ITERATIONS in ralph.ts). */
 export const LOOP_MAX_ITERATION_TIMEOUT_MINUTES = 240;
 export const LOOP_PROMPT_MAX = 8000;
 
-const loop_dispatch_schema = z
-	.object({
-		operation: z.literal('loop'),
-		provider: dispatch_provider_schema,
-		idempotency_key: z.string().regex(IDEMPOTENCY_KEY_PATTERN, 'invalid idempotency key'),
-		mode: z.enum(RALPH_MODES),
-		prompt: z.string().trim().min(1).max(LOOP_PROMPT_MAX).optional(),
-		issue_id: issue_id_schema.optional(),
-		harness: z.enum(RALPH_HARNESSES).optional(),
-		model: z.string().regex(MODEL_PATTERN, 'invalid model').optional(),
-		effort: z.string().regex(EFFORT_PATTERN, 'invalid effort').optional(),
-		max_iterations: z.number().int().min(1).max(LOOP_MAX_ITERATIONS),
-		iteration_timeout_minutes: z
-			.number()
-			.int()
-			.min(1)
-			.max(LOOP_MAX_ITERATION_TIMEOUT_MINUTES)
-			.optional()
-	})
-	.strict()
-	.superRefine((loop, ctx) => {
-		// ralph run takes its task as a prompt; the other modes use the
-		// checkout's own prompts, so a prompt there would be silently ignored.
-		if (loop.mode === 'run' && loop.prompt === undefined) {
-			ctx.addIssue({ code: 'custom', path: ['prompt'], message: 'a run loop needs a prompt' });
-		}
-		if (loop.mode !== 'run' && loop.prompt !== undefined) {
-			ctx.addIssue({ code: 'custom', path: ['prompt'], message: 'only a run loop takes a prompt' });
-		}
-		// ralph narrows build (and records run) to one bead; plan and reverse
-		// work on the whole project (ADR-0019 rule 6).
-		if (loop.issue_id !== undefined && loop.mode !== 'build' && loop.mode !== 'run') {
-			ctx.addIssue({
-				code: 'custom',
-				path: ['issue_id'],
-				message: 'only a build or run loop works on one bead'
-			});
-		}
-	});
+const loop_launch_shape = {
+	operation: z.literal('loop'),
+	mode: z.enum(RALPH_MODES),
+	prompt: z.string().trim().min(1).max(LOOP_PROMPT_MAX).optional(),
+	issue_id: issue_id_schema.optional(),
+	harness: z.enum(RALPH_HARNESSES).optional(),
+	model: z.string().regex(MODEL_PATTERN, 'invalid model').optional(),
+	effort: z.string().regex(EFFORT_PATTERN, 'invalid effort').optional(),
+	max_iterations: z.number().int().min(1).max(LOOP_MAX_ITERATIONS),
+	iteration_timeout_minutes: z
+		.number()
+		.int()
+		.min(1)
+		.max(LOOP_MAX_ITERATION_TIMEOUT_MINUTES)
+		.optional()
+};
+
+interface LoopRuleFields {
+	mode: string;
+	prompt?: string;
+	issue_id?: string;
+}
+
+function loopRules(loop: LoopRuleFields, ctx: z.RefinementCtx): void {
+	// ralph run takes its task as a prompt; the other modes use the
+	// checkout's own prompts, so a prompt there would be silently ignored.
+	if (loop.mode === 'run' && loop.prompt === undefined) {
+		ctx.addIssue({ code: 'custom', path: ['prompt'], message: 'a run loop needs a prompt' });
+	}
+	if (loop.mode !== 'run' && loop.prompt !== undefined) {
+		ctx.addIssue({ code: 'custom', path: ['prompt'], message: 'only a run loop takes a prompt' });
+	}
+	// ralph narrows build (and records run) to one bead; plan and reverse
+	// work on the whole project (ADR-0019 rule 6).
+	if (loop.issue_id !== undefined && loop.mode !== 'build' && loop.mode !== 'run') {
+		ctx.addIssue({
+			code: 'custom',
+			path: ['issue_id'],
+			message: 'only a build or run loop works on one bead'
+		});
+	}
+}
+
+/** Every launch operation's fields plus `envelope`, extra keys refused. */
+function launchSchema<E extends z.ZodRawShape>(envelope: E) {
+	return z.discriminatedUnion('operation', [
+		z.object({ ...file_launch_shape, ...envelope }).strict(),
+		z.object({ ...tackle_launch_shape, ...envelope }).strict(),
+		z.object({ ...comment_launch_shape, ...envelope }).strict(),
+		z.object({ ...discuss_launch_shape, ...envelope }).strict(),
+		z
+			.object({ ...loop_launch_shape, ...envelope })
+			.strict()
+			.superRefine((loop, ctx) => loopRules(loop as LoopRuleFields, ctx))
+	]);
+}
 
 /** Body of `POST /api/projects/:id/dispatch`. */
-export const dispatch_schema = z.discriminatedUnion('operation', [
-	file_dispatch_schema,
-	tackle_dispatch_schema,
-	comment_dispatch_schema,
-	discuss_dispatch_schema,
-	loop_dispatch_schema
-]);
+export const dispatch_schema = launchSchema({
+	provider: dispatch_provider_schema,
+	idempotency_key: z.string().regex(IDEMPOTENCY_KEY_PATTERN, 'invalid idempotency key')
+});
+
+/** One launch's fields without its envelope: what an automation fires. */
+export const launch_schema = launchSchema({});
+export type LaunchBody = z.infer<typeof launch_schema>;
+
+export const automation_id_schema = z.string().regex(/^au_[a-f0-9]{32}$/, 'invalid automation id');
+
+const automation_schedule_shape = {
+	cron: z.string().trim().min(1).max(CRON_MAX_LENGTH),
+	time_zone: z.string().trim().min(1).max(64)
+};
+
+/** Body of `POST /api/automations` (ADR-0019 rule 7). Extra keys fail closed. */
+export const automation_create_schema = z
+	.object({
+		project_id: project_id_schema,
+		name: z.string().trim().min(1).max(AUTOMATION_NAME_MAX),
+		...automation_schedule_shape,
+		overlap: z.enum(AUTOMATION_OVERLAPS).default('skip'),
+		provider: dispatch_provider_schema,
+		launch: launch_schema
+	})
+	.strict();
+
+/** Body of `PATCH /api/automations/:id`: pause or resume. */
+export const automation_patch_schema = z.object({ enabled: z.boolean() }).strict();
+
+/** Query of `GET /api/automations`. */
+export const automations_query_schema = z.object({ project: project_id_schema.optional() });
+
+/** Query of `GET /api/automations/preview`. */
+export const automation_preview_schema = z.object(automation_schedule_shape);
 
 export const dispatch_request_id_schema = z
 	.string()

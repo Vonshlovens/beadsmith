@@ -486,13 +486,18 @@ export function toPublicDispatch(record: DispatchRecord) {
 		created_at: record.created_at,
 		updated_at: record.updated_at,
 		error_message: record.status === 'failed' ? record.error_message : undefined,
-		loop: publicLoop(record)
+		loop: publicLoop(record.payload, record.loop_end)
 	};
 }
 
-/** A loop's flags and how it ended; never its `run` prompt. */
-function publicLoop(record: DispatchRecord): DispatchLoop | undefined {
-	const payload = record.payload;
+/**
+ * A loop's flags and how it ended; never its `run` prompt. Automations show
+ * their template's flags with it too.
+ */
+export function publicLoop(
+	payload: DispatchPayload,
+	loop_end?: DispatchRecord['loop_end']
+): DispatchLoop | undefined {
 	if (payload.operation !== 'loop') return undefined;
 	const loop: DispatchLoop = { mode: payload.mode };
 	if (payload.issue_id !== undefined) loop.issue_id = payload.issue_id;
@@ -503,9 +508,9 @@ function publicLoop(record: DispatchRecord): DispatchLoop | undefined {
 	if (payload.iteration_timeout_minutes !== undefined) {
 		loop.iteration_timeout_minutes = payload.iteration_timeout_minutes;
 	}
-	if (record.loop_end !== undefined) {
-		if (record.loop_end.stop_reason !== null) loop.stop_reason = record.loop_end.stop_reason;
-		loop.needs_person = record.loop_end.needs_person;
+	if (loop_end !== undefined) {
+		if (loop_end.stop_reason !== null) loop.stop_reason = loop_end.stop_reason;
+		loop.needs_person = loop_end.needs_person;
 	}
 	return loop;
 }

@@ -207,7 +207,8 @@ service-token principal for GET/HEAD `/api` as specified in
 required). That principal is a read-only member.
 
 Roles: `admin` may use `/console`, every `/api/console/*` route (backups and
-accounts included), and File/Tackle/comment launch, cancel, and follow-up.
+accounts included), File/Tackle/comment launch, cancel, and follow-up, and
+automation changes.
 `member` may read, manage its own session and password, set the theme, and
 refresh projects. Any other API write requires admin. The last admin cannot
 be removed or demoted. The first account needs the one-time setup token from
@@ -297,6 +298,25 @@ Mate chats; `POST .../:id/messages` `{text, message_id?}` (text capped at
 ones as the same sanitized MissionEvent union; `POST .../:id/interrupt`
 stops the agent's current turn. `GET /api/mate/status` tells any signed-in
 viewer whether First Mate answers them.
+
+`GET /api/automations` (optionally `?project=`) lists automations to any
+signed-in viewer: name, project, schedule, time zone, overlap policy,
+runner, enabled, the next fire time and the last run. It shows what each
+launches (operation, bead, loop flags) but never the launch's text (File
+notes, a comment, a `run` prompt) or the creator's account. `GET
+/api/automations/:id` adds the next five fire times and the newest 50 runs
+(slot, trigger, outcome, mission id, message). `GET
+/api/automations/preview?cron=&time_zone=` returns the next five fire times
+of a schedule being typed, or why it would be refused. The writes need
+`dispatch:launch` and a signed-in account, since the automation acts on its
+creator's behalf: `POST /api/automations` `{project_id, name, cron,
+time_zone, overlap?, provider?, launch}` validates `launch` with the same
+schema as a dispatch body (without its idempotency key and runner) and
+refuses an unknown project or bead and a schedule with no fire time in five
+years; `PATCH /api/automations/:id` `{enabled}` pauses or resumes (resuming
+never fires the slots missed while paused); `DELETE` removes the automation
+and its history but not its missions; `POST /api/automations/:id/run`
+fires it once now through the scheduler's path.
 
 `GET /api/ready` is the cross-project Ready deck: open issues with no open
 `blocks` dependencies, merged across catalog projects the session can see,

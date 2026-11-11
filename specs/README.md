@@ -86,9 +86,10 @@ reality**. Search `src/` before treating a spec as implemented.
   follow. **Automations** are Beadsmith's: dispatch templates on a cron in
   `state.db`, fired by an in-process ticker
   (`src/lib/server/automations/`) through dispatch as the automation on
-  behalf of its creator; ralph's own schedules are not used. The ticker
-  ships; the automations page and its API follow
-  ([ADR-0019](decisions/0019-ralph-loops-and-automations.md)).
+  behalf of its creator; ralph's own schedules are not used. Admins
+  create, run now, pause and delete them on the Automations page
+  (`/automations`, `/api/automations`), which shows each one's next runs and
+  history ([ADR-0019](decisions/0019-ralph-loops-and-automations.md)).
 - **Underclass is the model gateway** on forge: a subscription pool on host
   loopback that guests reach only through the host's key-injecting filter,
   so no guest holds the proxy key or can reach Underclass's UI or admin API.
