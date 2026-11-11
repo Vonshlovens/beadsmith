@@ -142,14 +142,17 @@ class FakeSandbox implements SandboxRef {
 		return this.files.get(`${RUNS_DIR}/${run_id}/${name}`);
 	}
 
-	/** The previous run's claim time while its starter has not finished. */
+	/** The newest claim time among earlier runs whose starters have not finished. */
 	previousStart(run_id: string): number | undefined {
-		const prev = `r${Number(run_id.slice(1)) - 1}`;
-		const run = this.runs.get(prev);
-		if (run?.claimed_s === undefined) return undefined;
-		if (this.file(prev, 'start-done') !== undefined) return undefined;
-		if (this.file(prev, 'result.json') !== undefined) return undefined;
-		return run.claimed_s;
+		let newest: number | undefined;
+		for (const [id, run] of this.runs) {
+			if (Number(id.slice(1)) >= Number(run_id.slice(1))) continue;
+			if (run.claimed_s === undefined) continue;
+			if (this.file(id, 'start-done') !== undefined) continue;
+			if (this.file(id, 'result.json') !== undefined) continue;
+			newest = Math.max(newest ?? 0, run.claimed_s);
+		}
+		return newest;
 	}
 
 	/** The transcript's line count, as `wc -l` gives it for the path in a command. */
@@ -212,9 +215,15 @@ class FakeSandbox implements SandboxRef {
 			run.claimed_s = 1000;
 			return { exit_code: 0, stdout: '' };
 		}
-		if (command.startsWith("[ -f '") && command.endsWith("/cancelled' ]")) {
-			const run = run_of(/runs\/(r[0-9]+)\/cancelled/);
-			return { exit_code: run?.cancelled ? 0 : 1, stdout: '' };
+		if (command.startsWith("[ -f '") && command.includes("/cancelled' ] && echo cancelled=1")) {
+			const id = /runs\/(r[0-9]+)\/cancelled/.exec(command)![1];
+			const later = [...this.runs].some(
+				([r, run]) => Number(r.slice(1)) > Number(id.slice(1)) && run.claimed_s !== undefined
+			);
+			return {
+				exit_code: 0,
+				stdout: `${this.runs.get(id)?.cancelled ? 'cancelled=1\n' : ''}${later ? 'later=1\n' : ''}`
+			};
 		}
 		if (command.startsWith("cat '")) {
 			const path = /^cat '([^']+)'/.exec(command)![1];
@@ -787,6 +796,66 @@ describe('E2B provider', () => {
 		}
 		expect(claude.sends()).toEqual(['Try again']);
 		expect(claude.live()).toBeDefined();
+	});
+
+	it('waits for every earlier starter, past a cancelled run that never claimed a start', async () => {
+		const { provider, claude, sandboxes } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		const sandbox = sandboxes.get('sbx1')!;
+		// r1's starter stalls reading its prompt, before any CLI exists.
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => (release = resolve));
+		sandbox.hold = (command) => (command === `cat '${RUNS_DIR}/r1/prompt'` ? held : undefined);
+		const first = provider.getRun('sbx1', 'r1');
+		await later(10);
+		await provider.cancelRun!('sbx1', 'r1');
+		// r2 is cancelled before anything claimed its start.
+		expect(await provider.createRun!('sbx1', 'Second')).toEqual({ run_id: 'r2' });
+		await provider.cancelRun!('sbx1', 'r2');
+		expect(sandbox.runs.get('r2')!.claimed_s).toBeUndefined();
+		expect(await provider.createRun!('sbx1', 'Third')).toEqual({ run_id: 'r3' });
+		// r3 waits for r1's starter even though r2, its previous run, never claimed.
+		expect(await provider.getRun('sbx1', 'r3')).toEqual({ status: 'running' });
+		expect(sandbox.runs.get('r3')!.claimed_s).toBeUndefined();
+		release();
+		expect(await first).toEqual({ status: 'cancelled' });
+		expect(await provider.getRun('sbx1', 'r3')).toEqual({ status: 'running' });
+		expect(claude.sends()).toEqual(['Third']);
+		expect([...claude.core.terminals.values()].filter((t) => t.state === 'live')).toHaveLength(1);
+		claude.finish();
+		expect((await provider.getRun('sbx1', 'r3')).status).toBe('succeeded');
+	});
+
+	it('never lets a starter act on the CLI once a later run claimed its start', async () => {
+		const { provider, claude, sandboxes } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		const sandbox = sandboxes.get('sbx1')!;
+		// r1's starter passed its first check and stalls opening hc.
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => (release = resolve));
+		let holding = true;
+		sandbox.hold = (command) => {
+			if (!holding || command !== `${HC_CARRIER} connect`) return undefined;
+			holding = false;
+			return held;
+		};
+		const first = provider.getRun('sbx1', 'r1');
+		await later(10);
+		await provider.cancelRun!('sbx1', 'r1');
+		await provider.createRun!('sbx1', 'Second');
+		await provider.cancelRun!('sbx1', 'r2');
+		// r1's claim reads stale in the sandbox, so r3 starts; r1's own clock
+		// has not reached its act limit, so only r3's claim fences it off.
+		sandbox.runs.get('r1')!.claimed_s = 1;
+		await provider.createRun!('sbx1', 'Third');
+		expect(await provider.getRun('sbx1', 'r3')).toEqual({ status: 'running' });
+		release();
+		await first;
+		expect(claude.sends()).toEqual(['Third']);
+		expect(claude.live()).toBeDefined();
+		expect([...claude.core.terminals.values()].filter((t) => t.state === 'live')).toHaveLength(1);
 	});
 
 	it("lets a follow-up start once a dead starter's claim is stale", async () => {

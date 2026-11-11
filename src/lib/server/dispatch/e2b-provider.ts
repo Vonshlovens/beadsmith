@@ -241,8 +241,10 @@ export interface RunFiles {
 	/** Seconds since a Beadsmith process claimed the start. */
 	claim_age_s?: number;
 	/**
-	 * Seconds since the previous run's start was claimed, while that starter
-	 * has not finished (no `start-done`, no result).
+	 * Seconds since the newest start claimed by any earlier run whose starter
+	 * has not finished (no `start-done`, no result). Every earlier run counts,
+	 * not just the previous one: a run cancelled before it claimed a start
+	 * leaves no claim, and an older starter behind it may still be going.
 	 */
 	previous_start_age_s?: number;
 	turn?: TurnMark;
@@ -259,20 +261,38 @@ export interface StoredResult extends Omit<AgentRunUpdate, 'status'> {
 
 function statusCommand(run_id: string): string {
 	const dir = `${RUNS_DIR}/${run_id}`;
-	const prev = `${RUNS_DIR}/r${runNumber(run_id) - 1}`;
 	return [
 		`d='${dir}'`,
 		`if [ ! -d "$d" ]; then echo missing; exit 0; fi`,
-		`p='${prev}'`,
 		`printf 'exit=%s\\n' "$(cat "$d/exit" 2>/dev/null)"`,
 		`printf 'cancelled=%s\\n' "$([ -f "$d/cancelled" ] && echo 1)"`,
 		`printf 'ready=%s\\n' "$([ -f "$d/ready" ] && echo 1)"`,
 		`printf 'claimed=%s\\n' "$(stat -c %Y "$d/claim" 2>/dev/null)"`,
 		`printf 'started=%s\\n' "$([ -f "$d/started" ] && echo 1)"`,
-		`printf 'prev_claimed=%s\\n' "$([ -f "$p/start-done" ] || [ -f "$p/result.json" ] || stat -c %Y "$p/claim" 2>/dev/null)"`,
+		`pc=; for e in $(ls -1 '${RUNS_DIR}' 2>/dev/null | grep -E '^r[0-9]+$' | cut -c2-); do ` +
+			`[ "$e" -lt ${runNumber(run_id)} ] || continue; q='${RUNS_DIR}'/r$e; ` +
+			`{ [ -f "$q/start-done" ] || [ -f "$q/result.json" ]; } && continue; ` +
+			`t=$(stat -c %Y "$q/claim" 2>/dev/null) || continue; ` +
+			`{ [ -z "$pc" ] || [ "$t" -gt "$pc" ]; } && pc=$t; ` +
+			`done`,
+		`printf 'prev_claimed=%s\\n' "$pc"`,
 		`printf 'now=%s\\n' "$(date +%s)"`,
 		`printf 'turn=%s\\n' "$(head -c 4096 "$d/turn.json" 2>/dev/null)"`,
 		`printf 'result=%s\\n' "$(head -c 16384 "$d/result.json" 2>/dev/null)"`
+	].join('; ');
+}
+
+/**
+ * `startFence`'s files: `cancelled=1` when the run is cancelled, `later=1`
+ * when a later run has claimed its start.
+ */
+function startFenceCommand(run_id: string): string {
+	return [
+		`[ -f '${RUNS_DIR}/${run_id}/cancelled' ] && echo cancelled=1`,
+		`for m in $(ls -1 '${RUNS_DIR}' 2>/dev/null | grep -E '^r[0-9]+$' | cut -c2-); do ` +
+			`[ "$m" -gt ${runNumber(run_id)} ] && [ -d '${RUNS_DIR}'/r$m/claim ] && { echo later=1; break; }; ` +
+			`done`,
+		`true`
 	].join('; ');
 }
 
@@ -754,9 +774,18 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		return parseRunFiles(stdout);
 	}
 
-	async function isCancelled(sandbox: SandboxRef, run_id: string): Promise<boolean> {
-		const { exit_code } = await sandbox.exec(`[ -f '${RUNS_DIR}/${run_id}/cancelled' ]`);
-		return exit_code === 0;
+	/**
+	 * A starter's check before it acts on the CLI: whether its run is
+	 * cancelled, and whether any later run has claimed its start, after which
+	 * the one CLI session is that run's.
+	 */
+	async function startFence(
+		sandbox: SandboxRef,
+		run_id: string
+	): Promise<{ cancelled: boolean; superseded: boolean }> {
+		const { stdout } = await sandbox.exec(startFenceCommand(run_id));
+		const fields = stdout.split('\n').map((line) => line.trim());
+		return { cancelled: fields.includes('cancelled=1'), superseded: fields.includes('later=1') };
 	}
 
 	async function writeResult(sandbox: SandboxRef, run_id: string, result: StoredResult) {
@@ -777,10 +806,12 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 	 *
 	 * Every run of a mission shares one CLI session, so a cancelled run's
 	 * starter that resumed after a follow-up started would attach to the
-	 * follow-up's CLI and end it. Two guards keep them apart: the next run's
-	 * turn waits until this starter writes `start-done` (see `advance`), and
-	 * a starter stalled past START_ACT_LIMIT_MS, when the next run stops
-	 * waiting for it, leaves the CLI alone.
+	 * follow-up's CLI and end it. Two guards keep them apart: a later run's
+	 * turn waits until every earlier starter writes `start-done` (see
+	 * `advance`; a cancelled run in between may never have claimed, so the
+	 * previous run alone is not enough), and a starter leaves the CLI alone
+	 * once a later run has claimed its start or once it has stalled past
+	 * START_ACT_LIMIT_MS, when later runs stop waiting for it.
 	 */
 	async function startTurn(
 		sandbox: SandboxRef,
@@ -792,24 +823,35 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		const claim = await sandbox.exec(claimTurnCommand(run_id, transcriptOf(info)));
 		if (claim.exit_code !== 0) return;
 		const claimed_at = Date.now();
-		/** Still this run's to act on; false once the next run may have started. */
-		const mine = () => Date.now() - claimed_at < START_ACT_LIMIT_MS;
+		/**
+		 * Whether the run is cancelled, and whether the CLI is still this
+		 * run's to act on: false once a later run claimed its start, or may
+		 * have stopped waiting for this one.
+		 */
+		const check = async () => {
+			const fence = await startFence(sandbox, run_id);
+			const mine = !fence.superseded && Date.now() - claimed_at < START_ACT_LIMIT_MS;
+			return { cancelled: fence.cancelled, mine };
+		};
 		let client: HcClient | undefined;
 		let session: AgentSession | undefined;
 		try {
 			const { stdout: prompt } = await sandbox.exec(`cat '${dir}/prompt'`);
-			if ((await isCancelled(sandbox, run_id)) || !mine()) return;
+			let state = await check();
+			if (state.cancelled || !state.mine) return;
 			client = await connectHc(sandbox);
 			session = newSession(info, redact, () => {});
 			await session.attach(client);
-			if (!mine()) return;
-			if (await isCancelled(sandbox, run_id)) {
-				if (mine()) await session.cancel();
+			state = await check();
+			if (!state.mine) return;
+			if (state.cancelled) {
+				await session.cancel();
 				return;
 			}
 			const mark = await session.send(prompt);
 			await sandbox.writeFile(`${dir}/turn.json`, JSON.stringify(mark));
-			if ((await isCancelled(sandbox, run_id)) && mine()) await session.cancel();
+			state = await check();
+			if (state.cancelled && state.mine) await session.cancel();
 		} catch (error) {
 			log(`Sand mission ${sandbox.id}/${run_id}: the agent could not start: ${String(error)}`);
 			const message =
@@ -947,7 +989,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 				}
 			};
 		}
-		// The previous run's starter, if still going, could act on the one CLI
+		// An earlier run's starter, if still going, could act on the one CLI
 		// session this turn is about to use (see `startTurn`): wait for it.
 		const previous_starting = (files.previous_start_age_s ?? Infinity) <= START_STALE_S;
 		if (files.ready && files.turn === undefined && files.claim_age_s === undefined) {
