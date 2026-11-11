@@ -49,6 +49,9 @@ impl Stale {
     }
 }
 
+/// The issue table's element key.
+pub const TABLE_KEY: &str = "issues";
+
 /// The status filter above the issue table.
 pub const STATUS_FILTERS: [(&str, Option<&str>); 5] = [
     ("All", None),
@@ -57,6 +60,30 @@ pub const STATUS_FILTERS: [(&str, Option<&str>); 5] = [
     ("Blocked", Some("blocked")),
     ("Closed", Some("closed")),
 ];
+
+/// The columns `s` steps the sort through: the ones the table shows at every
+/// window width, so the header always names the sort the key chose.
+pub const SORT_CYCLE: [&str; 5] = ["id", "title", "status", "priority", "updated"];
+
+/// Which pane plain keys drive. Rune can move keyboard focus to a text field
+/// but not to an arbitrary element, so "the detail pane has the keyboard" is
+/// the app's own state: the view rings the pane, and `keys` reads this to
+/// decide whether `j` moves the selection or scrolls the issue.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Pane {
+    #[default]
+    List,
+    Detail,
+}
+
+/// A move of the selection through the visible rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Step {
+    Next,
+    Previous,
+    First,
+    Last,
+}
 
 /// What "Test connection" last found for the values now in the form.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,6 +148,9 @@ pub struct State {
     pub issue: Option<String>,
     pub detail: Load<Option<IssueDetail>>,
     pub stale: Stale,
+    pub pane: Pane,
+    /// The keyboard shortcuts overlay is open.
+    pub shortcuts: bool,
     projects_req: Latest<Result<Vec<Project>, Failure>>,
     issues_req: Latest<IssuesAnswer>,
     detail_req: Latest<DetailAnswer>,
@@ -165,10 +195,14 @@ impl State {
             visible: Vec::new(),
             search: TextEdit::new(""),
             status_filter: 0,
-            table: TableState::new(),
+            // The key the view's table is built under, so the table's own
+            // reveal and `keys` scroll the same element.
+            table: TableState::new().key(TABLE_KEY),
             issue: None,
             detail: Load::Idle,
             stale: Stale::default(),
+            pane: Pane::List,
+            shortcuts: false,
             projects_req: Latest::default(),
             issues_req: Latest::default(),
             detail_req: Latest::default(),
@@ -211,6 +245,7 @@ impl State {
             self.visible.clear();
             self.table.clear_selection();
             self.issue = None;
+            self.pane = Pane::List;
             self.detail = Load::Idle;
             self.detail_req.cancel();
             self.stale.issues = None;
@@ -243,6 +278,84 @@ impl State {
             let answer = source.issue(&db, &id);
             (db, id, answer)
         });
+    }
+
+    // -- Keyboard ------------------------------------------------------------------------------
+    // What the keys in `keys.rs` do to the state. Scrolling and focus are the
+    // caller's, since they need Rune's `Tx`.
+
+    /// A dialog owns the keyboard: no window shortcut may act under it.
+    pub fn modal_open(&self) -> bool {
+        self.connection.is_some() || self.shortcuts
+    }
+
+    /// The selected issue's row among the visible ones. `None` when nothing
+    /// is selected or the filters hide it.
+    pub fn selected_row(&self) -> Option<usize> {
+        let id = self.issue.as_deref()?;
+        (0..self.visible.len()).find(|&row| self.visible_issue(row).is_some_and(|i| i.id == id))
+    }
+
+    /// Move the selection through the rows as filtered and sorted, stopping
+    /// at the ends as the table's own arrows do. With no row selected (or the
+    /// selected one filtered out) Next starts at the top and Previous at the
+    /// bottom. Returns the issue now selected, for the caller to scroll to.
+    pub fn move_selection(&mut self, step: Step) -> Option<String> {
+        let last = self.visible.len().checked_sub(1)?;
+        let row = match (step, self.selected_row()) {
+            (Step::First, _) | (Step::Next, None) => 0,
+            (Step::Last, _) | (Step::Previous, None) => last,
+            (Step::Next, Some(row)) => (row + 1).min(last),
+            (Step::Previous, Some(row)) => row.saturating_sub(1),
+        };
+        let id = self.visible_issue(row)?.id.clone();
+        self.pane = Pane::List;
+        self.select_issue(&id);
+        Some(id)
+    }
+
+    /// Give the keyboard to the selected issue's pane. False when no issue is
+    /// selected, so there is nothing to read.
+    pub fn open_detail(&mut self) -> bool {
+        if self.issue.is_some() {
+            self.pane = Pane::Detail;
+        }
+        self.issue.is_some()
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.table.clear_selection();
+        self.issue = None;
+        self.pane = Pane::List;
+        self.detail = Load::Idle;
+        self.detail_req.cancel();
+        self.stale.detail = None;
+    }
+
+    pub fn has_filters(&self) -> bool {
+        self.status_filter != 0 || !self.search.text.is_empty()
+    }
+
+    /// The `n`th project in the sidebar, from 0. False when there is none.
+    pub fn select_project_at(&mut self, n: usize) -> bool {
+        let Some(name) = self.projects.ready().and_then(|p| p.get(n)).map(|p| p.name.clone()) else { return false };
+        self.select_project(&name);
+        true
+    }
+
+    /// Sort by the column after the current one in `SORT_CYCLE`, ascending:
+    /// the keyboard's way to a header click.
+    pub fn sort_next(&mut self) {
+        let current = self.table.sort().and_then(|(column, _)| SORT_CYCLE.iter().position(|c| *c == column));
+        let next = current.map_or(0, |n| (n + 1) % SORT_CYCLE.len());
+        self.sort(SORT_CYCLE[next], SortDir::Ascending);
+    }
+
+    /// Flip the direction of the current sort. False when nothing is sorted.
+    pub fn sort_reverse(&mut self) -> bool {
+        let Some((column, dir)) = self.table.sort().map(|(c, d)| (c.to_string(), d)) else { return false };
+        self.sort(&column, dir.flip());
+        true
     }
 
     /// Re-read everything on screen. This is also "Retry": a read that
@@ -380,6 +493,7 @@ impl State {
         self.visible.clear();
         self.table.clear_selection();
         self.issue = None;
+        self.pane = Pane::List;
         self.detail = Load::Idle;
         self.stale = Stale::default();
         self.load_projects();
@@ -856,6 +970,112 @@ mod tests {
         assert!(s.visible.is_empty());
         s.clear_filters();
         assert_eq!((s.visible.len(), s.status_filter, s.search.text.as_str()), (9, 0, ""));
+    }
+
+    fn ids(s: &State) -> Vec<String> {
+        (0..s.visible.len()).map(|r| s.visible_issue(r).unwrap().id.clone()).collect()
+    }
+
+    #[test]
+    fn the_selection_moves_through_the_rows_and_stops_at_the_ends() {
+        let mut s = loaded();
+        let all = ids(&s);
+        assert_eq!(s.move_selection(Step::Next), Some(all[0].clone()), "nothing selected: start at the top");
+        assert_eq!(s.move_selection(Step::Next), Some(all[1].clone()));
+        assert!(s.table.is_selected(&all[1]), "the table shows the same selection");
+        assert_eq!(s.move_selection(Step::Previous), Some(all[0].clone()));
+        assert_eq!(s.move_selection(Step::Previous), Some(all[0].clone()), "no wrap at the top");
+        assert_eq!(s.move_selection(Step::Last), all.last().cloned());
+        assert_eq!(s.move_selection(Step::Next), all.last().cloned(), "no wrap at the bottom");
+        assert_eq!(s.move_selection(Step::First), Some(all[0].clone()));
+
+        s.clear_selection();
+        assert_eq!((s.issue.as_deref(), s.selected_row(), &s.detail), (None, None, &Load::Idle));
+        assert_eq!(
+            s.move_selection(Step::Previous),
+            all.last().cloned(),
+            "nothing selected: Previous starts at the end"
+        );
+    }
+
+    #[test]
+    fn the_selection_moves_over_the_rows_as_filtered_and_sorted() {
+        let mut s = loaded();
+        s.sort("priority", SortDir::Ascending);
+        let sorted = ids(&s);
+        s.move_selection(Step::Next);
+        s.move_selection(Step::Next);
+        assert_eq!(s.issue, Some(sorted[1].clone()), "rows are walked in the sorted order");
+
+        // A re-sort keeps the issue, not the row number.
+        s.sort("priority", SortDir::Descending);
+        let row = s.selected_row().expect("still visible");
+        assert_eq!(ids(&s)[row], sorted[1]);
+        let after = ids(&s)[(row + 1).min(sorted.len() - 1)].clone();
+        assert_eq!(s.move_selection(Step::Next), Some(after));
+
+        // Filtered: only matching rows are stops.
+        s.status_filter = 1; // Open
+        s.refilter();
+        let open = ids(&s);
+        assert!(open.len() > 1 && open.len() < sorted.len());
+        s.move_selection(Step::First);
+        let mut walked = vec![s.issue.clone().unwrap()];
+        for _ in 1..open.len() {
+            walked.push(s.move_selection(Step::Next).unwrap());
+        }
+        assert_eq!(walked, open);
+
+        // The selected issue filtered out: the next move starts from an end.
+        s.search.replace_text("gasket");
+        s.refilter();
+        assert_eq!(ids(&s), ["lh-5"]);
+        s.select_issue("lh-1");
+        assert_eq!(s.selected_row(), None);
+        assert_eq!(s.move_selection(Step::Next).as_deref(), Some("lh-5"));
+
+        s.search.replace_text("no such issue");
+        s.refilter();
+        assert_eq!(s.move_selection(Step::Next), None, "no rows, no move");
+        assert_eq!(s.issue.as_deref(), Some("lh-5"), "and the selection stays");
+    }
+
+    #[test]
+    fn the_detail_pane_takes_the_keyboard_only_with_an_issue_and_hands_it_back() {
+        let mut s = loaded();
+        assert!(!s.open_detail(), "nothing to read");
+        assert_eq!(s.pane, Pane::List);
+        s.move_selection(Step::Next);
+        assert!(s.open_detail());
+        assert_eq!(s.pane, Pane::Detail);
+        s.move_selection(Step::Next);
+        assert_eq!(s.pane, Pane::List, "moving the selection is a list action");
+        s.open_detail();
+        s.select_project("pantry");
+        assert_eq!(s.pane, Pane::List, "another project has no issue open");
+    }
+
+    #[test]
+    fn projects_switch_by_position_and_the_sort_steps_through_the_columns() {
+        let mut s = loaded();
+        let second = s.projects.ready().unwrap()[1].name.clone();
+        assert!(s.select_project_at(1));
+        assert_eq!(s.project, Some(second));
+        assert!(!s.select_project_at(99));
+
+        let mut s = loaded();
+        assert!(!s.sort_reverse(), "nothing is sorted yet");
+        for column in SORT_CYCLE {
+            s.sort_next();
+            assert_eq!(s.table.sort(), Some((column, SortDir::Ascending)));
+        }
+        s.sort_next();
+        assert_eq!(s.table.sort(), Some((SORT_CYCLE[0], SortDir::Ascending)), "the cycle wraps");
+        assert!(s.sort_reverse());
+        assert_eq!(s.table.sort(), Some((SORT_CYCLE[0], SortDir::Descending)));
+        assert!(!s.has_filters());
+        s.status_filter = 2;
+        assert!(s.has_filters());
     }
 
     #[test]

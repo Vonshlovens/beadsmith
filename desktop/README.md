@@ -20,7 +20,9 @@ The decision record is
 - Shows the selected issue: Markdown description, design, acceptance
   criteria and notes, labels, dependencies both ways (click one to open it)
   and comments.
-- Refreshes on the Refresh button above the table or Ctrl/Cmd-R. A refresh
+- Works from the keyboard: every action has a key, listed under
+  [Keyboard](#keyboard) and in the app on `?`.
+- Refreshes on the Refresh button above the table, `r` or `⌘R`. A refresh
   that fails keeps what was on screen under a banner that says it may be out
   of date; a failed read never shows as an empty list.
 - Says what is happening in every pane: outlines of the rows while they
@@ -53,6 +55,49 @@ in both themes.
   window buttons and drags the window.
 - Below 1280 points wide the table drops its Type and Assignee columns (the
   detail pane shows both) so titles keep their room.
+
+## Keyboard
+
+Every action is reachable without a pointer. Keys follow the web app's
+([`docs/keyboard.md`](../docs/keyboard.md)) wherever both define the action;
+`?` (or the `?` button under the project list) shows this list in the app. `⌘`
+is Ctrl off macOS. Plain keys never fire while you type in a field.
+
+| Keys                 | Does                                                                           |
+| -------------------- | ------------------------------------------------------------------------------ |
+| `j` / `↓`            | Next issue                                                                     |
+| `k` / `↑`            | Previous issue                                                                 |
+| `Home` / `End`       | First or last issue                                                            |
+| `o` / `Enter`        | Read the selected issue                                                        |
+| `s`                  | Sort by the next column                                                        |
+| `⇧S`                 | Reverse the sort                                                               |
+| `/` / `⌘F`           | Filter issues                                                                  |
+| `j` / `↓` / `Space`  | Page down                                                                      |
+| `k` / `↑` / `⇧Space` | Page up                                                                        |
+| `Home` / `End`       | Top or bottom                                                                  |
+| `Tab`                | Step through its links                                                         |
+| `Esc`                | Back: leave the field or the issue, then clear the filters, then the selection |
+| `⌘1–9`               | Switch to that project in the sidebar                                          |
+| `r` / `⌘R`           | Refresh                                                                        |
+| `⌘,`                 | Connection settings                                                            |
+| `?`                  | Keyboard shortcuts                                                             |
+| `⌘W`                 | Close the window                                                               |
+| `⌘Q`                 | Quit                                                                           |
+
+The list has two modes, as a mail client does. In the list, `j` and `k` move
+the selection and keep its row in view. `Enter` hands the keyboard to the
+issue on the right (a ring marks the pane): the same keys then page through
+it, `Tab` walks its dependency links, and `Esc` returns to the list. In the
+filter field, `Enter` or `↓` moves to the matches.
+
+The list is `SHORTCUTS` in [`src/keys.rs`](src/keys.rs), where one function
+maps keys to commands and another runs them; a unit test fails if this table
+and that list disagree.
+
+On macOS the same commands are in the menu bar (the application menu, View,
+Go and Help), and Edit and Window are the system's standard ones, so `⌘W`,
+`⌘M` and `⌘Q` behave as in any Mac app. Rune has no native menus on Linux or
+Windows; there `Ctrl+W` and `Ctrl+Q` are bound by the app itself.
 
 ## The read contract
 
@@ -203,8 +248,10 @@ them all: the data (`sample`, `filtered`), every pane while it loads
 (`loading`, `loading-issues`, `loading-issue`), the empty and failed states
 (`no-projects`, `empty-project`, `no-matches`, `issue-gone`, `unconfigured`,
 `unreachable`, `auth-rejected`, `credential-unavailable`, `issues-failed`,
-`issue-failed`), a failed refresh over loaded data (`stale`), and the
-connection screen (`connection` for a first launch, then `connection-*`).
+`issue-failed`), a failed refresh over loaded data (`stale`), the
+connection screen (`connection` for a first launch, then `connection-*`),
+an issue being read from the keyboard (`reading`) and the shortcuts list
+(`shortcuts`).
 A headless run reads no environment, settings file
 or keychain, so an image depends on its scene alone. The screenshots above
 are `--snap docs/sample-dark.png --scene sample`, the same with
@@ -214,6 +261,14 @@ To render every scene in both themes at once, as CI does:
 
 ```sh
 scripts/snap-scenes.sh            # target/scenes/<scene>-<theme>.png
+```
+
+Keys can be exercised the same way: a script of timed key presses runs
+against a scene through the real key routing.
+
+```sh
+echo '[{"t":0.1,"type":"key","name":"j"},{"t":0.3,"type":"key","name":"Enter"}]' > keys.json
+cargo run -- --script keys.json --snap after.png --at 0.8 --scene sample
 ```
 
 Snapshots render on the GPU path. A Linux machine without a GPU needs a
@@ -248,6 +303,7 @@ web app's, so neither waits on the other.
 | [`src/main.rs`](src/main.rs)         | Entry point: picks the data source, scenes, keys  |
 | [`src/app.rs`](src/app.rs)           | State, requests on workers, filtering and sorting |
 | [`src/view.rs`](src/view.rs)         | The window: projects, issue table, issue detail   |
+| [`src/keys.rs`](src/keys.rs)         | Keys to commands, the menu bar, the shortcut list |
 | [`src/dolt.rs`](src/dolt.rs)         | The Dolt read plane                               |
 | [`src/settings.rs`](src/settings.rs) | Environment, settings file and keychain           |
 | [`src/model.rs`](src/model.rs)       | Read-model types and the failure classes          |

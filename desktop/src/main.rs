@@ -8,6 +8,7 @@
 
 mod app;
 mod dolt;
+mod keys;
 mod model;
 mod sample;
 mod settings;
@@ -16,9 +17,9 @@ mod view;
 
 use std::sync::Arc;
 
-use rune::{App, AppSpec, Chrome, KeyEvent, Tx};
+use rune::{App, AppSpec, Chrome};
 
-use app::{Check, Load, State};
+use app::{Check, Load, Pane, State};
 use dolt::{Config, Credential, Dolt};
 use model::{Failure, Source};
 use sample::Sample;
@@ -196,12 +197,16 @@ fn connection_invalid_scene(s: &mut State) {
     form.error = Some(FormError::Port);
 }
 
-fn on_key(s: &mut State, key: &KeyEvent, _: &mut Tx) -> bool {
-    if key.is_command('r') {
-        s.refresh();
-        return true;
-    }
-    false
+/// Enter on an issue: plain keys now scroll it, and the pane wears the ring.
+fn reading_scene(s: &mut State) {
+    sample_scene(s);
+    s.pane = Pane::Detail;
+}
+
+/// The list of keys, as `?` opens it.
+fn shortcuts_scene(s: &mut State) {
+    sample_scene(s);
+    s.shortcuts = true;
 }
 
 /// The window frame on macOS: the content runs under a transparent title
@@ -244,12 +249,23 @@ fn main() {
             ("connection-failed", connection_failed_scene),
             ("connection-ok", connection_ok_scene),
             ("connection-invalid", connection_invalid_scene),
+            ("reading", reading_scene),
+            ("shortcuts", shortcuts_scene),
         ],
         setup: Some(|s, waker| s.setup(waker)),
         poll: Some(|s, _, tx| s.poll(tx)),
-        on_key: Some(on_key),
+        on_key: Some(keys::on_key),
         families: theme::FAMILIES,
         ..AppSpec::new("Beadsmith", (1440.0, 880.0), init, view::view)
     };
-    App::new(spec).chrome(chrome()).run();
+    let mut app = App::new(spec).chrome(chrome());
+    // Rune has native menus on macOS only; elsewhere the keys alone answer.
+    if cfg!(target_os = "macos") || rune::tooling::is_headless() {
+        // Edit and Window menus, so Cmd-W, Cmd-M and the editing keys are the system's.
+        app = app.standard_menus();
+        for item in keys::menu() {
+            app = app.menu_item(item);
+        }
+    }
+    app.run();
 }

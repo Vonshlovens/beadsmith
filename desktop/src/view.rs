@@ -7,9 +7,12 @@ use std::borrow::Cow;
 
 use rune::TextEdit;
 use rune::{Color, Cx, El, LoopSpec, ScrollSpec, Tx, col, el, row, text};
-use rune_kit::{Button, ButtonVariant, Cell, Dialog, Field, Kit, Markdown, Table, TableColumn, TableStyle, TextInput};
+use rune_kit::{
+    Button, ButtonVariant, Cell, Dialog, Field, Keybind, Kit, Markdown, Table, TableColumn, TableStyle, TextInput,
+};
 
-use crate::app::{Check, Connection, Load, STATUS_FILTERS, State};
+use crate::app::{Check, Connection, Load, Pane, STATUS_FILTERS, State, TABLE_KEY};
+use crate::keys::{self, Command};
 use crate::model::{Failure, IssueDetail, IssueRef, Project};
 use crate::theme::{StatusLook, Theme};
 
@@ -43,6 +46,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let mut layer = Vec::new();
     if let Some(form) = &s.connection {
         connection_dialog(s, form, &th.k, &mut layer);
+    } else if s.shortcuts {
+        shortcuts_dialog(&th, &mut layer);
     }
     rune_kit::root(body, layer)
 }
@@ -213,7 +218,21 @@ fn sidebar(s: &State, th: &Theme) -> El {
         .on_press(|s: &mut State| s.open_connection())
         .child(el().size(7.0, 7.0).radius(3.5).fill(connection_color(s, th)))
         .child(text(s.source.label()).font(th.ty.xs).color(t.tx_mid).truncate().grow(1.0).min_w(0.0));
-    let footer = row().key("footer").px(12.0).py(8.0).center_y().child(server);
+    // The one pointer route to the list of keys; `?` is the keyboard's.
+    let shortcuts = row()
+        .key("shortcuts")
+        .role("button")
+        .label("Keyboard shortcuts")
+        .help("Keyboard shortcuts")
+        .focusable(true)
+        .focus_ring(2.0, 1.0, t.em_400)
+        .size(28.0, 28.0)
+        .center()
+        .radius(k.radius.sm)
+        .hover(k.c.hover)
+        .on_press_tx(|s: &mut State, tx: &mut Tx| keys::perform(s, Command::Shortcuts, tx))
+        .child(text("?").font(th.ty.sm).color(t.tx_mid).a11y_hidden());
+    let footer = row().key("footer").px(12.0).py(8.0).gap(4.0).center_y().child(server).child(shortcuts);
 
     col()
         .key("sidebar")
@@ -416,6 +435,53 @@ fn connection_dialog(s: &State, form: &Connection, k: &Kit, layer: &mut Vec<El>)
         .build(k, layer);
 }
 
+/// The keyboard shortcuts, as `?` shows them: `keys::SHORTCUTS` in two
+/// columns so the list fits the smallest window without scrolling.
+fn shortcuts_dialog(th: &Theme, layer: &mut Vec<El>) {
+    let (k, t) = (&th.k, &th.t);
+    let group = |(title, rows): &(&str, &[keys::Shortcut])| {
+        let mut list =
+            col().w_full().gap(6.0).child(text(title.to_uppercase()).font(th.ty.caps).color(t.tx_hi).mb(2.0));
+        for (n, (caps, does)) in rows.iter().enumerate() {
+            let caps: Vec<String> = caps.iter().map(|c| keys::key_label(c)).collect();
+            list = list.child(
+                row()
+                    .key(format!("shortcut-{n}"))
+                    .w_full()
+                    .gap(12.0)
+                    .items_start()
+                    .child(row().w(104.0).min_h(18.0).center_y().child(Keybind::new(&caps).build(k)))
+                    .child(text(*does).font(th.ty.sm).color(t.tx).wrap().grow(1.0).min_w(0.0)),
+            );
+        }
+        list
+    };
+    let [issues, reading, everywhere] = keys::SHORTCUTS else { return };
+    let half = |groups: Vec<El>| {
+        let mut half = col().grow(1.0).min_w(0.0).gap(20.0);
+        for g in groups {
+            half = half.child(g);
+        }
+        half
+    };
+    let body = row()
+        .key("shortcut-list")
+        .w_full()
+        .px(16.0)
+        .pb(20.0)
+        .gap(28.0)
+        .items_start()
+        .child(half(vec![group(issues), group(reading)]))
+        .child(half(vec![group(everywhere)]));
+    Dialog::new("shortcuts", "Keyboard shortcuts")
+        .width(680.0)
+        .fit()
+        .open(true)
+        .on_close(|s: &mut State| s.shortcuts = false)
+        .child(body)
+        .build(k, layer);
+}
+
 /// What the last test or save attempt found, in plain words. The line keeps
 /// its height when empty so the buttons do not move as results arrive.
 fn connection_status(form: &Connection, k: &Kit) -> El {
@@ -467,6 +533,8 @@ fn main_pane(s: &State, th: &Theme, roomy: bool) -> El {
         .width(None)
         .on_edit(|s: &mut State| &mut s.search)
         .on_change(|s: &mut State, _: &mut Tx| s.refilter())
+        .on_submit(keys::submit_filter)
+        .on_key(keys::filter_key)
         .build(k)
         .key("search");
 
@@ -644,11 +712,18 @@ fn issue_table(s: &State, th: &Theme, roomy: bool) -> El {
             }
         })
         .on_sort(|s: &mut State, column, dir, _| s.sort(column, dir))
-        .on_select(|s: &mut State, id, _| s.select_issue(id))
-        .on_open(|s: &mut State, id, _| s.select_issue(id))
+        .on_select(|s: &mut State, id, _| {
+            s.pane = Pane::List;
+            s.select_issue(id);
+        })
+        // Return or a double click: the same "read it" as `o`.
+        .on_open(|s: &mut State, id, tx| {
+            s.select_issue(id);
+            keys::run(s, Command::Open, tx);
+        })
         .zebra(true)
         .build(s, k)
-        .key("issues")
+        .key(TABLE_KEY)
         .grow(1.0)
         .min_h(0.0)
 }
@@ -689,7 +764,14 @@ fn detail_pane(s: &State, th: &Theme, roomy: bool) -> El {
         (Some(_), Load::Failed(f)) => failure_state(*f, s.is_loading(), th),
         (Some(_), _) => detail_skeleton(th),
     };
-    col().key("detail").w(if roomy { 380.0 } else { 320.0 }).h_full().child(inner)
+    let pane = col().key("detail").w(if roomy { 380.0 } else { 320.0 }).h_full().child(inner);
+    // Enter hands plain keys to this pane (`Pane::Detail`); nothing in it
+    // holds Rune's focus then, so the pane draws the ring itself.
+    if s.pane == Pane::Detail && s.issue.is_some() {
+        pane.child(el().key("reading").absolute(0.0, 0.0).w_full().h_full().border(2.0, th.t.em_400).a11y_hidden())
+    } else {
+        pane
+    }
 }
 
 fn detail(d: &IssueDetail, th: &Theme) -> El {
@@ -718,6 +800,7 @@ fn detail(d: &IssueDetail, th: &Theme) -> El {
     }
 
     let heading = col()
+        .key(keys::DETAIL_ANCHOR)
         .gap(4.0)
         .child(text(i.id.clone()).font(th.ty.xs).color(t.tx_dim).selectable(true).selection_color(th.k.selection()))
         .child(
