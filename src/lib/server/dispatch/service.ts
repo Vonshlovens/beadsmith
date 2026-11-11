@@ -1493,7 +1493,10 @@ export async function restartDispatch(
 	// still the one this restart claimed. Anything else (a stale write the claim
 	// should have fenced off, a cancel that landed meanwhile) would leave the new
 	// run with no durable pointer and no follower, so it is stopped and the
-	// operator told, never answered with an unrelated read-back.
+	// operator told, never answered with an unrelated read-back. The read-back
+	// is judged by identity, not status: once the save lands, a poll may move
+	// this same run to running (or past it) before the row is read, and that
+	// is the new run making progress, not a lost claim.
 	const saved = await store.updateStatus(claimed.id, {
 		status: 'launched',
 		agent_id: restarted.agent_id,
@@ -1502,7 +1505,7 @@ export async function restartDispatch(
 	});
 	if (
 		saved === undefined ||
-		saved.status !== 'launched' ||
+		saved.generation !== claimed.generation ||
 		saved.agent_id !== restarted.agent_id ||
 		saved.run_id !== restarted.run_id
 	) {

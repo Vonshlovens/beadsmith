@@ -45,7 +45,7 @@ import {
 	NOT_A_LOOP_MESSAGE,
 	RESTART_NOT_A_LOOP_MESSAGE
 } from './service.js';
-import { createDispatchStore } from './store.js';
+import { createDispatchStore, runClaimOf } from './store.js';
 import { DispatchError } from './types.js';
 import { createWebhookProvider } from './webhook-provider.js';
 
@@ -2611,6 +2611,36 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 			});
 			expect(provider.cancelRun).toHaveBeenCalledWith('sbx-s', 'r2');
 			expect(await store.get(id)).toMatchObject({ status: 'cancelled', run_id: 'r1' });
+		});
+
+		it('keeps the new run when a poll moves it to running between the save and its read-back', async () => {
+			const provider = restartableProvider();
+			const id = await loopIn('succeeded', 'poll-progress');
+			// The save lands; before the store reads the row back, a browser
+			// poll sees r2 running and records it for the same generation.
+			const save = store.updateStatus.bind(store);
+			const polled: typeof store = Object.assign(Object.create(store), {
+				updateStatus: async (...args: Parameters<typeof store.updateStatus>) => {
+					const [, patch] = args;
+					const result = await save(...args);
+					if (patch.status === 'launched' && patch.run_id === 'r2') {
+						const current = await store.get(id);
+						return save(id, { status: 'running', expect: runClaimOf(current!) });
+					}
+					return result;
+				}
+			});
+
+			const result = await restartDispatch(
+				PROJECT.id,
+				id,
+				{},
+				{ ...deps(provider), store: polled }
+			);
+
+			expect(result).toMatchObject({ agent_id: 'sbx-s', status: 'running' });
+			expect(provider.cancelRun).not.toHaveBeenCalled();
+			expect(await store.get(id)).toMatchObject({ status: 'running', run_id: 'r2' });
 		});
 	});
 });
