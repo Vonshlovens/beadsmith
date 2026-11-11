@@ -10,6 +10,8 @@
 #   beadsmith-bd          bd, the newest release in CI's bd-compat matrix
 #   beadsmith-gitleaks    gitleaks, for scripts/public-scan.sh
 #   beadsmith-trufflehog  trufflehog, for scripts/public-scan.sh
+#   beadsmith-hc          hc (herdr-core), the agent terminal server in the
+#                         forge guest (ADR-0021), from nix/herdr-core.json
 #
 # pnpm, Dolt and bd are taken from their upstream releases because nixpkgs
 # 26.05 lags (pnpm 12.9.0, dolt 1.86.6, beads 1.0.3). Exit: when nixpkgs
@@ -171,4 +173,33 @@ in
         dontPatchELF = true;
         dontAutoPatchelf = true;
       };
+
+  # hc, pinned once in nix/herdr-core.json, which the E2B template build
+  # (sandbox/e2b/build-template.ts) reads too (ADR-0021 rule 5): one version
+  # and hash for both, so the guest and Sand run the same core. The release
+  # is a static-pie executable, installed byte for byte under the name the
+  # runner calls. Only x86_64-linux is pinned: the forge guest is the one
+  # Nix consumer.
+  beadsmith-hc =
+    let
+      pin = lib.importJSON ./herdr-core.json;
+      release = pick "hc" { x86_64-linux = pin."linux-x86_64"; };
+    in
+    stdenv.mkDerivation {
+      pname = "hc";
+      inherit (pin) version;
+      src = final.fetchurl { inherit (release) url sha256; };
+      sourceRoot = ".";
+      dontConfigure = true;
+      dontBuild = true;
+      dontStrip = true;
+      dontPatchELF = true;
+      installPhase = ''
+        runHook preInstall
+        install -Dm755 herdr-core $out/bin/hc
+        install -Dm644 -t $out/share/doc/herdr-core LICENSE THIRD-PARTY-NOTICES
+        runHook postInstall
+      '';
+      meta.mainProgram = "hc";
+    };
 }

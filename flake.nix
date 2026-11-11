@@ -115,6 +115,11 @@
               { virtualisation.vmVariant.virtualisation.host.pkgs = pkgs; }
             ]).config.system.build.vm;
         }
+        // nixpkgs.lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
+          # The forge guest's hc (ADR-0021): `nix build .#beadsmith-hc` checks
+          # the pinned hash without building the guest.
+          inherit (pkgs) beadsmith-hc;
+        }
       );
 
       # The same gates CI and `devenv test` run: `pnpm run check`, `pnpm run test`.

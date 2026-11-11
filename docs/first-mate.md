@@ -348,9 +348,16 @@ The forge runner's settings (environment of `mate-runner.service`):
 | `MATE_AGENT_HC`            | The hc executable in the guest (default `hc`)                                        |
 | `MATE_AGENT_LOCAL=1`       | Development: run `hc connect` on this machine instead of over SSH                    |
 
-Operator check once the guest has hc (not yet run; unit tests cover the
-runner against a fake hc core): open a First Mate chat on the forge runner
-and send a message. In the guest, `hc ls` lists one live terminal labelled
+The guest runs its hc core as the `hc-core` user service of its agent
+account, so chats' CLIs outlive the runner's SSH sessions
+([host-forge.md](operations/host-forge.md#guest-lifecycle-smoke-test)).
+
+Operator check after deploying the guest (not yet run; unit tests cover the
+runner against a fake hc core, and the guest lifecycle smoke test covers the
+guest's core without a model): open a First Mate chat on the forge runner
+and send a message. In the guest, `hc ls` (as the agent, see
+[host-forge.md](operations/host-forge.md#guest-lifecycle-smoke-test))
+lists one live terminal labelled
 `beadsmith-chat=<chat id>` running Claude Code in the working directory.
 Send a second message: the same terminal answers. Press stop during a long
 answer: the chat shows the turn cancelled and the terminal is still live.

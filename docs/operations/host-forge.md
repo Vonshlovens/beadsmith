@@ -69,19 +69,52 @@ integration. Dolt access and repository workers remain unimplemented here.
 
 ## Guest lifecycle smoke test
 
-`fleet/hosts/forge/guest-lifecycle.test.mjs` runs against a deployed guest and
-uses temporary host runners on loopback ports 18787 and 18788. It does not use
-model credentials or change the production runner configuration. The fixture
-resolves `git`, `curl`, `rg`, `ls` and `bash` by name inside the supervised
-service, then starts two generations of detached descendants which ignore
-SIGTERM. The supervisor explicitly supplies the system tool PATH rather than
-depending on the SSH login or user-manager environment.
+Each First Mate chat is interactive Claude Code in a terminal of the guest's
+hc core ([ADR-0021](../../specs/decisions/0021-hc-terminal-runtime.md)). The
+core runs as `hc-core.service`, a user service of the guest's `agent` account
+that starts at boot (the account lingers), so a chat's CLI lives in that
+service's cgroup and not in the runner's SSH session. The runner reaches it
+with `ssh agent@<guest> hc connect`. Ending a chat (delete, idle eviction,
+runner shutdown) kills its terminal, which ends the CLI and everything in its
+session even when it ignores SIGTERM; a descendant that detaches into a
+session of its own lives until `hc-core.service` stops. `agent-claude-first-run`
+merges Claude Code's onboarding, folder trust and bypass-permissions answers
+into the agent's state on each boot, so a launch never stops at a dialog.
+
+After deploying a guest with hc for the first time, restart it
+(`sudo systemctl restart microvm@mate`, preserving its volume) and confirm the
+core runs before sending a chat:
+
+```sh
+sudo mate-ssh 'systemctl --user -M agent@ is-active hc-core.service'
+```
+
+To look at the agent's terminals, run hc as the agent the way the runner
+does, with the runner's key and the pinned host key:
+
+```sh
+sudo ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile=/var/lib/microvm-keys/known_hosts \
+  -i /var/lib/mate-runner/ssh/agent_ed25519 agent@10.100.0.2 hc ls
+```
+
+`fleet/hosts/forge/guest-lifecycle.test.mjs` runs against the deployed guest
+over the runner's SSH channel. It uses no model credentials and does not
+change the production runner. It checks that terminals run under
+`hc-core.service` with the system PATH (the fixture resolves `git`, `curl`,
+`rg`, `ls` and `bash` by name), that killing a terminal ends its program and
+two generations of descendants that ignore SIGTERM and SIGHUP while another
+terminal survives, that a terminal outlives an abrupt kill of the SSH client
+and is found again by label over a new connection, and that Claude Code
+(`mate-claude`) reaches its prompt in a terminal with no first-run dialog and
+ends when killed. Delete, eviction, shutdown and SIGTERM in the runner all end
+a chat with that terminal kill; their logic is unit-tested against a fake hc
+in `src/lib/mate-runner/`.
 
 From the host checkout, install the fixture using `sudo mate-ssh`:
 
 ```sh
-sudo mate-ssh 'cat > /var/lib/agent/home/work/lifecycle-fake.mjs' < fleet/hosts/forge/guests/lifecycle-fake.mjs
-printf '%s\n' '#!/bin/sh' 'exec /run/current-system/sw/bin/mate-supervise /run/current-system/sw/bin/node /var/lib/agent/home/work/lifecycle-fake.mjs "$@"' | sudo mate-ssh 'cat > /var/lib/agent/home/work/lifecycle-fake; chmod 755 /var/lib/agent/home/work/lifecycle-fake'
+sudo mate-ssh 'cat > /var/lib/agent/home/work/lifecycle-fake.mjs; chown agent:users /var/lib/agent/home/work/lifecycle-fake.mjs' < fleet/hosts/forge/guests/lifecycle-fake.mjs
 ```
 
 Run with the pinned Node executable used by `mate-runner.service`, as root
@@ -92,14 +125,13 @@ sudo node --import ./scripts/ts-resolve.mjs fleet/hosts/forge/guest-lifecycle.te
 ```
 
 Substitute the service's absolute Node path if Node is not on the host PATH.
-The test checks delete, idle eviction, abrupt SSH client death, the runner close
-hook and runner process SIGTERM. It asserts no live fixture descendants remain
-and a separate chat survives each case. It removes its exact PID manifests and
-host state. Afterwards remove the two fixture files:
+Each check prints `PASS`. The test removes its terminals and PID manifests.
+Afterwards remove the fixture:
 
 ```sh
-sudo mate-ssh 'rm -f /var/lib/agent/home/work/lifecycle-fake /var/lib/agent/home/work/lifecycle-fake.mjs'
+sudo mate-ssh 'rm -f /var/lib/agent/home/work/lifecycle-fake.mjs'
 ```
 
-This verifies process cleanup without an enrolled subscription. Claude's actual
-interrupt behavior and successful session resume still require model acceptance.
+This verifies the guest's process lifecycle without an enrolled subscription.
+A model reply, interrupt and session resume still need the operator check in
+[first-mate.md](../first-mate.md#how-the-runner-runs-a-chat).

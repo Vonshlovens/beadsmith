@@ -299,9 +299,24 @@ Shipped:
   the same mode; a refusal or an exited program does not. State, SSE
   parsing and ordered input are `src/lib/client/terminal-relay.ts`.
 
-Planned, each in its own change:
+- The forge guest's hc (`fleet/hosts/forge/guests/mate.nix`): the
+  overlay's `beadsmith-hc` from the shared pin, and one core per guest as
+  `hc-core.service`, a user service of the lingering `agent` account,
+  rather than the core `hc connect` would start inside the runner's SSH
+  session and lose with it. The runner's `MATE_AGENT_HC` points at it and
+  its terminals run `mate-claude` (Claude Code with the model gateway)
+  directly. This replaces ADR-0016's per-launch transient service and its
+  supervisor, which exited on stdin EOF: a CLI in a terminal has no pipe
+  to watch and must outlive its channel. Cleanup is now hc's terminal kill,
+  which ends the CLI and everything in its session; a descendant that
+  detaches into its own session lives until the core service stops (its
+  cgroup holds every agent process). `agent-claude-first-run` merges the
+  first-run answers into the agent's state on the volume. The live check
+  is `fleet/hosts/forge/guest-lifecycle.test.mjs`
+  ([host-forge.md](../../docs/operations/host-forge.md#guest-lifecycle-smoke-test)).
 
-- the forge guest's hc and the runner wired to it;
+Planned, in its own change:
+
 - the relay on forge: the mate runner's signed contract gains an attach
   endpoint the host runner serves over its SSH `hc connect` (forge chats
   answer 409 until then).

@@ -64,6 +64,8 @@ in {
       MATE_AGENT_WORKDIR = "/var/lib/agent/home/work";
       MATE_AGENT_CLAUDE_CONFIG = "/var/lib/agent/home/.claude";
       MATE_AGENT_CLAUDE = "/run/current-system/sw/bin/mate-claude";
+      # The guest's hc (guests/mate.nix); its core runs as a user service there.
+      MATE_AGENT_HC = "/run/current-system/sw/bin/hc";
     };
     serviceConfig = {
       ExecStart = "${node}/bin/node --import ${source}/scripts/ts-resolve.mjs ${source}/scripts/mate-runner.ts";
