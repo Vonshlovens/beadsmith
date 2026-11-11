@@ -20,7 +20,7 @@ The decision record is
 - Shows the selected issue: Markdown description, design, acceptance
   criteria and notes, labels, dependencies both ways (click one to open it)
   and comments.
-- Refreshes on the Refresh button or Ctrl/Cmd-R. It follows the system's
+- Refreshes on the Refresh button above the table or Ctrl/Cmd-R. It follows the system's
   light or dark theme.
 - Keeps its connection: host, port and user in a settings file, the password
   in the macOS Keychain, set from a connection screen that can test them
@@ -28,6 +28,26 @@ The decision record is
 
 It reads only. Dispatch, accounts, the console, backups, the board, Ready,
 todos and the command palette are web-only.
+
+## How it looks
+
+The desktop app is meant to read as the same product as the web app, so it
+takes its palette, type scale, radii and status and priority colours from the
+web app's tokens in [`src/app.css`](../src/app.css). Rune has no CSS, so
+[`src/theme.rs`](src/theme.rs) restates them once, each field named after the
+custom property it copies; change a token in `app.css` first and mirror it
+there. A unit test holds every text role to 4.5:1 on the surfaces it sits on,
+in both themes.
+
+- The interface is set in the platform's monospaced UI font (SF Mono on
+  macOS), standing in for the web app's JetBrains Mono without bundling a
+  font file. Issue bodies and comments read in a sans, as on the web. A
+  machine with no system monospace font falls back to Rune's built-in Inter,
+  so a snapshot rendered elsewhere can differ in typeface.
+- On macOS the window has no separate title bar: the app's own bar holds the
+  window buttons and drags the window.
+- Below 1280 points wide the table drops its Type and Assignee columns (the
+  detail pane shows both) so titles keep their room.
 
 ## The read contract
 

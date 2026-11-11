@@ -1,72 +1,124 @@
-//! The window: projects on the left, the issue table in the middle, the
-//! selected issue on the right. Layout follows the web app's project page
-//! (`src/routes/p/[id]/+page.svelte`) in Rune's own components.
+//! The window: a title bar, projects on the left, the issue table in the
+//! middle, the selected issue on the right. Layout follows the web app's
+//! project page (`src/routes/p/[id]/+page.svelte`) and its tokens
+//! (`src/app.css`, restated in `theme.rs`), drawn with Rune's components.
 
 use std::borrow::Cow;
 
 use rune::TextEdit;
-use rune::{Align, Color, Cx, El, ScrollSpec, Tx, col, el, row, text};
+use rune::{Color, Cx, El, ScrollSpec, Tx, col, el, row, text};
 use rune_kit::{
-    Badge, BadgeVariant, Button, ButtonVariant, Cell, Dialog, Divider, Field, Kit, Markdown, SegmentedControl, Spinner,
-    Table, TableColumn, TextInput,
+    Button, ButtonVariant, Cell, Dialog, Field, Kit, Markdown, Spinner, Table, TableColumn, TableStyle, TextInput,
 };
 
 use crate::app::{Check, Connection, Load, STATUS_FILTERS, State};
 use crate::model::{IssueDetail, IssueRef, Project};
+use crate::theme::{StatusLook, Theme};
 
-const SIDEBAR_W: f32 = 232.0;
-const DETAIL_W: f32 = 400.0;
+/// The web app's `--rail-w`.
+const SIDEBAR_W: f32 = 216.0;
+/// The title bar: tall enough to centre the macOS window buttons with room
+/// to grab the bar around them.
+pub const TITLE_BAR_H: f32 = 44.0;
+/// At or above this window width the table shows every column and the detail
+/// pane takes its full width. Below it the two columns the detail pane also
+/// shows (type, assignee) leave the table, so the title keeps its room: the
+/// design standards ask for identifying fields first at narrow widths.
+const ROOMY_W: f32 = 1280.0;
 
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
-    let k = Kit::neutral(cx.system_dark());
-    let body = row()
-        .key("shell")
+    let th = Theme::new(cx.system_dark());
+    // Unknown until the first layout; the window opens wider than `ROOMY_W`.
+    let roomy = cx.layout_size("shell").is_none_or(|size| size[0] >= ROOMY_W);
+    let panes = row()
+        .key("panes")
         .w_full()
-        .h_full()
-        .fill(k.c.page)
-        .child(sidebar(s, &k))
-        .child(Divider::vertical().build(&k))
-        .child(main_pane(s, &k))
-        .child(Divider::vertical().build(&k))
-        .child(detail_pane(s, &k));
+        .grow(1.0)
+        .min_h(0.0)
+        .child(sidebar(s, &th))
+        .child(rule_v(&th))
+        .child(main_pane(s, &th, roomy))
+        .child(rule_v(&th))
+        .child(detail_pane(s, &th, roomy));
+    let body =
+        col().key("shell").w_full().h_full().fill(th.t.bg).child(title_bar(&th, cx.titlebar_inset())).child(panes);
     let mut layer = Vec::new();
     if let Some(form) = &s.connection {
-        connection_dialog(s, form, &k, &mut layer);
+        connection_dialog(s, form, &th.k, &mut layer);
     }
     rune_kit::root(body, layer)
 }
 
 // ---------------------------------------------------------------------------------------------
+// Title bar
+
+/// The app's own title bar, under macOS's transparent one: the brand, and
+/// the one standing fact about this client. `lights` is where the window
+/// buttons end (0 when there are none: full screen, other platforms). The
+/// whole bar drags the window.
+fn title_bar(th: &Theme, lights: f32) -> El {
+    let t = &th.t;
+    let bar = row()
+        .key("title-bar")
+        .w_full()
+        .h(TITLE_BAR_H)
+        .pl(if lights > 0.0 { lights + 14.0 } else { 16.0 })
+        .pr(16.0)
+        .gap(10.0)
+        .center_y()
+        .window_drag()
+        .child(brand_mark(th))
+        .child(text("Beadsmith").font(th.ty.base_strong).color(t.tx_hi))
+        .child(el().grow(1.0))
+        // Said once, here, so no pane has to explain its missing actions.
+        .child(text("Read-only").font(th.ty.xs).color(t.tx_dim));
+    col().w_full().child(bar).child(el().w_full().h(2.0).fill(t.rule))
+}
+
+/// Three beads on a rod, the middle one lit: the beads of the Beadsmith mark
+/// (`src/lib/components/brand-mark.svelte`) at a size where its hammer and
+/// anvil would not read.
+fn brand_mark(th: &Theme) -> El {
+    let bead = |color: Color| el().size(7.0, 7.0).radius(3.5).fill(color);
+    row()
+        .key("brand-mark")
+        .a11y_hidden()
+        .gap(2.0)
+        .center_y()
+        .child(bead(th.t.tx_hi))
+        .child(bead(th.t.em_500))
+        .child(bead(th.t.tx_hi))
+}
+
+// ---------------------------------------------------------------------------------------------
 // Sidebar
 
-fn sidebar(s: &State, k: &Kit) -> El {
-    let header = col()
-        .key("brand")
-        .px(16.0)
-        .pt(18.0)
-        .pb(12.0)
-        .gap(2.0)
-        .child(text("Beadsmith").font(k.ty.body_medium).color(k.c.text_strong))
-        .child(text("Desktop prototype").font(k.ty.text_xsmall).color(k.c.text_faint));
+fn sidebar(s: &State, th: &Theme) -> El {
+    let (k, t) = (&th.k, &th.t);
+    let count = s.projects.ready().map(|p| p.len().to_string()).unwrap_or_default();
+    let header = row()
+        .key("projects-heading")
+        .px(20.0)
+        .pt(16.0)
+        .pb(8.0)
+        .gap(8.0)
+        .center_y()
+        .child(text("PROJECTS").font(th.ty.caps).color(t.tx_hi))
+        .child(text(count).font(th.ty.xs).color(t.tx_dim));
 
     let list = match &s.projects {
-        Load::Ready(projects) if projects.is_empty() => note(k, "No projects on this server."),
+        Load::Ready(projects) if projects.is_empty() => note(th, "No projects on this server."),
         Load::Ready(projects) => {
-            let mut list = col().key("projects").px(8.0).gap(2.0);
+            let mut list = col().key("projects").px(12.0).gap(1.0);
             for p in projects {
-                list = list.child(project_row(p, s.project.as_deref() == Some(p.name.as_str()), k));
+                list = list.child(project_row(p, s.project.as_deref() == Some(p.name.as_str()), th));
             }
             list.scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0)
         }
-        Load::Failed(f) => note(k, f.message()),
-        Load::Idle | Load::Loading => loading(k, "Finding projects"),
+        Load::Failed(f) => note(th, f.message()),
+        Load::Idle | Load::Loading => loading(th, "Finding projects"),
     };
 
-    let refresh = Button::new(if s.is_loading() { "Refreshing" } else { "Refresh" })
-        .variant(if s.is_loading() { ButtonVariant::Loading } else { ButtonVariant::Ghost })
-        .on_press(|s: &mut State| s.refresh())
-        .build(k)
-        .key("refresh");
     // The server's name is the way into its settings: the one place the
     // window says what it is connected to.
     let server = row()
@@ -74,74 +126,85 @@ fn sidebar(s: &State, k: &Kit) -> El {
         .role("button")
         .label(format!("Connection settings: {}", s.source.label()))
         .focusable(true)
+        .focus_ring(2.0, 1.0, t.em_400)
         .grow(1.0)
         .min_w(0.0)
         .px(8.0)
-        .py(6.0)
+        .h(28.0)
         .gap(8.0)
         .center_y()
         .radius(k.radius.sm)
         .hover(k.c.hover)
         .on_press(|s: &mut State| s.open_connection())
-        .child(el().size(7.0, 7.0).radius(3.5).fill(connection_color(s, k)))
-        .child(text(s.source.label()).font(k.ty.text_xsmall).color(k.c.text_muted).truncate().grow(1.0).min_w(0.0));
-    let footer = row().key("footer").px(8.0).py(8.0).gap(4.0).center_y().child(server).child(refresh);
+        .child(el().size(7.0, 7.0).radius(3.5).fill(connection_color(s, th)))
+        .child(text(s.source.label()).font(th.ty.xs).color(t.tx_mid).truncate().grow(1.0).min_w(0.0));
+    let footer = row().key("footer").px(12.0).py(8.0).center_y().child(server);
 
     col()
         .key("sidebar")
         .w(SIDEBAR_W)
         .h_full()
-        .fill(k.c.bg_base)
         .child(header)
         .child(col().w_full().grow(1.0).min_h(0.0).child(list))
-        .child(Divider::horizontal().build(k))
+        .child(rule_h(th))
         .child(footer)
 }
 
-fn project_row(p: &Project, selected: bool, k: &Kit) -> El {
+/// A project as the web app's nav shows one: a bead that lights when it is
+/// the current project, the name, and how much work is active.
+fn project_row(p: &Project, selected: bool, th: &Theme) -> El {
+    let t = &th.t;
     let name = p.name.clone();
     let counts = p.counts.as_ref();
+    // Unknown, not zero: the summary query for this project failed.
     let active = counts.map_or(String::from("—"), |c| c.active().to_string());
     let sub = match (counts, &p.last_activity) {
-        (Some(c), Some(at)) => format!(
-            "{} open · {} blocked · {}",
-            c.open + c.in_progress,
-            c.blocked,
-            short_date(at.get(..10).unwrap_or(at))
-        ),
-        (Some(c), None) => format!("{} open · {} blocked", c.open + c.in_progress, c.blocked),
+        (Some(c), Some(at)) => format!("{} blocked · {}", c.blocked, short_date(at.get(..10).unwrap_or(at))),
+        (Some(c), None) => format!("{} blocked", c.blocked),
         _ => "Summary unavailable".into(),
     };
+    let label = match counts {
+        Some(c) => format!("{}, {} active, {} blocked", p.name, c.active(), c.blocked),
+        None => p.name.clone(),
+    };
+    let (ink, face) = if selected { (t.tx_hi, th.ty.base_strong) } else { (t.tx_mid, th.ty.base) };
     row()
         .key(format!("project-{}", p.name))
         .role("button")
-        .label(p.name.clone())
+        .label(label)
         .focusable(true)
+        .focus_ring(2.0, 1.0, t.em_400)
         .w_full()
-        .px(10.0)
-        .py(8.0)
-        .gap(8.0)
-        .center_y()
-        .radius(k.radius.sm)
-        .fill(if selected { k.c.surface_raised } else { Color::TRANSPARENT })
-        .hover(k.c.hover)
+        .px(8.0)
+        .py(6.0)
+        .gap(12.0)
+        .radius(th.k.radius.sm)
+        .fill(if selected { t.s3 } else { Color::TRANSPARENT })
+        .hover(th.k.c.hover)
         .on_press(move |s: &mut State| s.select_project(&name))
+        // The bead sits on the name's line, not the row's centre.
+        .child(el().ml(4.0).mt(7.0).size(7.0, 7.0).radius(3.5).fill(if selected { t.em_500 } else { t.line_2 }))
         .child(
             col()
                 .grow(1.0)
                 .min_w(0.0)
-                .gap(2.0)
-                .child(text(p.name.clone()).font(k.ty.ui_medium).color(k.c.text_strong).truncate())
-                .child(text(sub).font(k.ty.text_xsmall).color(k.c.text_faint).truncate()),
+                .child(
+                    row()
+                        .w_full()
+                        .gap(8.0)
+                        .center_y()
+                        .child(text(p.name.clone()).font(face).color(ink).truncate().grow(1.0).min_w(0.0))
+                        .child(text(active).font(th.ty.xs).color(t.tx_dim)),
+                )
+                .child(text(sub).font(th.ty.xs).color(t.tx_dim).truncate()),
         )
-        .child(Badge::new(active).variant(if selected { BadgeVariant::Accent } else { BadgeVariant::Subtle }).build(k))
 }
 
-fn connection_color(s: &State, k: &Kit) -> Color {
+fn connection_color(s: &State, th: &Theme) -> Color {
     match s.projects {
-        Load::Ready(_) => k.c.success.icon,
-        Load::Failed(_) => k.c.danger.icon,
-        _ => k.c.icon_faint,
+        Load::Ready(_) => th.t.mint,
+        Load::Failed(_) => th.t.em_500,
+        _ => th.t.tx_dim,
     }
 }
 
@@ -306,13 +369,17 @@ fn connection_status(form: &Connection, k: &Kit) -> El {
 // ---------------------------------------------------------------------------------------------
 // Issue table
 
-fn main_pane(s: &State, k: &Kit) -> El {
+fn main_pane(s: &State, th: &Theme, roomy: bool) -> El {
+    let (k, t) = (&th.k, &th.t);
     let title = match s.current_project() {
         Some(p) => p.name.clone(),
         None => s.project.clone().unwrap_or_else(|| "Issues".into()),
     };
     let count = match &s.issues {
-        Load::Ready(all) if s.visible.len() == all.len() => format!("{} issues", all.len()),
+        Load::Ready(all) if s.visible.len() == all.len() => match all.len() {
+            1 => "1 issue".to_string(),
+            n => format!("{n} issues"),
+        },
         Load::Ready(all) => format!("{} of {}", s.visible.len(), all.len()),
         _ => String::new(),
     };
@@ -325,205 +392,326 @@ fn main_pane(s: &State, k: &Kit) -> El {
         .on_change(|s: &mut State, _: &mut Tx| s.refilter())
         .build(k)
         .key("search");
-    let labels: Vec<&str> = STATUS_FILTERS.iter().map(|(l, _)| *l).collect();
-    let statuses = SegmentedControl::new(&labels, Some(s.status_filter))
-        .label("Status")
-        .fit()
-        .on_pick(|s: &mut State, i, _: &mut Tx| {
-            s.status_filter = i;
-            s.refilter();
-        })
-        .build(k)
-        .key("status-filter");
 
+    let refresh = Button::new(if s.is_loading() { "Refreshing" } else { "Refresh" })
+        .variant(if s.is_loading() { ButtonVariant::Loading } else { ButtonVariant::GhostMuted })
+        .on_press(|s: &mut State| s.refresh())
+        .build(k)
+        .key("refresh");
     let toolbar = col()
         .key("toolbar")
         .w_full()
         .px(20.0)
         .pt(16.0)
-        .pb(12.0)
+        .pb(8.0)
         .gap(12.0)
         .child(
             row()
                 .w_full()
                 .center_y()
                 .gap(10.0)
-                .child(text(title).font(k.ty.body_medium).color(k.c.text_strong))
-                .child(text(count).font(k.ty.text_small).color(k.c.text_faint))
+                .child(text(title).font(th.ty.md_strong).color(t.tx_hi).truncate().min_w(0.0))
+                .child(text(count).font(th.ty.xs).color(t.tx_dim))
                 .child(el().grow(1.0))
-                .child(text("Read-only").font(k.ty.text_xsmall).color(k.c.text_faint)),
+                .child(refresh),
         )
-        .child(search.w_full())
-        .child(statuses);
+        .child(search.w_full());
 
     let content = match &s.issues {
-        Load::Ready(_) if s.visible.is_empty() => note(k, "No issues match."),
-        Load::Ready(_) => issue_table(s, k),
-        Load::Failed(f) => note(k, f.message()),
-        Load::Loading => loading(k, "Loading issues"),
-        Load::Idle => note(k, if s.projects.ready().is_some() { "Choose a project." } else { "" }),
+        Load::Ready(_) if s.visible.is_empty() => note(th, "No issues match."),
+        Load::Ready(_) => issue_table(s, th, roomy),
+        Load::Failed(f) => note(th, f.message()),
+        Load::Loading => loading(th, "Loading issues"),
+        Load::Idle => note(th, if s.projects.ready().is_some() { "Choose a project." } else { "" }),
     };
 
-    col().key("main").grow(1.0).min_w(0.0).h_full().child(toolbar).child(
-        col().key("table-frame").w_full().grow(1.0).min_h(0.0).px(12.0).pb(12.0).child(
-            col().w_full().h_full().radius(k.radius.md).fill(k.c.bg_base).clip_rounded(k.radius.md).child(content),
-        ),
-    )
+    col()
+        .key("main")
+        .grow(1.0)
+        .min_w(0.0)
+        .h_full()
+        .child(toolbar)
+        .child(status_tabs(s, th))
+        .child(rule_h(th))
+        // The table's cells pad themselves by 10, so this lines its text up
+        // with the toolbar's 20.
+        .child(col().key("table-frame").w_full().grow(1.0).min_h(0.0).px(10.0).child(content))
 }
 
-fn issue_table(s: &State, k: &Kit) -> El {
-    let kc = k.clone();
-    Table::new(
+/// The status filter as a row of tabs, each with how many of the project's
+/// issues it holds, so the filter also answers "how much is blocked?". The
+/// selected tab takes the mark as an underline that sits on the rule below.
+fn status_tabs(s: &State, th: &Theme) -> El {
+    let t = &th.t;
+    let issues = s.issues.ready();
+    let mut tabs = row().key("status-filter").role("radiogroup").label("Status").focus_group().w_full().px(10.0);
+    for (i, (label, status)) in STATUS_FILTERS.iter().enumerate() {
+        let on = s.status_filter == i;
+        let count = issues.map(|all| match status {
+            Some(status) => all.iter().filter(|issue| issue.status == *status).count(),
+            None => all.len(),
+        });
+        let name = match count {
+            Some(n) => format!("{label}, {n}"),
+            None => (*label).to_string(),
+        };
+        let mut words = row().h(30.0).px(10.0).gap(6.0).center_y().child(
+            text(*label).font(if on { th.ty.sm_strong } else { th.ty.sm }).color(if on { t.tx_hi } else { t.tx_mid }),
+        );
+        if let Some(n) = count {
+            words = words.child(text(n.to_string()).font(th.ty.xs).color(t.tx_dim));
+        }
+        tabs = tabs.child(
+            col()
+                .key(format!("status-{i}"))
+                .role("radio")
+                .label(name)
+                .focusable(true)
+                .focus_selected(on)
+                .focus_ring(2.0, -2.0, t.em_400)
+                .position_in_set(i + 1, STATUS_FILTERS.len())
+                .hover(th.k.c.hover)
+                .on_press(move |s: &mut State| {
+                    s.status_filter = i;
+                    s.refilter();
+                })
+                .child(words)
+                .child(el().w_full().h(2.0).fill(if on { t.em_500 } else { Color::TRANSPARENT })),
+        );
+    }
+    tabs
+}
+
+fn issue_table(s: &State, th: &Theme, roomy: bool) -> El {
+    let (k, t) = (&th.k, th.t);
+    let style = TableStyle {
+        row_height: 32.0,
+        header_height: 30.0,
+        font: th.ty.sm,
+        mono: th.ty.xs,
+        header_font: th.ty.xs,
+        text: t.tx_hi,
+        muted: t.tx_mid,
+        header_text: t.tx_dim,
+        rule: t.line,
+        // `.tbl tr.is-selected`: the mark as a wash.
+        selected: t.em_wash_2,
+        stripe: t.tx_hi.alpha(0.025),
+        ..TableStyle::from_kit(k)
+    };
+    let look = StatusLooks::new(th);
+    let priority = [0, 1, 2, 3].map(|p| th.priority(p));
+    let xs = th.ty.xs;
+    let mut table = Table::new(
         |s: &State| &s.table,
         |s: &mut State| &mut s.table,
         |s: &State| s.visible.len(),
         |s: &State, i| Cow::Borrowed(s.visible_issue(i).map_or("", |x| x.id.as_str())),
     )
     .name("Issues")
-    .column(TableColumn::new("id", "ID").width(72.0).min(60.0).sortable())
+    .style(style)
+    // Ids, priorities and dates are labels, not quantities: left-aligned.
+    .column(TableColumn::new("id", "ID").width(80.0).min(56.0).sortable())
     .column(TableColumn::new("title", "Title").flex(3.0).min(160.0).sortable())
-    .column(TableColumn::new("status", "Status").width(104.0).min(90.0).sortable())
-    .column(TableColumn::new("priority", "Pri").width(48.0).min(44.0).align(Align::Center).sortable())
-    .column(TableColumn::new("type", "Type").width(72.0).min(56.0).sortable())
-    .column(TableColumn::new("assignee", "Assignee").width(88.0).min(64.0).sortable())
-    .column(TableColumn::new("updated", "Updated").width(104.0).min(88.0).sortable())
-    .cell(move |s: &State, i, column| {
-        let Some(issue) = s.visible_issue(i) else { return Cell::text("") };
-        match column {
-            "id" => Cell::text(&issue.id).mono().muted(),
-            "title" => Cell::text(&issue.title),
-            "status" => Cell::el(status_pill(&issue.status, &kc)),
-            "priority" => Cell::text(format!("P{}", issue.priority)).mono().color(priority_color(issue.priority, &kc)),
-            "type" => Cell::text(&issue.issue_type).muted(),
-            "assignee" => Cell::text(issue.assignee.as_deref().unwrap_or("—")).muted(),
-            _ => Cell::text(short_date(&issue.updated_at)).mono().muted(),
-        }
-    })
-    .on_sort(|s: &mut State, column, dir, _| s.sort(column, dir))
-    .on_select(|s: &mut State, id, _| s.select_issue(id))
-    .on_open(|s: &mut State, id, _| s.select_issue(id))
-    .zebra(true)
-    .build(s, k)
-    .key("issues")
-    .grow(1.0)
-    .min_h(0.0)
+    .column(TableColumn::new("status", "Status").width(108.0).min(96.0).sortable())
+    .column(TableColumn::new("priority", "Pri").width(46.0).min(44.0).sortable());
+    if roomy {
+        table = table
+            .column(TableColumn::new("type", "Type").width(72.0).min(56.0).sortable())
+            .column(TableColumn::new("assignee", "Assignee").width(84.0).min(64.0).sortable());
+    }
+    table
+        .column(TableColumn::new("updated", "Updated").width(76.0).min(68.0).sortable())
+        .cell(move |s: &State, i, column| {
+            let Some(issue) = s.visible_issue(i) else { return Cell::text("") };
+            match column {
+                "id" => Cell::text(&issue.id).mono().color(t.tx_dim),
+                // Closed work recedes but stays readable and openable.
+                "title" if issue.status == "closed" => Cell::text(&issue.title).color(t.tx_dim),
+                "title" => Cell::text(&issue.title),
+                "status" => Cell::el(status_word(&issue.status, look.get(&issue.status), xs)),
+                "priority" => Cell::text(format!("P{}", issue.priority))
+                    .mono()
+                    .color(priority[issue.priority.clamp(0, 3) as usize]),
+                "type" if issue.issue_type == "epic" => Cell::text(&issue.issue_type).mono().color(t.violet_tx),
+                "type" => Cell::text(&issue.issue_type).mono().color(t.tx_dim),
+                // No assignee is a fact about the issue, shown as a dash.
+                "assignee" => Cell::text(issue.assignee.as_deref().unwrap_or("—")).mono().color(t.tx_mid),
+                // The day is enough to scan by; the detail pane has the time.
+                _ => Cell::text(short_date(issue.updated_at.get(..10).unwrap_or(&issue.updated_at)))
+                    .mono()
+                    .color(t.tx_dim),
+            }
+        })
+        .on_sort(|s: &mut State, column, dir, _| s.sort(column, dir))
+        .on_select(|s: &mut State, id, _| s.select_issue(id))
+        .on_open(|s: &mut State, id, _| s.select_issue(id))
+        .zebra(true)
+        .build(s, k)
+        .key("issues")
+        .grow(1.0)
+        .min_h(0.0)
+}
+
+/// The status looks a table cell can need, resolved once per view rather
+/// than once per cell.
+#[derive(Clone, Copy)]
+struct StatusLooks {
+    known: [(&'static str, StatusLook); 6],
+    other: StatusLook,
+}
+
+impl StatusLooks {
+    fn new(th: &Theme) -> StatusLooks {
+        let known = ["open", "in_progress", "blocked", "closed", "pinned", "hooked"].map(|s| (s, th.status(s)));
+        StatusLooks { known, other: th.status("") }
+    }
+
+    fn get(&self, status: &str) -> StatusLook {
+        self.known.iter().find(|(name, _)| *name == status).map_or(self.other, |(_, look)| *look)
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
 // Detail
 
-fn detail_pane(s: &State, k: &Kit) -> El {
+fn detail_pane(s: &State, th: &Theme, roomy: bool) -> El {
     let inner = match (&s.issue, &s.detail) {
-        (None, _) => note(k, "Select an issue to read it."),
-        (Some(_), Load::Ready(Some(d))) => detail(d, k),
-        (Some(id), Load::Ready(None)) => note(k, &format!("{id} is no longer on the server.")),
-        (Some(_), Load::Failed(f)) => note(k, f.message()),
-        (Some(_), _) => loading(k, "Loading issue"),
+        (None, _) => note(th, "Select an issue to read it."),
+        (Some(_), Load::Ready(Some(d))) => detail(d, th),
+        (Some(id), Load::Ready(None)) => note(th, &format!("{id} is no longer on the server.")),
+        (Some(_), Load::Failed(f)) => note(th, f.message()),
+        (Some(_), _) => loading(th, "Loading issue"),
     };
-    col().key("detail").w(DETAIL_W).h_full().fill(k.c.bg_base).child(inner)
+    col().key("detail").w(if roomy { 380.0 } else { 320.0 }).h_full().child(inner)
 }
 
-fn detail(d: &IssueDetail, k: &Kit) -> El {
+fn detail(d: &IssueDetail, th: &Theme) -> El {
+    let t = &th.t;
     let i = &d.summary;
-    let mut meta = row().gap(6.0).center_y().wrap();
-    meta = meta
-        .child(status_pill(&i.status, k))
-        .child(Badge::new(format!("P{}", i.priority)).build(k))
-        .child(Badge::new(i.issue_type.clone()).variant(BadgeVariant::Subtle).build(k));
+    let mut chips = row().gap(10.0).center_y().wrap();
+    chips = chips
+        .child(status_badge(&i.status, th))
+        .child(text(format!("P{}", i.priority)).font(th.ty.xs_strong).color(th.priority(i.priority)))
+        .child(text(i.issue_type.clone()).font(th.ty.xs).color(if i.issue_type == "epic" {
+            t.violet_tx
+        } else {
+            t.tx_dim
+        }));
     for l in &i.labels {
-        meta = meta.child(Badge::new(l.clone()).variant(BadgeVariant::Subtle).build(k));
+        chips = chips.child(tag(l, th));
     }
 
-    let mut facts = col().gap(4.0);
+    let mut facts = col().gap(6.0);
     for (label, value) in [
         ("Assignee", i.assignee.clone()),
         ("Created", join_opt(&d.created_at, &d.created_by)),
         ("Updated", Some(short_date(&i.updated_at)).filter(|u| !u.is_empty())),
     ] {
-        facts = facts.child(fact(label, value.as_deref().unwrap_or("—"), k));
+        facts = facts.child(fact(label, value.as_deref().unwrap_or("—"), th));
     }
+
+    let heading = col()
+        .gap(4.0)
+        .child(text(i.id.clone()).font(th.ty.xs).color(t.tx_dim).selectable(true).selection_color(th.k.selection()))
+        .child(
+            text(i.title.clone())
+                .font(th.ty.md_strong)
+                .color(t.tx_hi)
+                .wrap()
+                .selectable(true)
+                .selection_color(th.k.selection()),
+        );
 
     let mut body = col()
         .key(format!("issue-{}", i.id))
         .w_full()
         .px(20.0)
-        .py(18.0)
+        .pt(16.0)
+        .pb(24.0)
         .gap(14.0)
-        .child(text(i.id.clone()).font(k.ty.mono).color(k.c.text_faint).selectable(true))
-        .child(text(i.title.clone()).font(k.ty.body_medium).color(k.c.text_strong).wrap().selectable(true))
-        .child(meta)
+        .child(heading)
+        .child(chips)
         .child(facts);
 
-    for (heading, src) in [
+    for (title, src) in [
         ("Description", &d.description),
         ("Design", &d.design),
         ("Acceptance criteria", &d.acceptance_criteria),
         ("Notes", &d.notes),
     ] {
         if let Some(src) = src {
-            body = body.child(section(heading, k)).child(Markdown::new(src.clone()).selectable(true).build(k));
+            body = body
+                .child(section(title, None, th))
+                .child(Markdown::new(src.clone()).selectable(true).build(&th.prose));
         }
     }
     if !d.dependencies.is_empty() {
-        body = body.child(section("Depends on", k)).child(refs(&d.dependencies, "dep", k));
+        body =
+            body.child(section("Depends on", Some(d.dependencies.len()), th)).child(refs(&d.dependencies, "dep", th));
     }
     if !d.dependents.is_empty() {
-        body = body.child(section("Blocks", k)).child(refs(&d.dependents, "blocks", k));
+        body = body.child(section("Blocks", Some(d.dependents.len()), th)).child(refs(&d.dependents, "blocks", th));
     }
     if !d.comments.is_empty() {
-        body = body.child(section(&format!("Comments ({})", d.comments.len()), k));
+        body = body.child(section("Comments", Some(d.comments.len()), th));
         for (n, c) in d.comments.iter().enumerate() {
             let when = c.created_at.as_deref().map(short_date).unwrap_or_default();
+            // `.chat-msg`: a role line in the interface face, the body in prose.
             body = body.child(
                 col()
                     .key(format!("comment-{n}"))
                     .w_full()
-                    .gap(6.0)
-                    .padding(12.0)
-                    .radius(k.radius.sm)
-                    .fill(k.c.surface_weak)
+                    .gap(4.0)
                     .child(
                         row()
+                            .w_full()
                             .gap(8.0)
-                            .child(text(c.author.clone()).font(k.ty.text_small_medium).color(k.c.text_base))
-                            .child(text(when).font(k.ty.text_xsmall).color(k.c.text_faint)),
+                            .center_y()
+                            .child(
+                                text(c.author.clone())
+                                    .font(th.ty.xs_strong)
+                                    .color(t.tx_hi)
+                                    .truncate()
+                                    .grow(1.0)
+                                    .min_w(0.0),
+                            )
+                            .child(text(when).font(th.ty.xs).color(t.tx_dim)),
                     )
-                    .child(Markdown::new(c.text.clone()).selectable(true).build(k)),
+                    .child(Markdown::new(c.text.clone()).selectable(true).build(&th.prose)),
             );
         }
     }
     col().w_full().h_full().child(body.scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0))
 }
 
-fn refs(items: &[IssueRef], prefix: &str, k: &Kit) -> El {
-    let mut list = col().w_full().gap(2.0);
+fn refs(items: &[IssueRef], prefix: &str, th: &Theme) -> El {
+    let t = &th.t;
+    // Pulled out by the rows' own padding so their text lines up with the pane's.
+    let mut list = col().w_full().gap(1.0).mx(-8.0);
     for r in items {
         let id = r.id.clone();
-        let status = r.status.as_deref().unwrap_or("missing");
+        let look = th.status(r.status.as_deref().unwrap_or(""));
+        let title = r.title.clone().unwrap_or_else(|| "(not found)".into());
+        let status = r.status.as_deref().unwrap_or("missing").replace('_', " ");
         list = list.child(
             row()
                 .key(format!("{prefix}-{}", r.id))
                 .role("link")
-                .label(r.id.clone())
+                .label(format!("{}, {status}: {title}", r.id))
                 .focusable(true)
+                .focus_ring(2.0, 1.0, t.em_400)
                 .w_full()
                 .px(8.0)
-                .py(6.0)
+                .h(30.0)
                 .gap(8.0)
                 .center_y()
-                .radius(k.radius.sm)
-                .hover(k.c.hover)
+                .radius(th.k.radius.sm)
+                .hover(th.k.c.hover)
                 .on_press(move |s: &mut State| s.select_issue(&id))
-                .child(el().size(7.0, 7.0).radius(3.5).fill(status_colors(status, k).0))
-                .child(text(r.id.clone()).font(k.ty.mono).color(k.c.text_muted))
-                .child(
-                    text(r.title.clone().unwrap_or_else(|| "(not found)".into()))
-                        .font(k.ty.text_small)
-                        .color(k.c.text_base)
-                        .truncate()
-                        .grow(1.0)
-                        .min_w(0.0),
-                ),
+                .child(bead(look))
+                .child(text(r.id.clone()).font(th.ty.xs).color(t.tx_dim))
+                .child(text(title).font(th.ty.sm).color(t.tx).truncate().grow(1.0).min_w(0.0)),
         );
     }
     list
@@ -532,64 +720,98 @@ fn refs(items: &[IssueRef], prefix: &str, k: &Kit) -> El {
 // ---------------------------------------------------------------------------------------------
 // Pieces
 
-fn section(title: &str, k: &Kit) -> El {
-    text(title.to_string()).font(k.ty.text_xsmall_medium).color(k.c.text_faint).pt(6.0)
+fn rule_h(th: &Theme) -> El {
+    el().role("separator").w_full().h(1.0).fill(th.t.line)
 }
 
-fn fact(label: &str, value: &str, k: &Kit) -> El {
-    row()
-        .gap(8.0)
-        .child(text(label.to_string()).font(k.ty.text_small).color(k.c.text_faint).w(76.0))
-        .child(text(value.to_string()).font(k.ty.text_small).color(k.c.text_base).truncate().grow(1.0).min_w(0.0))
+fn rule_v(th: &Theme) -> El {
+    el().role("separator").w(1.0).h_full().fill(th.t.line)
 }
 
-fn status_pill(status: &str, k: &Kit) -> El {
-    let (dot, ink) = status_colors(status, k);
+/// A section heading (`.caps`) over a hairline, with a quiet count when the
+/// section is a list.
+fn section(title: &str, count: Option<usize>, th: &Theme) -> El {
+    let mut heading = row().gap(8.0).center_y().child(text(title.to_uppercase()).font(th.ty.caps).color(th.t.tx_hi));
+    if let Some(n) = count {
+        heading = heading.child(text(n.to_string()).font(th.ty.xs).color(th.t.tx_dim));
+    }
+    col().w_full().pt(8.0).gap(6.0).child(heading).child(rule_h(th))
+}
+
+/// One row of `.kv`: a quiet label and its value.
+fn fact(label: &str, value: &str, th: &Theme) -> El {
     row()
+        .gap(16.0)
+        .center_y()
+        .child(text(label.to_string()).font(th.ty.xs).color(th.t.tx_dim).w(72.0))
+        .child(text(value.to_string()).font(th.ty.sm).color(th.t.tx).truncate().grow(1.0).min_w(0.0))
+}
+
+/// The status bead (`.dot`): the same atom in the table, the badge and the
+/// dependency lists. Closed work wears a hollow ring, so the state does not
+/// rest on colour alone.
+fn bead(look: StatusLook) -> El {
+    let dot = el().size(7.0, 7.0).radius(3.5);
+    match look.bead {
+        Some(color) => dot.fill(color),
+        None => dot.border(1.5, look.ink),
+    }
+}
+
+/// A status in a table row: bead and word, no box, so a column of them reads
+/// as text.
+fn status_word(status: &str, look: StatusLook, face: rune::TextStyle) -> El {
+    row().gap(7.0).center_y().child(bead(look)).child(text(status.replace('_', " ")).font(face).color(look.ink))
+}
+
+/// A status where it is the subject (`.badge`): the detail pane's header.
+fn status_badge(status: &str, th: &Theme) -> El {
+    let look = th.status(status);
+    row()
+        .role("status")
+        .label(status.replace('_', " "))
+        .h(22.0)
+        .pl(7.0)
+        .pr(8.0)
         .gap(6.0)
         .center_y()
-        .child(el().size(7.0, 7.0).radius(3.5).fill(dot))
-        .child(text(status.replace('_', " ")).font(k.ty.text_small).color(ink))
+        .radius(th.k.radius.sm)
+        .fill(look.wash)
+        .child(el().absolute(0.0, 0.0).w_full().h_full().radius(th.k.radius.sm).border(1.0, look.line).a11y_hidden())
+        .child(bead(look))
+        .child(text(status.replace('_', " ")).font(th.ty.xs).color(look.ink).a11y_hidden())
 }
 
-/// Dot and label colours per lifecycle status.
-fn status_colors(status: &str, k: &Kit) -> (Color, Color) {
-    match status {
-        "open" => (k.c.info.icon, k.c.text_base),
-        "in_progress" => (k.c.warning.icon, k.c.text_base),
-        "blocked" => (k.c.danger.icon, k.c.text_base),
-        "closed" => (k.c.success.icon, k.c.text_faint),
-        _ => (k.c.icon_faint, k.c.text_muted),
-    }
+/// A label (`.tag`).
+fn tag(label: &str, th: &Theme) -> El {
+    row()
+        .h(20.0)
+        .px(6.0)
+        .center_y()
+        .radius(th.k.radius.sm)
+        .fill(th.t.s3)
+        .child(text(format!("#{label}")).font(th.ty.xs).color(th.t.tx_mid))
 }
 
-fn priority_color(p: i64, k: &Kit) -> Color {
-    match p {
-        0 => k.c.danger.fg,
-        1 => k.c.warning.fg,
-        _ => k.c.text_muted,
-    }
-}
-
-fn note(k: &Kit, message: &str) -> El {
+fn note(th: &Theme, message: &str) -> El {
     col()
         .key("note")
         .w_full()
         .h_full()
         .center()
         .padding(24.0)
-        .child(text(message.to_string()).font(k.ty.text_small).color(k.c.text_muted).wrap().align(Align::Center))
+        .child(text(message.to_string()).font(th.ty.sm).color(th.t.tx_mid).wrap().align(rune::Align::Center))
 }
 
-fn loading(k: &Kit, message: &str) -> El {
+fn loading(th: &Theme, message: &str) -> El {
     col()
         .key("loading")
         .w_full()
         .h_full()
         .center()
         .gap(10.0)
-        .child(Spinner::new().build(k))
-        .child(text(message.to_string()).font(k.ty.text_small).color(k.c.text_faint))
+        .child(Spinner::new().build(&th.k))
+        .child(text(message.to_string()).font(th.ty.sm).color(th.t.tx_dim))
 }
 
 /// `2026-11-06 13:05` → `Nov 6 13:05`.

@@ -11,11 +11,12 @@ mod dolt;
 mod model;
 mod sample;
 mod settings;
+mod theme;
 mod view;
 
 use std::sync::Arc;
 
-use rune::{AppSpec, KeyEvent, Tx};
+use rune::{App, AppSpec, Chrome, KeyEvent, Tx};
 
 use app::{Check, Load, State};
 use dolt::{Config, Credential, Dolt};
@@ -116,10 +117,23 @@ fn on_key(s: &mut State, key: &KeyEvent, _: &mut Tx) -> bool {
     false
 }
 
+/// The window frame on macOS: the content runs under a transparent title
+/// bar, so the app's own bar (`view::title_bar`) is the title bar. The window
+/// buttons are centred in it, and only that bar drags the window, which
+/// leaves everything below it clickable.
+fn chrome() -> Chrome {
+    const INSET: f32 = 16.0;
+    Chrome {
+        full_size_content: true,
+        traffic_lights: Some((INSET, (view::TITLE_BAR_H - Chrome::TRAFFIC_LIGHT) / 2.0)),
+        drag_regions: true,
+    }
+}
+
 fn main() {
     rune::prewarm_gpu();
     rune::tooling::set_app_id("beadsmith-desktop");
-    rune::run(AppSpec::<State> {
+    let spec = AppSpec::<State> {
         min_size: Some((1100.0, 560.0)),
         scenes: &[
             ("sample", sample_scene),
@@ -135,6 +149,8 @@ fn main() {
         setup: Some(|s, waker| s.setup(waker)),
         poll: Some(|s, _, tx| s.poll(tx)),
         on_key: Some(on_key),
-        ..AppSpec::new("Beadsmith", (1360.0, 820.0), init, view::view)
-    });
+        families: theme::FAMILIES,
+        ..AppSpec::new("Beadsmith", (1440.0, 880.0), init, view::view)
+    };
+    App::new(spec).chrome(chrome()).run();
 }
