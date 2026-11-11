@@ -357,6 +357,11 @@ pub struct Quick {
     pub results: Vec<Target>,
     /// The row Enter opens.
     pub active: usize,
+    /// The reader put `active` where it is (an arrow key or the pointer)
+    /// since the text last changed. Only then does a server answer keep the
+    /// highlight on the same target; otherwise it stays on the best match,
+    /// the top row, which is the one the field's edit scrolled into view.
+    chosen: bool,
     /// A search is on its way: the list may still gain issues.
     pub searching: bool,
     /// The last search failed. Projects still match; issues are missing.
@@ -859,6 +864,7 @@ impl State {
             hits: Vec::new(),
             results: quick::rank("", projects, &[]),
             active: 0,
+            chosen: false,
             searching: false,
             failed: None,
         });
@@ -884,6 +890,7 @@ impl State {
         let Some(quick) = &mut self.quick else { return };
         let needle = quick::needle(&quick.query.text);
         quick.active = 0;
+        quick.chosen = false;
         quick.failed = None;
         quick.searching = !needle.is_empty();
         if needle.is_empty() {
@@ -901,12 +908,14 @@ impl State {
     }
 
     /// The server's answer for the text in the field: its issues join the
-    /// list, or the list says they are missing. The row the reader is on
-    /// stays theirs when the answer keeps it.
+    /// list, or the list says they are missing. A row the reader moved to
+    /// stays theirs when the answer keeps it; untouched, the highlight stays
+    /// on the top row, the best match, rather than following whatever was
+    /// first before the issues arrived down the list and out of view.
     pub fn quick_found(&mut self, found: Result<Vec<Hit>, Failure>) {
         let Some(quick) = &mut self.quick else { return };
         quick.searching = false;
-        let on = quick.active_target().cloned();
+        let on = quick.chosen.then(|| quick.active_target().cloned()).flatten();
         match found {
             Ok(hits) => quick.hits = hits,
             Err(failure) => quick.failed = Some(failure),
@@ -934,6 +943,7 @@ impl State {
             return None;
         }
         quick.active = (quick.active as isize + by).rem_euclid(rows as isize) as usize;
+        quick.chosen = true;
         Some(quick.active)
     }
 
@@ -943,6 +953,7 @@ impl State {
             && row < quick.results.len()
         {
             quick.active = row;
+            quick.chosen = true;
         }
     }
 
@@ -2565,6 +2576,18 @@ mod tests {
         s.quick_move(2);
         quick_wait(&mut s);
         assert_eq!(quick_names(&s)[s.quick.as_ref().unwrap().active], on);
+
+        // Untouched, the highlight stays on the top row when the answer lands,
+        // not on the project that was first before the issues outranked it.
+        s.close_quick();
+        s.open_quick();
+        s.quick.as_mut().unwrap().query.replace_text("pa");
+        s.quick_edited();
+        assert_eq!(quick_names(&s), ["pantry"], "projects answer each key");
+        quick_wait(&mut s);
+        let names = quick_names(&s);
+        assert!(names.len() > 1 && names[0] != "pantry", "{names:?}");
+        assert_eq!(s.quick.as_ref().unwrap().active, 0, "the best match, in view");
 
         // Emptied, it is the project switcher again, and asks for nothing.
         s.quick.as_mut().unwrap().query.replace_text("  ");
