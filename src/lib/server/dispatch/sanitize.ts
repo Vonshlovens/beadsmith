@@ -77,3 +77,11 @@ export function readGithubPullUrl(value: unknown, secret: string): string | unde
 	}
 	return undefined;
 }
+
+/** The first GitHub pull request URL in a run summary, if any. */
+export function findPullRequestUrl(text: string | undefined): string | undefined {
+	const match = text?.match(
+		/https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*/
+	);
+	return match?.[0];
+}

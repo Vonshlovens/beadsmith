@@ -106,6 +106,16 @@ export function parseSessionEventId(
 const TURN_END = new Set(['done', 'idle', 'error']);
 const READ_LIMIT = 1000;
 
+/**
+ * Where a turn starts, enough for {@link AgentSession.attach} to restore it
+ * on another connection or in another process: hc's turn counter when the
+ * message went in, and the transcript line the turn's events start on.
+ */
+export interface TurnMark {
+	base: number;
+	first_line: number;
+}
+
 interface PendingTurn {
 	/** hc's turn counter when the message was sent. */
 	base: number;
@@ -158,6 +168,8 @@ export class AgentSession {
 	#last_line = 0;
 	#next_synthetic = SYNTHETIC_INDEX;
 	#drain_chain: Promise<void> = Promise.resolve();
+	/** A turn being closed or the session being ended, for {@link settled}. */
+	#closing: Promise<void> = Promise.resolve();
 
 	constructor(options: AgentSessionOptions) {
 		this.#options = options;
@@ -210,9 +222,9 @@ export class AgentSession {
 	/**
 	 * Send a message to the running CLI. Refused while a turn is under way
 	 * (`conflict`), while the CLI waits for a decision (`blocked`) and once the
-	 * session has ended.
+	 * session has ended. Returns the turn's {@link TurnMark}.
 	 */
-	async send(text: string): Promise<void> {
+	async send(text: string): Promise<TurnMark> {
 		const client = this.#ready();
 		if (this.#pending !== undefined || this.#state === 'starting') {
 			throw new SessionError('conflict', 'the agent is working on a turn');
@@ -223,6 +235,7 @@ export class AgentSession {
 		// Anything left from the previous turn belongs to it, not to this one.
 		await this.#drain();
 		this.#mapper.beginTurn();
+		const first_line = this.#next_line;
 		const pending: PendingTurn = { base: this.#turn, interrupted: false, closing: false };
 		this.#pending = pending;
 		try {
@@ -236,12 +249,14 @@ export class AgentSession {
 			}
 			throw this.#unavailable(error);
 		}
+		const mark = { base: pending.base, first_line };
 		// A fast turn can end before the reply to `send` arrives.
-		if (this.#pending !== pending || pending.closing) return;
+		if (this.#pending !== pending || pending.closing) return mark;
 		pending.timer = unref(setTimeout(() => void this.#turnTimedOut(pending), this.#turn_ms));
 		this.#setState(this.#workingState());
 		this.#schedulePoll();
 		this.#evaluate();
+		return mark;
 	}
 
 	/** Press the CLI's stop key. The turn ends as `cancelled`; the CLI keeps running. */
@@ -287,13 +302,99 @@ export class AgentSession {
 		if (this.#state === 'ended') throw new SessionError('ended', 'the session has ended');
 		this.#detach();
 		await this.#bind(client);
-		const live =
-			this.#terminal === undefined
-				? undefined
-				: (await this.#call(() => client.list({ labels: this.#labels }))).find(
-						(t) => t.address === this.#terminal && t.state === 'live'
-					);
+		await this.#follow(client, true);
+	}
+
+	/**
+	 * Take up a session this object did not start: Beadsmith restarted, or
+	 * dropped the session between turns. Follows the live terminal that
+	 * carries this session's label, or launches the CLI again when none runs
+	 * (resuming it when its transcript exists, so a session that never got a
+	 * message starts fresh).
+	 *
+	 * `turn` restores a turn that was under way (the mark {@link send}
+	 * returned). Without it, reading starts at the transcript's current end,
+	 * so earlier turns are not replayed as if they were new.
+	 *
+	 * `relaunch: false` is for a caller that only wants to know how a turn
+	 * went: with no live terminal it fails the turn and ends the session
+	 * instead of starting the CLI again.
+	 */
+	async attach(
+		client: HcClient,
+		options: { turn?: TurnMark; relaunch?: boolean } = {}
+	): Promise<void> {
+		if (this.#client !== undefined || this.#terminal !== undefined || this.#state === 'ended') {
+			throw new SessionError('conflict', 'session already started');
+		}
+		await this.#bind(client);
+		let lines: number | undefined;
+		try {
+			lines = (await client.readFile(this.#transcript, { offset: 1, limit: 1 })).lines;
+		} catch (error) {
+			if (!(error instanceof HcError && error.kind === 'not_found')) {
+				this.#detach();
+				this.#client = undefined;
+				throw this.#unavailable(error);
+			}
+		}
+		const turn = options.turn;
+		if (turn !== undefined) {
+			this.#seek(turn.first_line);
+			const pending: PendingTurn = { base: turn.base, interrupted: false, closing: false };
+			pending.timer = unref(setTimeout(() => void this.#turnTimedOut(pending), this.#turn_ms));
+			this.#pending = pending;
+		} else {
+			this.#seek((lines ?? 0) + 1);
+		}
+		await this.#follow(client, lines !== undefined, options.relaunch ?? true);
+	}
+
+	/**
+	 * Resolves once nothing is in flight: the transcript read so far, and any
+	 * turn being closed (which can wait up to the settle time for the
+	 * transcript's end record). A caller taking a snapshot awaits it after
+	 * {@link attach} to see whether the turn has ended.
+	 */
+	async settled(): Promise<void> {
+		for (;;) {
+			const closing = this.#closing;
+			await Promise.all([closing, this.#drain_chain]);
+			if (closing === this.#closing) return;
+		}
+	}
+
+	/**
+	 * Stop following the terminal without ending it. The client stays open,
+	 * and a turn under way is left to run: this object reports nothing more.
+	 */
+	close(): void {
+		this.#detach();
+		this.#client = undefined;
+		clearTimeout(this.#pending?.timer);
+	}
+
+	/** Read the transcript from `line` on, as the start of a turn. */
+	#seek(line: number): void {
+		this.#next_line = Math.max(1, line);
+		this.#last_line = this.#next_line - 1;
+		this.#next_synthetic = SYNTHETIC_INDEX;
+		this.#mapper.beginTurn();
+	}
+
+	/**
+	 * Follow this session's live terminal on a bound client, or launch the
+	 * CLI in a new one (`resume`: continue its session). A turn under way
+	 * whose terminal is gone fails first; without `relaunch` the session
+	 * then ends.
+	 */
+	async #follow(client: HcClient, resume: boolean, relaunch = true): Promise<void> {
+		const live = (await this.#call(() => client.list({ labels: this.#labels }))).find(
+			(t) => t.state === 'live' && (this.#terminal === undefined || t.address === this.#terminal)
+		);
 		if (live !== undefined) {
+			this.#terminal = live.address;
+			this.#finished = false;
 			this.#status = live.status?.state ?? null;
 			this.#turn = live.turn ?? this.#turn;
 			this.#setState(this.#pending === undefined ? this.#idleState() : this.#workingState());
@@ -305,14 +406,13 @@ export class AgentSession {
 			await this.#drain();
 			await this.#failTurn('The agent terminal was lost in the middle of a turn.');
 		}
+		if (!relaunch) {
+			this.#finished = true;
+			await this.#end('failed');
+			return;
+		}
 		this.#finished = false;
-		await this.#launch(true);
-	}
-
-	/** Stop following the terminal without ending it. The client stays open. */
-	close(): void {
-		this.#detach();
-		this.#client = undefined;
+		await this.#launch(resume);
 	}
 
 	// ── connection ──────────────────────────────────────────────────────
@@ -456,7 +556,7 @@ export class AgentSession {
 			// An interrupted CLI may stop without counting a turn.
 			(this.#turn > pending.base || pending.interrupted);
 		if (turn_over) {
-			void this.#completeTurn(pending, this.#status === 'error');
+			this.#closing = this.#completeTurn(pending, this.#status === 'error');
 			return;
 		}
 		this.#setState(this.#workingState());
@@ -471,7 +571,7 @@ export class AgentSession {
 			return;
 		}
 		if (this.#cancelled) return;
-		void this.#end('failed');
+		this.#closing = this.#end('failed');
 	}
 
 	// ── turns ───────────────────────────────────────────────────────────

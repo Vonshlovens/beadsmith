@@ -262,10 +262,11 @@ the console says so (`E2B settings are incomplete`).
 
 ## Terminals (hc)
 
-Agents are moving from headless `claude -p` to interactive Claude Code in an
+Missions run interactive Claude Code in an
 [hc](https://github.com/herdrdev/herdr-core) terminal
-([ADR-0021](../specs/decisions/0021-hc-terminal-runtime.md)). The template
-carries what that needs:
+([ADR-0021](../specs/decisions/0021-hc-terminal-runtime.md)); chats still
+start their own headless `claude -p` until they move too. The template
+carries what the terminals need:
 
 - `hc`, the version and `linux-x86_64` SHA-256 pinned in
   [`nix/herdr-core.json`](../nix/herdr-core.json) (the same file the Nix
@@ -291,10 +292,6 @@ user on hc's default Unix socket, in a 0700 directory. No port is opened and
 nothing outside the sandbox speaks hc except Beadsmith, through the E2B
 process channel (ADR-0021 rule 1).
 
-Until missions and chats move onto the session core, `beadsmith-run` still
-runs the agent with `claude -p` after starting hc, and chats still start
-their own `claude -p`; the run directory contract below is unchanged.
-
 Live check after a rebuild (not yet run):
 
 1. Start a Sand mission. In the sandbox (E2B CLI or dashboard terminal), run
@@ -310,8 +307,22 @@ Live check after a rebuild (not yet run):
 3. From the same sandbox, `printf '' | beadsmith-hc connect; echo $?` exits
    0, and `echo 'not base64!' | beadsmith-hc connect; echo $?` exits 2.
 
-Once missions run on the session core, step 2 becomes: start a mission and
-see its terminal in `hc ls` inside the sandbox.
+4. Start a Tackle mission and watch its thread: the live view shows tool
+   calls and text, the run ends `succeeded` with the agent's summary (and PR
+   link), and `hc ls` in the sandbox lists one live terminal labelled
+   `beadsmith-session=<the sandbox's beadsmith_session metadata>` that stays
+   up after the turn. `~/.beadsmith/runs/r1/` holds `ready`, `claim/`,
+   `turn.json` and `result.json`.
+5. Send a follow-up: `hc ls` still shows the same terminal (no new one), and
+   the reply arrives in the thread. Let the sandbox pause (idle timeout),
+   send another: it resumes with the same terminal.
+6. Cancel a working run: the terminal finishes (`hc ls --all`), the thread
+   says cancelled, and the next follow-up starts a new terminal running
+   `claude --resume <session id>` that remembers the conversation.
+
+Steps 4 to 6 are unit-tested against a fake hc core and a fake sandbox
+([`e2b-provider.test.ts`](../src/lib/server/dispatch/e2b-provider.test.ts));
+they have not been run against E2B yet.
 
 ## How a mission runs
 
@@ -325,17 +336,30 @@ see its terminal in `hc ls` inside the sandbox.
    [`beadsmith-run`](../sandbox/e2b/beadsmith-run) with a fresh Tailscale
    key. The script joins the tailnet, opens the Dolt forward, clones the
    checkout, installs any skill the checkout lacks under `.agents/skills/`
-   (excluded from git), starts the sandbox's hc core and runs
-   `claude -p --output-format stream-json`.
-3. Beadsmith reads the run's files for status, and tails its event log for
-   the thread's live view (text, thinking and tool names only; never tool
-   inputs or output).
-4. When the run ends, the sandbox's timeout drops to the idle time, then it
-   pauses. A follow-up resumes it, refreshes the GitHub token and starts the
-   next run with `--continue`. Cancel stops the run's process group.
-5. A run still working at the time limit pauses with the sandbox and is
-   reported failed. A follow-up resumes the sandbox, stops that run and
-   continues.
+   (excluded from git), starts the sandbox's hc core and writes `ready`.
+3. The first status read or live stream that sees `ready` claims the start
+   (`mkdir claim`, atomic, so two requests never send the prompt twice).
+   It connects to hc through `beadsmith-hc connect`, launches Claude Code in
+   a terminal (`claude --session-id <id>`, the id kept in the sandbox's
+   `beadsmith_session` metadata), sends the prompt with `terminal.send` and
+   writes the turn's start (hc's turn counter and the transcript line) to
+   `turn.json`. Nobody needs to stay connected: the CLI works on in its
+   terminal.
+4. Status reads and the thread's live view attach the session core
+   ([`src/lib/agent-session/`](../src/lib/agent-session/)) to that turn. It
+   reads Claude Code's own transcript with `file.read` (text, thinking and
+   tool names only; never tool inputs or output) and decides the turn is
+   over from hc's turn counter and status. The first to see the end writes
+   `result.json`; later reads use it without touching hc.
+5. When the run ends, the sandbox's timeout drops to the idle time, then it
+   pauses, with the CLI still in its terminal. A follow-up resumes it,
+   refreshes the GitHub token, runs setup again for the tailnet, and sends
+   the next message to the same CLI. If the terminal is gone, it starts
+   `claude --resume <id>` first. Cancel marks the run cancelled and ends the
+   CLI (`terminal.kill`); during setup it stops the setup script instead.
+6. A run still working at the time limit pauses with the sandbox and is
+   reported failed. A follow-up resumes the sandbox, ends that turn's CLI
+   and continues in a resumed one.
 
 ## How a chat runs
 
@@ -361,8 +385,8 @@ other way ([ADR-0020](../specs/decisions/0020-first-mate-crew-tools.md)).
 
 E2B errors and the end of Claude Code's stderr, when it exits badly, go to
 Beadsmith's server log with credential shapes stripped; the browser only
-sees a fixed message. Mission sandboxes do the same for a failed run's
-`stderr.log` and `setup.log`.
+sees a fixed message. Mission sandboxes do the same for a failed setup's
+`setup.log`.
 
 ## Costs and limits
 
@@ -399,7 +423,7 @@ Not yet checked:
   rewritten and tools answer again.
 
 A failed setup step shows in the thread by name (joining the tailnet,
-reaching Dolt, cloning, starting hc). `~/.beadsmith/runs/<run>/setup.log` and
-`stderr.log` in a mission's sandbox, and
+reaching Dolt, cloning, starting hc). `~/.beadsmith/runs/<run>/setup.log` in
+a mission's sandbox, `hc ls --all` and `hc read <terminal>` there, and
 `~/.beadsmith/tailscale/tailscaled.log`, say what went wrong. Open them from
 E2B's dashboard or CLI; the mission's agent id is the sandbox id.

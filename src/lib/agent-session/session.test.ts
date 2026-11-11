@@ -381,6 +381,80 @@ describe('AgentSession pause and resume', () => {
 	});
 });
 
+describe('AgentSession attach', () => {
+	it('picks up a turn another session object started, from its mark', async () => {
+		const fake = new FakeClaude();
+		fake.onMessage = () => {};
+		const { session: starter } = session();
+		await starter.start(await open(fake.core));
+		const mark = await starter.send('Work');
+		expect(mark).toEqual({ base: 0, first_line: 1 });
+		starter.close();
+
+		const { session: s, events } = session();
+		await s.attach(await open(fake.core), { turn: mark });
+		await s.settled();
+		expect(s.state).toBe('working');
+		expect(results(events)).toEqual([]);
+
+		fake.answer(fake.core.terminal(s.terminal!), 'Finished.');
+		await until(() => results(events).length === 1);
+		expect(results(events)[0]).toMatchObject({ status: 'succeeded', text: 'Finished.' });
+		// One terminal throughout: attach followed the live one.
+		expect(fake.core.terminals.size).toBe(1);
+	});
+
+	it('reports a turn that already ended once settled', async () => {
+		const fake = new FakeClaude();
+		const { session: starter } = session();
+		await starter.start(await open(fake.core));
+		const mark = await starter.send('Quick');
+		starter.close();
+		await later(10);
+
+		const { session: s, events } = session();
+		await s.attach(await open(fake.core), { turn: mark });
+		await s.settled();
+		expect(events.map((e) => e.type)).toEqual(['tool_call', 'tool_call', 'assistant', 'result']);
+		expect(results(events)[0]).toMatchObject({ status: 'succeeded', text: 'Echo: Quick' });
+	});
+
+	it('fails the turn and ends without relaunching when told not to', async () => {
+		const fake = new FakeClaude();
+		fake.onMessage = () => {};
+		const { session: starter } = session();
+		await starter.start(await open(fake.core));
+		const mark = await starter.send('Work');
+		starter.close();
+		fake.core.exit(starter.terminal!, 1);
+
+		const { session: s, events } = session();
+		await s.attach(await open(fake.core), { turn: mark, relaunch: false });
+		await s.settled();
+		expect(events.map((e) => e.type)).toEqual(['error', 'result']);
+		expect(results(events)[0]).toMatchObject({ status: 'failed' });
+		expect(s.state).toBe('ended');
+		expect(fake.core.terminals.size).toBe(1);
+	});
+
+	it('launches a fresh CLI when nothing ran yet and starts reading at the end', async () => {
+		const fake = new FakeClaude();
+		const { session: s, events } = session();
+		await s.attach(await open(fake.core));
+		expect(fake.core.terminal(s.terminal!).argv).toContain('--session-id');
+		await s.send('Hello');
+		await until(() => results(events).length === 1);
+
+		// A later attach with no live terminal resumes, and skips earlier turns.
+		fake.core.exit(s.terminal!);
+		s.close();
+		const { session: again, events: later_events } = session();
+		await again.attach(await open(fake.core));
+		expect(fake.core.terminal(again.terminal!).argv).toContain('--resume');
+		expect(later_events).toEqual([]);
+	});
+});
+
 describe('parseSessionEventId', () => {
 	it('reads line and index and refuses anything else', () => {
 		expect(parseSessionEventId('12.9001')).toEqual({ line: 12, index: 9001 });

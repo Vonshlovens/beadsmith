@@ -224,8 +224,7 @@ Shipped:
   transcript mapper) is `claude-code.ts`. Event ids are `<line>.<index>` of
   the transcript; the session's own `result` and `error` events take indexes
   from 9000 on the last line read, so Last-Event-ID resumes stay ordered.
-  Tests run against the fake core. Chats and missions still use the
-  stream-json paths until they move; the old mappings go with them.
+  Tests run against the fake core.
 
 - The Sand template (`sandbox/e2b/build-template.ts`) installs hc from the
   pin in `nix/herdr-core.json` (version, generation and the `linux-x86_64`
@@ -235,13 +234,26 @@ Shipped:
   `settings.json` for the bypass warning), and ships `beadsmith-hc connect`,
   the byte-safe carrier: base64 lines both ways around `hc connect`.
   `beadsmith-run` starts the core after setup (exit 14 if it cannot) so
-  terminals inherit the sandbox's environment; it still runs `claude -p`
-  until missions move.
+  terminals inherit the sandbox's environment, then writes `ready` and
+  exits: it no longer runs the agent.
+- Sand missions run on the session core
+  (`src/lib/server/dispatch/e2b-provider.ts`, over
+  `src/lib/server/e2b/hc-transport.ts`, an `HcTransport` on the
+  `beadsmith-hc` carrier). Beadsmith keeps no process per mission: each
+  run's state lives in the sandbox (`ready`, an atomic `claim/` so one
+  request sends the prompt, `turn.json` with the `TurnMark` that
+  `AgentSession.send` returns, `result.json` once a status read or stream
+  sees the turn end), and any request attaches a session core to the turn
+  (`attach` with `relaunch: false` for reads, so a lost terminal fails the
+  turn instead of starting the CLI). The CLI session id is sandbox
+  metadata; a follow-up is the next message to the running CLI. A stream of
+  a finished run sends its stored result only. The dispatch stream-json
+  mapping is gone; chats still use the mate runner's.
 
 Planned, each in its own change:
 
-- chats and missions on the session core, deleting the two stream-json
-  mappings and `beadsmith-run`'s `claude -p` tail;
+- chats on the session core, deleting the mate runner's stream-json
+  mapping;
 - the forge guest's hc and the runner wired to it;
 - the relay route, its audit rows in `state.db` (0004 updated when they
   ship), and the terminal view in First Mate chats and mission threads.
