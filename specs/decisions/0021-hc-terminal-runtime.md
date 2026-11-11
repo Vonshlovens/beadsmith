@@ -214,11 +214,23 @@ Shipped:
   SDK hands stdout to callbacks as decoded strings, so the Sand side needs a
   byte-safe carrier for `hc connect` (for example an encoding wrapper in the
   sandbox) rather than the raw command output.
+- The interactive session core, `src/lib/agent-session/` (`AgentSession`),
+  runs one CLI in one terminal over an `HcClient`: launch and wait for the
+  first `idle` (a `blocked` launch is killed and fails), paste messages, turn
+  end from hc's counter plus the transcript's `turn_duration` record (with a
+  short settle time if the record is late), interrupt, cancel, a turn time
+  limit, and reconnect after a lost channel (re-attach, or fail the turn and
+  start `claude --resume`). The Claude Code seam (argv, transcript path,
+  transcript mapper) is `claude-code.ts`. Event ids are `<line>.<index>` of
+  the transcript; the session's own `result` and `error` events take indexes
+  from 9000 on the last line read, so Last-Event-ID resumes stay ordered.
+  Tests run against the fake core. Chats and missions still use the
+  stream-json paths until they move; the old mappings go with them.
 
 Planned, each in its own change:
 
-- one interactive session core used by chats and missions, replacing the two
-  stream-json mappings;
+- chats and missions on the session core, deleting the two stream-json
+  mappings;
 - hc and the first-run settings in the E2B template and `beadsmith-run`, then
   Sand missions and chats on the session core;
 - the forge guest's hc and the runner wired to it;
