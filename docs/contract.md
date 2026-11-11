@@ -349,7 +349,9 @@ provider credentials, the launch prompt, or raw worker logs.
 `POST /api/projects/:id/dispatch/:requestId/cancel` cancels the active agent
 run. On a working loop, `POST .../steer` `{text}` queues a size-capped note for
 its next iteration and `POST .../stop-after-iteration` ends it once the
-current iteration finishes ([details](./file-tackle-dispatch.md)). `POST /api/projects/:id/dispatch/:requestId/follow-up` `{text}` starts a
+current iteration finishes; on an ended loop, `POST .../restart`
+`{max_iterations?}` starts a new run of it on the same mission, armed and
+allowed like a launch ([details](./file-tackle-dispatch.md)). `POST /api/projects/:id/dispatch/:requestId/follow-up` `{text}` starts a
 new run on the same agent id. Follow-up text is the only free-form field and
 is size-capped; extra keys, repository, model, and shell are rejected. A `409`
 `conflict` means the agent is still busy. The composer is disabled while the

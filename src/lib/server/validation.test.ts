@@ -15,6 +15,7 @@ import {
 	parseTackleMapBody,
 	parseValue,
 	project_id_schema,
+	restart_schema,
 	tackle_map_schema,
 	file_map_schema,
 	theme_schema
@@ -224,6 +225,17 @@ describe('discuss dispatch body', () => {
 		expect(parseValue(dispatch_schema, { ...base, intent: 'discuss', issue_id: '../x' }).ok).toBe(
 			false
 		);
+	});
+});
+
+describe('loop restart body', () => {
+	it('takes an optional iteration limit within the launch bounds, and nothing else', () => {
+		expect(parseValue(restart_schema, {}).ok).toBe(true);
+		expect(parseValue(restart_schema, { max_iterations: 3 }).ok).toBe(true);
+		expect(parseValue(restart_schema, { max_iterations: 0 }).ok).toBe(false);
+		expect(parseValue(restart_schema, { max_iterations: 201 }).ok).toBe(false);
+		expect(parseValue(restart_schema, { max_iterations: 1.5 }).ok).toBe(false);
+		expect(parseValue(restart_schema, { mode: 'plan' }).ok).toBe(false);
 	});
 });
 

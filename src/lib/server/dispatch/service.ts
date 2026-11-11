@@ -97,6 +97,8 @@ const NOT_CONFIGURED_MESSAGE = 'Agent dispatch is not configured on this service
 export const LOOP_NOT_SUPPORTED_MESSAGE = 'That agent runner cannot run loops.';
 export const LOOP_FOLLOW_UP_MESSAGE = 'A loop takes steer notes and stops, not a follow-up.';
 export const NOT_A_LOOP_MESSAGE = 'Only a loop takes steer notes and stops after an iteration.';
+export const RESTART_NOT_A_LOOP_MESSAGE = 'Only a loop can be restarted.';
+export const LOOP_STILL_RUNNING_MESSAGE = 'The loop is still running. Stop it before restarting.';
 export const MISSION_NOT_LAUNCHED_MESSAGE = 'This mission has not launched an agent yet.';
 
 export const UNKNOWN_PROVIDER_MESSAGE = 'That agent runner is not configured on this service.';
@@ -1236,6 +1238,142 @@ export async function stopDispatchAfterIteration(
 	}
 	const marked = await store.markLoopStopRequested(record.id);
 	return toPublicDispatch(marked ?? { ...record, loop_stop_requested: true });
+}
+
+/**
+ * The operator turn a restart adds: what it asked for, so the transcript
+ * shows where one run ends and the next begins.
+ */
+export function restartTurnText(max_iterations: number | undefined): string {
+	return max_iterations === undefined
+		? 'Restart the loop.'
+		: `Restart the loop for up to ${max_iterations} ${max_iterations === 1 ? 'iteration' : 'iterations'}.`;
+}
+
+/**
+ * Start a new run of an ended loop on the same mission (ADR-0019 rules 2
+ * and 5): the loop's stored flags, with an optional new iteration limit for
+ * this run only (the launch payload stays as launched, so a replayed launch
+ * still matches its idempotency key). Like a launch it starts work, so it
+ * needs dispatch armed and Tackle allowed, and it reads the project's
+ * current Tackle checkout in case the runner needs a fresh sandbox.
+ *
+ * The mission is claimed (`launching`) before the runner is asked, so two
+ * restarts cannot both start one, and no status read follows the old run's
+ * ids while the new run's are not known yet. A refusal from the runner
+ * leaves the mission failed with its reason, and is rethrown.
+ */
+export async function restartDispatch(
+	project_id: string,
+	request_id: string,
+	options: { max_iterations?: number },
+	deps: DispatchDeps = {}
+): Promise<ReturnType<typeof toPublicDispatch> | undefined> {
+	await requireConfigured(deps);
+	const store = deps.store ?? (await getDispatchStore());
+	const record = await loadOwnedRecord(project_id, request_id, store);
+	if (record === undefined) {
+		return undefined;
+	}
+	if (record.payload.operation !== 'loop') {
+		throw new DispatchError('conflict', RESTART_NOT_A_LOOP_MESSAGE);
+	}
+	const policy = await resolvePolicy(record.project_id, deps);
+	if (!policy.armed) {
+		throw new DispatchError('forbidden', DISARMED_DISPATCH_MESSAGE);
+	}
+	if (!operationAllowed(policy.allow, record.operation, payloadIntent(record.payload))) {
+		throw new DispatchError('forbidden', deniedOperationMessage(record.operation));
+	}
+	if (record.agent_id === undefined) {
+		throw new DispatchError('conflict', MISSION_NOT_LAUNCHED_MESSAGE);
+	}
+	const provider = requireRecordProvider(record, deps);
+	const restartLoop = provider.restartLoop;
+	if (restartLoop === undefined) {
+		throw new DispatchError('forbidden', `${provider.label} cannot restart loops.`);
+	}
+
+	let current = record;
+	if (isFollowableStatus(current.status)) {
+		try {
+			current = await refreshDispatchRecord(current, store, provider, deps);
+		} catch {
+			current = record;
+		}
+	}
+	if (!isTerminalDispatchStatus(current.status)) {
+		throw new DispatchError('conflict', LOOP_STILL_RUNNING_MESSAGE);
+	}
+	current = await resolveRunId(current, store, provider);
+	const agent_id = current.agent_id;
+	const after_run_id = current.run_id;
+	if (agent_id === undefined || after_run_id === undefined) {
+		throw new DispatchError('conflict', MISSION_NOT_LAUNCHED_MESSAGE);
+	}
+
+	const plan = await planLaunch(current, deps);
+	if (!plan.ok) {
+		throw new DispatchError('conflict', plan.error_message);
+	}
+	if (plan.loop === undefined) {
+		throw new DispatchError('conflict', RESTART_NOT_A_LOOP_MESSAGE);
+	}
+	const input =
+		options.max_iterations === undefined
+			? plan.loop
+			: { ...plan.loop, loop: { ...plan.loop.loop, max_iterations: options.max_iterations } };
+
+	const claimed = await store.startFollowUp(current.id, {
+		run_id: after_run_id,
+		status: 'launching'
+	});
+	if (claimed === undefined) {
+		throw new DispatchError('conflict', LOOP_STILL_RUNNING_MESSAGE);
+	}
+	try {
+		await store.appendTurn(claimed.id, {
+			role: 'operator',
+			text: restartTurnText(options.max_iterations)
+		});
+	} catch {
+		// The transcript is display state; the restart does not depend on it.
+	}
+
+	let restarted;
+	try {
+		restarted = await restartLoop(agent_id, after_run_id, input);
+	} catch (error) {
+		const message =
+			error instanceof DispatchError
+				? error.message
+				: `${provider.label} could not restart the loop.`;
+		const failed = await store.updateStatus(claimed.id, {
+			status: 'failed',
+			error_message: message
+		});
+		await appendAgentTurn(store, claimed.id, undefined, 'failed', { error_message: message });
+		await markChatToldAtLaunch(store, failed);
+		throw error instanceof DispatchError ? error : new DispatchError('unavailable', message);
+	}
+
+	const saved = await store.updateStatus(claimed.id, {
+		status: 'launched',
+		agent_id: restarted.agent_id,
+		run_id: restarted.run_id
+	});
+	const launched = saved ?? {
+		...claimed,
+		status: 'launched' as const,
+		agent_id: restarted.agent_id,
+		run_id: restarted.run_id
+	};
+	try {
+		scheduleFollower(launched, store, provider, deps);
+	} catch {
+		// The new run is durable even if this process cannot schedule.
+	}
+	return toPublicDispatch(launched);
 }
 
 function storedMissionEvent(record: DispatchRecord): MissionEvent | undefined {

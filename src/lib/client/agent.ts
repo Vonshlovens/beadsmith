@@ -249,6 +249,27 @@ export function composerState(
 	return { can_send: true };
 }
 
+/**
+ * Whether an ended loop's thread offers Restart: a new run of the same
+ * mission with its stored flags (ADR-0019 rule 5). It starts work, so it
+ * needs dispatch armed and a runner that runs loops; otherwise the control
+ * is not offered at all. Tackle being allowed for the project is checked by
+ * the service, which explains a refusal.
+ */
+export function canRestartLoop(
+	mission: Pick<DispatchRequest, 'status' | 'agent_id' | 'provider'> &
+		Partial<Pick<DispatchRequest, 'operation'>>,
+	dispatch: DispatchView | null
+): boolean {
+	if (mission.operation !== 'loop' || mission.agent_id === undefined) {
+		return false;
+	}
+	if (isBusyStatus(mission.status) || dispatch === null || !dispatch.armed) {
+		return false;
+	}
+	return missionProvider(mission, dispatch)?.capabilities.loop === true;
+}
+
 /** Short verb for a mission, for thread titles and rows. */
 export function missionVerb(mission: Pick<DispatchRequest, 'operation' | 'intent'>): string {
 	if (mission.operation === 'discuss') {

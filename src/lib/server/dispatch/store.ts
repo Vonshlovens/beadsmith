@@ -117,10 +117,15 @@ export interface DispatchStore {
 		},
 		now?: () => Date
 	): Promise<DispatchRecord | undefined>;
-	/** Move a terminal mission onto a new run of the same agent (follow-up). */
+	/**
+	 * Move a terminal mission onto a new run of the same agent (follow-up),
+	 * or claim it for a loop restart (`launching`, keeping the ended run's id
+	 * until the runner names the new one). Only one caller wins: undefined
+	 * when the mission was not terminal.
+	 */
 	startFollowUp(
 		id: string,
-		patch: { run_id: string; status: 'launched' | 'running' },
+		patch: { run_id: string; status: 'launching' | 'launched' | 'running' },
 		now?: () => Date
 	): Promise<DispatchRecord | undefined>;
 	/** Append a conversation turn. A second agent turn for the same run is ignored. */
@@ -442,10 +447,10 @@ export function createDispatchStore(client: Client): DispatchStore {
 
 		async startFollowUp(
 			id: string,
-			patch: { run_id: string; status: 'launched' | 'running' },
+			patch: { run_id: string; status: 'launching' | 'launched' | 'running' },
 			now: () => Date = () => new Date()
 		): Promise<DispatchRecord | undefined> {
-			await client.execute({
+			const claimed = await client.execute({
 				sql: `UPDATE dispatch_requests SET
 					status = ?,
 					run_id = ?,
@@ -459,15 +464,12 @@ export function createDispatchStore(client: Client): DispatchStore {
 					AND status IN ('succeeded', 'cancelled', 'failed')`,
 				args: [patch.status, patch.run_id, now().toISOString(), id]
 			});
-			const updated = await this.get(id);
-			if (
-				updated === undefined ||
-				updated.status !== patch.status ||
-				updated.run_id !== patch.run_id
-			) {
+			// The row count, not a read-back, says who won: a restart claim keeps
+			// the run id, so a loser would read the winner's row as its own.
+			if (claimed.rowsAffected === 0) {
 				return undefined;
 			}
-			return updated;
+			return this.get(id);
 		},
 
 		async appendTurn(

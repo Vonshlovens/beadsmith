@@ -238,7 +238,7 @@ spends without a bound; `iteration_timeout_minutes` is 1 to 240. Only a
 runner whose `capabilities.loop` is true takes a loop (Sand; see
 [How a loop runs](sand-e2b.md#how-a-loop-runs)); any other, such as a
 webhook runner, refuses it with `403` before a record is written. A loop takes no follow-up (`409`):
-steer and stop are its controls (restart is planned).
+steer, stop and restart are its controls.
 `POST .../steer` with `{text}` (max 4000 characters, extra keys fail closed)
 queues a note that ralph adds to the next iteration's prompt; it needs the
 global arm and Tackle allowed, like a follow-up, and is kept in the thread as
@@ -248,7 +248,20 @@ record's `loop.stop_requested` stays true until a new run, so the thread says
 the stop is on its way. Like cancel it is taken while disarmed. Cancel is
 "stop now". Both answer `409` when the loop is not running (still in setup,
 or ended), and stop-after-iteration answers with the ended record when the
-loop finished first. Each finished iteration (number,
+loop finished first. `POST .../restart` with `{max_iterations?}` (1 to 200,
+extra keys fail closed) starts a new run of an ended loop (succeeded,
+cancelled or failed) on the same mission, with the flags it was launched
+with; `max_iterations` replaces the limit for that run only, and the stored
+launch payload is unchanged. Like a launch it needs the global arm, Tackle
+allowed and the project's Tackle map, and it answers `409` while the loop
+is still working, for a mission that is not a loop or never launched, and
+when the map is gone. The mission is claimed as `launching` before the
+runner is asked, so only one of two restarts starts a run; a runner that
+refuses leaves the mission `failed` with its reason. The thread records the
+restart as an operator turn without a `run_id` (steer notes carry one). On
+Sand the run starts in the loop's sandbox while E2B still has it, otherwise
+in a fresh one, and `agent_id` follows it
+([How a loop runs](sand-e2b.md#how-a-loop-runs)). Each finished iteration (number,
 outcome, duration, tokens, cost, commit range, validation, open plan items)
 is copied into `state.db` as the runner reports it, because a Sand sandbox
 and ralph's own database go when the loop ends.
@@ -304,7 +317,9 @@ the agent's words and errors stay in the sandbox. A loop's mission thread
 shows these rows above its conversation, grouped by run once it has been
 restarted, with its stop reason and a needs-person badge after it ends.
 Live events carry no iteration boundaries, so the thread re-reads this list
-every few seconds while the loop runs. A loop thread takes no replies.
+every few seconds while the loop runs. A loop thread takes no replies; an
+ended loop's footer offers Restart with its iteration limit, editable, when
+dispatch is armed and its runner runs loops.
 
 `GET /api/status` reports `dispatch.capabilities` for the default provider
 and `dispatch.providers` (`id`, `label`, `capabilities`) for every configured

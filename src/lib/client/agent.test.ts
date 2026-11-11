@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	agentAvailability,
+	canRestartLoop,
 	composerState,
 	formatElapsed,
 	intentAllowed,
@@ -202,6 +203,34 @@ describe('composerState', () => {
 			'This runner cannot steer loops.'
 		);
 		expect(composerState(running, { ...looping, armed: false }).reason).toContain('disarmed');
+	});
+});
+
+describe('canRestartLoop', () => {
+	const ended = {
+		status: 'succeeded' as const,
+		agent_id: 'sbx-1',
+		provider: 'webhook' as const,
+		operation: 'loop' as const
+	};
+	const looping = health({
+		capabilities: { live_events: false, follow_up: true, cancel: true, loop: true, terminal: false }
+	}).dispatch;
+
+	it('offers Restart on an ended loop, on a loop runner, while armed', () => {
+		expect(canRestartLoop(ended, looping)).toBe(true);
+		expect(canRestartLoop({ ...ended, status: 'failed' }, looping)).toBe(true);
+		expect(canRestartLoop({ ...ended, status: 'cancelled' }, looping)).toBe(true);
+	});
+
+	it('does not offer it while working, unlaunched, disarmed, off a loop runner or off a loop', () => {
+		expect(canRestartLoop({ ...ended, status: 'running' }, looping)).toBe(false);
+		expect(canRestartLoop({ ...ended, status: 'launching' }, looping)).toBe(false);
+		expect(canRestartLoop({ ...ended, agent_id: undefined }, looping)).toBe(false);
+		expect(canRestartLoop(ended, { ...looping, armed: false })).toBe(false);
+		expect(canRestartLoop(ended, health().dispatch)).toBe(false);
+		expect(canRestartLoop(ended, null)).toBe(false);
+		expect(canRestartLoop({ ...ended, operation: 'tackle' }, looping)).toBe(false);
 	});
 });
 

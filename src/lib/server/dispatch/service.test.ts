@@ -23,6 +23,7 @@ import {
 	listDispatchTurns,
 	listLoopIterations,
 	listMissions,
+	restartDispatch,
 	steerDispatch,
 	stopDispatchAfterIteration,
 	streamDispatchMissionEvents,
@@ -32,8 +33,10 @@ import {
 	LOOP_FOLLOW_UP_MESSAGE,
 	LOOP_NOT_RUNNING_MESSAGE,
 	LOOP_NOT_SUPPORTED_MESSAGE,
+	LOOP_STILL_RUNNING_MESSAGE,
 	MISSION_NOT_LAUNCHED_MESSAGE,
-	NOT_A_LOOP_MESSAGE
+	NOT_A_LOOP_MESSAGE,
+	RESTART_NOT_A_LOOP_MESSAGE
 } from './service.js';
 import { createDispatchStore } from './store.js';
 import { DispatchError } from './types.js';
@@ -2217,6 +2220,205 @@ describe('loop missions (ADR-0019 rule 5)', () => {
 			await store.updateStatus(id, { status: 'cancelled' });
 			await store.startFollowUp(id, { run_id: 'r2', status: 'launched' });
 			expect((await store.get(id))?.loop_stop_requested).toBeUndefined();
+		});
+	});
+
+	describe('loop restart', () => {
+		function restartableProvider(patch: Partial<AgentProvider> = {}): AgentProvider {
+			return {
+				...loopProvider(async () => ({ agent_id: 'sbx-r', run_id: 'r1' })),
+				restartLoop: vi.fn(async () => ({ agent_id: 'sbx-s', run_id: 'r2' })),
+				...patch
+			};
+		}
+
+		async function loopIn(status: 'running' | 'succeeded' | 'failed', key: string) {
+			const { record } = await store.create({
+				idempotency_key: `idem-loop-restart-${key}`,
+				project_id: PROJECT.id,
+				dolt_database: PROJECT.dolt_database,
+				operation: 'loop',
+				actor: 'web',
+				payload: BUILD_LOOP
+			});
+			await store.updateStatus(record.id, {
+				status,
+				provider: 'e2b',
+				agent_id: 'sbx-r',
+				run_id: 'r1',
+				...(status === 'running'
+					? {}
+					: { loop_end: { stop_reason: 'max_iterations' as const, needs_person: true } })
+			});
+			return record.id;
+		}
+
+		const deps = (provider: AgentProvider) => ({
+			store,
+			provider,
+			configured: true,
+			policy: ALLOW_ALL,
+			repositories: BEADS_WEB_MAP,
+			schedule_background: NO_BACKGROUND
+		});
+
+		it('starts a new run with the stored flags and a new limit, grouped apart from the first', async () => {
+			const provider = restartableProvider();
+			const id = await loopIn('succeeded', 'ok');
+			await store.recordLoopIterations(id, 'r1', [ITERATION]);
+
+			const result = await restartDispatch(PROJECT.id, id, { max_iterations: 2 }, deps(provider));
+
+			expect(result).toMatchObject({ id, status: 'launched', agent_id: 'sbx-s' });
+			expect(result?.loop?.stop_reason).toBeUndefined();
+			expect(result?.loop?.needs_person).toBeUndefined();
+			expect(provider.restartLoop).toHaveBeenCalledWith('sbx-r', 'r1', {
+				name: 'Loop build on beads_web',
+				dolt_database: 'beads_web',
+				repository: { url: 'https://github.com/example-org/beads-web', starting_ref: 'main' },
+				loop: {
+					mode: 'build',
+					harness: 'claude',
+					model: 'opus',
+					effort: 'high',
+					max_iterations: 2,
+					iteration_timeout_minutes: 30
+				}
+			});
+			const stored = await store.get(id);
+			expect(stored).toMatchObject({ agent_id: 'sbx-s', run_id: 'r2', status: 'launched' });
+			// The new limit is this run's; the launch payload stays as launched.
+			expect(stored?.payload).toEqual(BUILD_LOOP);
+			expect((await store.listTurns(id)).at(-1)).toMatchObject({
+				role: 'operator',
+				text: 'Restart the loop for up to 2 iterations.'
+			});
+			expect((await store.listTurns(id)).at(-1)?.run_id).toBeUndefined();
+
+			await store.recordLoopIterations(id, 'r2', [ITERATION]);
+			const iterations = await listLoopIterations(PROJECT.id, id, { store });
+			expect(iterations?.map((it) => [it.run_id, it.iteration])).toEqual([
+				['r1', 1],
+				['r2', 1]
+			]);
+		});
+
+		it('keeps the stored limit when none is given, and restarts a failed loop', async () => {
+			const provider = restartableProvider();
+			const id = await loopIn('failed', 'failed');
+			await restartDispatch(PROJECT.id, id, {}, deps(provider));
+			const input = vi.mocked(provider.restartLoop!).mock.calls[0][2];
+			expect(input.loop.max_iterations).toBe(5);
+			expect((await store.listTurns(id)).at(-1)?.text).toBe('Restart the loop.');
+		});
+
+		it('refuses a working loop, a one-shot mission, a disarmed service and a runner without restart', async () => {
+			const provider = restartableProvider();
+			const running = await loopIn('running', 'running');
+			await expect(restartDispatch(PROJECT.id, running, {}, deps(provider))).rejects.toMatchObject({
+				code: 'conflict',
+				message: LOOP_STILL_RUNNING_MESSAGE
+			});
+
+			const { record: tackle } = await store.create({
+				idempotency_key: 'idem-loop-restart-tackle',
+				project_id: PROJECT.id,
+				dolt_database: PROJECT.dolt_database,
+				operation: 'tackle',
+				actor: 'web',
+				payload: { operation: 'tackle', issue_id: ISSUE.id }
+			});
+			await expect(
+				restartDispatch(PROJECT.id, tackle.id, {}, deps(provider))
+			).rejects.toMatchObject({ code: 'conflict', message: RESTART_NOT_A_LOOP_MESSAGE });
+
+			const ended = await loopIn('succeeded', 'refused');
+			await expect(
+				restartDispatch(
+					PROJECT.id,
+					ended,
+					{},
+					{
+						...deps(provider),
+						policy: { ...ALLOW_ALL, armed: false }
+					}
+				)
+			).rejects.toMatchObject({ code: 'forbidden', message: DISARMED_DISPATCH_MESSAGE });
+			await expect(
+				restartDispatch(
+					PROJECT.id,
+					ended,
+					{},
+					{
+						...deps(provider),
+						policy: { armed: true, allow: { file: true, tackle: false } }
+					}
+				)
+			).rejects.toMatchObject({ code: 'forbidden', message: LOOP_NOT_ALLOWED_MESSAGE });
+			await expect(
+				restartDispatch(
+					PROJECT.id,
+					ended,
+					{},
+					deps(restartableProvider({ restartLoop: undefined }))
+				)
+			).rejects.toMatchObject({ code: 'forbidden' });
+			expect(await restartDispatch('d_other', ended, {}, deps(provider))).toBeUndefined();
+
+			expect(provider.restartLoop).not.toHaveBeenCalled();
+			expect((await store.get(ended))?.status).toBe('succeeded');
+		});
+
+		it('refuses before claiming when the project lost its Tackle checkout', async () => {
+			const provider = restartableProvider();
+			const id = await loopIn('succeeded', 'unmapped');
+			await expect(
+				restartDispatch(PROJECT.id, id, {}, { ...deps(provider), repositories: {} })
+			).rejects.toMatchObject({ code: 'conflict', message: UNMAPPED_TACKLE_MESSAGE });
+			expect((await store.get(id))?.status).toBe('succeeded');
+		});
+
+		it('records a runner refusal on the mission and passes it on', async () => {
+			const provider = restartableProvider({
+				restartLoop: vi.fn(async () => {
+					throw new DispatchError('unavailable', 'Sand could not restart the loop.');
+				})
+			});
+			const id = await loopIn('succeeded', 'refusal');
+			await expect(restartDispatch(PROJECT.id, id, {}, deps(provider))).rejects.toMatchObject({
+				code: 'unavailable',
+				message: 'Sand could not restart the loop.'
+			});
+			expect(await store.get(id)).toMatchObject({
+				status: 'failed',
+				error_message: 'Sand could not restart the loop.',
+				agent_id: 'sbx-r',
+				run_id: 'r1'
+			});
+			expect((await store.listTurns(id)).at(-1)).toMatchObject({ role: 'agent', status: 'failed' });
+		});
+
+		it('lets only one of two concurrent restarts reach the runner', async () => {
+			let release!: () => void;
+			const gate = new Promise<void>((resolve) => (release = resolve));
+			const provider = restartableProvider({
+				restartLoop: vi.fn(async () => {
+					await gate;
+					return { agent_id: 'sbx-s', run_id: 'r2' };
+				})
+			});
+			const id = await loopIn('succeeded', 'race');
+			const first = restartDispatch(PROJECT.id, id, {}, deps(provider));
+			const second = restartDispatch(PROJECT.id, id, {}, deps(provider));
+			const settled = Promise.allSettled([first, second]);
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			release();
+			const outcomes = await settled;
+			expect(outcomes.filter((o) => o.status === 'fulfilled')).toHaveLength(1);
+			expect(outcomes.find((o) => o.status === 'rejected')).toMatchObject({
+				reason: { code: 'conflict', message: LOOP_STILL_RUNNING_MESSAGE }
+			});
+			expect(provider.restartLoop).toHaveBeenCalledTimes(1);
 		});
 	});
 });

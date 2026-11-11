@@ -7,13 +7,16 @@
 	 * that cannot take follow-ups gets a disabled composer that says so. A
 	 * loop mission adds its iteration table above the conversation; while it
 	 * works, the composer steers it (a note for its next iteration) and it can
-	 * stop after the current iteration or now (ADR-0019). Admins get
+	 * stop after the current iteration or now (ADR-0019); once it has ended it
+	 * can be restarted as a new run, optionally with a new iteration limit,
+	 * from the same footer. Admins get
 	 * the agent's live terminal above it too, on runners that relay one
 	 * (ADR-0021).
 	 */
 	import { tip } from '#lib/client/tooltip.js';
 	import { untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
+	import ArrowClockwiseIcon from 'phosphor-svelte/lib/ArrowClockwiseIcon';
 	import ArrowSquareOutIcon from 'phosphor-svelte/lib/ArrowSquareOutIcon';
 	import GitPullRequestIcon from 'phosphor-svelte/lib/GitPullRequestIcon';
 	import SkipForwardIcon from 'phosphor-svelte/lib/SkipForwardIcon';
@@ -26,6 +29,7 @@
 	import TerminalView from '#lib/components/terminal-view.svelte';
 	import { api, errorMessage } from '#lib/client/api.js';
 	import {
+		canRestartLoop,
 		composerState,
 		formatElapsed,
 		isBusyStatus,
@@ -36,6 +40,7 @@
 		THREAD_POLL_MS
 	} from '#lib/client/agent.js';
 	import { absoluteStamp, relativeShort } from '#lib/client/format.js';
+	import { iterationLimitError } from '#lib/client/loop.js';
 	import { currentViewer, statusSnapshot } from '#lib/client/projects.svelte.js';
 	import type { DispatchRequest, DispatchTurn, LoopIteration } from '#lib/types.js';
 
@@ -68,6 +73,9 @@
 	let sending = $state(false);
 	let cancelling = $state(false);
 	let winding_down = $state(false);
+	let restarting = $state(false);
+	/** The new run's iteration limit, as typed; starts at the loop's stored one. */
+	let restart_limit = $state('');
 	let now = $state(Date.now());
 	let composer_el = $state<HTMLTextAreaElement | null>(null);
 	let list_el = $state<HTMLDivElement | null>(null);
@@ -99,15 +107,22 @@
 		busy && capabilities?.cancel === true && mission?.agent_id !== undefined
 	);
 	const is_loop = $derived(mission?.operation === 'loop');
-	// A loop's later operator turns are steer notes, not new runs: it has
-	// worked since its first one.
+	// A loop's steer notes carry the run they steer; the turns that start a
+	// run (the launch, a restart) carry none, so the latest of those is when
+	// the current run began.
 	const started_at = $derived.by(() => {
 		const operator = turns.filter((turn) => turn.role === 'operator');
-		const start = is_loop ? operator[0] : operator.at(-1);
+		const start = is_loop
+			? operator.findLast((turn) => turn.run_id === undefined)
+			: operator.at(-1);
 		return Date.parse(start?.created_at ?? mission?.updated_at ?? '') || now;
 	});
 	const stop_requested = $derived(is_loop && mission?.loop?.stop_requested === true);
 	const can_wind_down = $derived(is_loop && can_cancel && capabilities?.loop === true);
+	const can_restart = $derived(mission !== undefined && canRestartLoop(mission, dispatch));
+	const restart_error = $derived(
+		restart_limit.trim() === '' ? undefined : iterationLimitError(restart_limit)
+	);
 	// The relay names the mission; the server finds its sandbox. A mission that
 	// never started an agent has no terminal to open.
 	const show_terminal = $derived(
@@ -170,6 +185,7 @@
 	// Load on mount and whenever the thread changes.
 	$effect(() => {
 		void request_id;
+		restart_limit = '';
 		const ac = new AbortController();
 		loaded = false;
 		turns = [];
@@ -203,6 +219,14 @@
 		}
 		const poll = setInterval(() => void refreshIterations(), THREAD_POLL_MS);
 		return () => clearInterval(poll);
+	});
+
+	// Offer the loop's own limit until the operator types another.
+	$effect(() => {
+		const stored = mission?.loop?.max_iterations;
+		if (restart_limit === '' && stored !== undefined) {
+			untrack(() => (restart_limit = String(stored)));
+		}
 	});
 
 	// Keep the newest turn in view.
@@ -267,6 +291,49 @@
 			toast.error('Could not stop the loop', { description: errorMessage(error) });
 		} finally {
 			winding_down = false;
+		}
+	}
+
+	/**
+	 * Start a new run of the ended loop. The limit is sent only when it
+	 * differs from the loop's own, so the transcript says when it changed.
+	 */
+	async function restart() {
+		if (!can_restart || restarting) {
+			return;
+		}
+		const text = restart_limit.trim();
+		if (text !== '' && iterationLimitError(text) !== undefined) {
+			return;
+		}
+		const limit = text === '' ? undefined : Number(text);
+		restarting = true;
+		try {
+			const result = await api.restartDispatch(
+				project_id,
+				request_id,
+				limit === undefined || limit === mission?.loop?.max_iterations
+					? {}
+					: { max_iterations: limit }
+			);
+			mission = result.request;
+			run_generation += 1;
+			onupdated?.(result.request);
+			await refresh();
+		} catch (error) {
+			toast.error('Could not restart the loop', { description: errorMessage(error) });
+			// The mission may have recorded why; show it.
+			await refresh();
+		} finally {
+			restarting = false;
+		}
+	}
+
+	function onLimitKeydown(event: KeyboardEvent) {
+		// The field sits inside the composer's form: Enter restarts, never sends.
+		if (event.key === 'Enter') {
+			event.preventDefault();
+			void restart();
 		}
 	}
 
@@ -415,6 +482,39 @@
 		onsend={() => void send()}
 	>
 		{#snippet actions()}
+			{#if can_restart}
+				<span class="restart">
+					<label class="restart-limit">
+						<span class="lbl">Iterations</span>
+						<input
+							class="input mono-num"
+							class:is-invalid={restart_error !== undefined}
+							type="text"
+							inputmode="numeric"
+							autocomplete="off"
+							size="3"
+							bind:value={restart_limit}
+							disabled={restarting}
+							aria-invalid={restart_error !== undefined}
+							aria-describedby={restart_error === undefined ? undefined : 'restart-limit-err'}
+							onkeydown={onLimitKeydown}
+						/>
+					</label>
+					<button
+						class="btn btn-sm"
+						type="button"
+						disabled={restarting || restart_error !== undefined}
+						onclick={restart}
+						{@attach tip('Run the loop again on this mission, with its settings')}
+					>
+						<ArrowClockwiseIcon size={12} aria-hidden="true" />
+						{restarting ? 'Restarting…' : 'Restart'}
+					</button>
+					{#if restart_error}
+						<span class="err restart-err" id="restart-limit-err" role="alert">{restart_error}</span>
+					{/if}
+				</span>
+			{/if}
 			{#if can_wind_down}
 				<button
 					class="btn btn-sm"
@@ -486,5 +586,35 @@
 	.err {
 		font-size: var(--t-xs);
 		color: var(--danger-tx);
+	}
+	.restart {
+		display: inline-flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--s-2);
+	}
+	.restart-limit {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--s-1);
+	}
+	.restart-limit .lbl {
+		font-size: var(--t-xs);
+		color: var(--tx-dim);
+	}
+	/* Sized to the footer's small buttons; three digits fit. */
+	.restart-limit .input {
+		width: calc(4ch + 20px);
+		height: 28px;
+		font-size: var(--t-xs);
+		text-align: right;
+	}
+	@media (pointer: coarse) {
+		.restart-limit .input {
+			height: 44px;
+		}
+	}
+	.restart-err {
+		flex-basis: 100%;
 	}
 </style>

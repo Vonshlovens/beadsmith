@@ -235,6 +235,16 @@ export const steer_schema = z
 	})
 	.strict();
 
+/**
+ * Body of `POST /api/projects/:id/dispatch/:requestId/restart`: an optional
+ * iteration limit for the new run only. Extra keys fail closed.
+ */
+export const restart_schema = z
+	.object({
+		max_iterations: z.number().int().min(1).max(LOOP_MAX_ITERATIONS).optional()
+	})
+	.strict();
+
 /** Body of `PUT /api/console/projects/:id/tackle-map`. Extra keys fail closed. */
 export const tackle_map_schema = z
 	.object({

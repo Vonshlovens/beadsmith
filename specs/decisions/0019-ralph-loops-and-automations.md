@@ -254,10 +254,22 @@ Nothing ships with this record. Planned, each in its own change:
   now (cancel). Steer needs the arm and Tackle allowed, like a follow-up; a
   graceful stop only ends work, so, like cancel, it does not. The request is
   kept on the record (`loop_stop_requested_at`, public
-  `loop.stop_requested`) until a new run. Restart is not built yet: on Sand
-  a loop's sandbox is destroyed shortly after the loop ends, so restarting
-  "in the same sandbox" needs a lifecycle decision first. Add sign stays out
-  until ralph has the route.
+  `loop.stop_requested`) until a new run. Restart shipped as
+  `AgentProvider.restartLoop` and `POST .../dispatch/:requestId/restart`
+  `{max_iterations?}`, with a Restart control in an ended loop's thread.
+  It is a new run of the same mission (`restartDispatch` claims the record
+  as `launching`, then records the run the runner names) with the launch's
+  flags; a new limit applies to that run only, so the stored payload still
+  matches its idempotency key. On Sand a loop's sandbox outlives the loop
+  only by the idle time, so the lifecycle is: restart in that sandbox while
+  E2B still has it (keeping the checkout and unpushed work, each run with
+  its own hc terminal and ralph name), otherwise in a fresh sandbox from the
+  project's current Tackle checkout with the run numbering carried on, and
+  the mission's `agent_id` follows. Keeping loop sandboxes alive for a
+  restart window was not chosen: it would bill an idle sandbox for every
+  ended loop for a restart that seldom comes, and anything worth keeping is
+  pushed by the loop's prompts anyway. Add sign stays out until ralph has
+  the route.
 - automations: tables, the ticker beside `src/lib/server/backup/runtime.ts`,
   and an automations page. ADR-0004's list of what `state.db` holds and
   `docs/contract.md`'s dispatch section are updated when these ship.

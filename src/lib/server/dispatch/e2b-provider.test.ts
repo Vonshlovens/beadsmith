@@ -9,6 +9,7 @@ import {
 	createE2bProvider,
 	LOOP_METADATA,
 	LOOP_TERMINAL,
+	loopTerminalName,
 	parseRunFiles,
 	ralphArgv,
 	SERVE_TERMINAL,
@@ -21,7 +22,9 @@ import {
 } from './e2b-provider.js';
 import {
 	AGENT_BUSY_MESSAGE,
+	LOOP_ALREADY_RESTARTED_MESSAGE,
 	LOOP_NOT_RUNNING_MESSAGE,
+	NOT_A_LOOP_SANDBOX_MESSAGE,
 	RUN_NOT_CANCELLABLE_MESSAGE
 } from './provider.js';
 import { ralphRouteAllowed } from './ralph.js';
@@ -1017,6 +1020,109 @@ describe('E2B provider loops', () => {
 	it('refuses a follow-up', async () => {
 		const { provider } = await launched();
 		await expect(provider.createRun!('sbx1', 'more')).rejects.toThrow('A loop takes no follow-up.');
+	});
+
+	/** A launched loop whose first run ralph finished and Beadsmith recorded. */
+	async function ended() {
+		const env = await launched();
+		await env.provider.getRun('sbx1', 'r1');
+		env.ralph.addRun({
+			name: env.name,
+			status: 'finished',
+			alive: false,
+			stopReason: 'max_iterations'
+		});
+		env.claude.core.exit(terminals(env.claude)[1].address, 0);
+		expect((await env.provider.getRun('sbx1', 'r1')).status).toBe('succeeded');
+		return env;
+	}
+
+	it('restarts an ended loop in its live sandbox as a new run with its own names', async () => {
+		const { provider, claude, ralph, sandbox, name, created, mint_github_token } = await ended();
+		const restarted = await provider.restartLoop!('sbx1', 'r1', {
+			...LOOP,
+			loop: { ...LOOP.loop, max_iterations: 2 }
+		});
+		expect(restarted).toEqual({ agent_id: 'sbx1', run_id: 'r2' });
+		// Same sandbox and checkout: nothing created, a fresh push token, the full run limit.
+		expect(created).toHaveLength(1);
+		expect(sandbox.networks).toHaveLength(1);
+		expect(mint_github_token).toHaveBeenCalledTimes(2);
+		expect(sandbox.timeouts.at(-1)).toBe(SETTINGS.max_run_minutes * 60_000);
+		expect(sandbox.started.map((s) => s.command)).toEqual(['beadsmith-run r1', 'beadsmith-run r2']);
+		expect(JSON.parse(sandbox.file('r2', 'loop.json')!)).toEqual([
+			'ralph',
+			'build',
+			'--name',
+			`${name}-r2`,
+			'--no-observer',
+			'--max',
+			'2',
+			'--harness',
+			'claude'
+		]);
+
+		// The new run starts in a terminal of its own; the first run keeps its result.
+		expect(await provider.getRun('sbx1', 'r2')).toEqual({ status: 'running' });
+		const loop = terminals(claude).find((t) => t.name === loopTerminalName('r2'))!;
+		expect(loop.argv).toEqual(JSON.parse(sandbox.file('r2', 'loop.json')!));
+		expect(loopTerminalName('r2')).not.toBe(LOOP_TERMINAL);
+		expect((await provider.getRun('sbx1', 'r1')).status).toBe('succeeded');
+
+		// Controls and the relay address the new run.
+		ralph.addRun({ name: `${name}-r2` });
+		await provider.steerRun!('sbx1', 'r2', 'Smaller steps.');
+		expect(ralph.steers).toEqual([{ name: `${name}-r2`, text: 'Smaller steps.' }]);
+		const relay = await provider.attachTerminal!('sbx1', {
+			mode: 'watch',
+			cols: 80,
+			rows: 24,
+			onData: () => {}
+		});
+		const attach = claude.core.calls.findLast((call) => call.method === 'terminal.attach');
+		expect(attach?.params.terminal).toBe(loop.address);
+		relay.close();
+	});
+
+	it('restarts in a fresh sandbox once E2B has destroyed the old one, numbering on', async () => {
+		const { provider, sandboxes, states, metadata, created } = await ended();
+		// E2B no longer knows it.
+		states.delete('sbx1');
+		const restarted = await provider.restartLoop!('sbx1', 'r1', LOOP);
+		expect(restarted).toEqual({ agent_id: 'sbx2', run_id: 'r2' });
+		expect(created).toHaveLength(2);
+		expect(created[1].on_timeout).toBe('kill');
+		const base = metadata.get('sbx2')![LOOP_METADATA];
+		expect(base).toMatch(/^bdx-build-[0-9a-f]{8}$/);
+		const fresh = sandboxes.get('sbx2')!;
+		expect(fresh.started.map((s) => s.command)).toEqual(['beadsmith-run r2']);
+		expect(JSON.parse(fresh.file('r2', 'loop.json')!)).toContain(`${base}-r2`);
+		expect(await provider.getRun('sbx2', 'r2')).toEqual({ status: 'running' });
+	});
+
+	it('stops a run the sandbox still counts as working before starting the next', async () => {
+		const { provider, ralph, sandbox, name } = await launched();
+		await provider.getRun('sbx1', 'r1');
+		ralph.addRun({ name });
+		await provider.restartLoop!('sbx1', 'r1', LOOP);
+		expect(ralph.stops).toEqual([{ name, graceful: false }]);
+		expect(sandbox.runs.get('r1')?.cancelled).toBe(true);
+		expect(sandbox.timeouts.at(-1)).toBe(SETTINGS.max_run_minutes * 60_000);
+	});
+
+	it('refuses a restart of a one-shot mission or of a run already restarted', async () => {
+		const env = setup();
+		const launch = await env.provider.launch(TACKLE);
+		await expect(env.provider.restartLoop!(launch.agent_id, 'r1', LOOP)).rejects.toMatchObject({
+			code: 'conflict',
+			message: NOT_A_LOOP_SANDBOX_MESSAGE
+		});
+		const { provider } = await ended();
+		await provider.restartLoop!('sbx1', 'r1', LOOP);
+		await expect(provider.restartLoop!('sbx1', 'r1', LOOP)).rejects.toMatchObject({
+			code: 'conflict',
+			message: LOOP_ALREADY_RESTARTED_MESSAGE
+		});
 	});
 
 	it('streams ralph events as mission events and records the result once', async () => {

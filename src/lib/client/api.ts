@@ -557,6 +557,20 @@ export const api = {
 		);
 	},
 
+	/** Start a new run of an ended loop on the same mission, optionally with a new iteration limit. */
+	restartDispatch(
+		project_id: string,
+		request_id: string,
+		body: { max_iterations?: number },
+		init?: RequestInitLike
+	) {
+		return request<{ request: DispatchRequest }>(
+			'POST',
+			`/projects/${encodeURIComponent(project_id)}/dispatch/${encodeURIComponent(request_id)}/restart`,
+			{ ...init, body }
+		);
+	},
+
 	/** Send a size-capped follow-up on the same agent. */
 	followUpDispatch(
 		project_id: string,

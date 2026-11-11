@@ -66,6 +66,12 @@ export interface AgentLaunch {
 	run_id?: string;
 }
 
+/** Where a restarted loop's new run is: its sandbox may be a new one (ADR-0019 rule 5). */
+export interface AgentLoopRestart {
+	agent_id: string;
+	run_id: string;
+}
+
 export type AgentRunStatus = 'running' | 'succeeded' | 'cancelled' | 'failed';
 
 export interface AgentRunUpdate {
@@ -130,6 +136,19 @@ export interface AgentProvider {
 	 */
 	steerRun?(agent_id: string, run_id: string, text: string): Promise<void>;
 	stopRunAfterIteration?(agent_id: string, run_id: string): Promise<void>;
+	/**
+	 * Start a new run of an ended loop with `input`'s flags, numbered after
+	 * `after_run_id`, as a new terminal (ADR-0019 rule 2), never ralph's own
+	 * restart. The runner may place it on a different agent (a fresh sandbox
+	 * when the old one is gone); the mission follows the returned ids. Throws
+	 * a `conflict` DispatchError when the agent is not a loop or has already
+	 * moved past `after_run_id`.
+	 */
+	restartLoop?(
+		agent_id: string,
+		after_run_id: string,
+		input: AgentLoopLaunchInput
+	): Promise<AgentLoopRestart>;
 	streamRun?(
 		agent_id: string,
 		run_id: string,
@@ -156,6 +175,10 @@ export const AGENT_BUSY_MESSAGE = 'The agent is still busy.';
 export const RUN_NOT_CANCELLABLE_MESSAGE = 'This run cannot be cancelled.';
 /** Public message when a loop control reaches a loop that is not (or not yet) running. */
 export const LOOP_NOT_RUNNING_MESSAGE = 'The loop is not running.';
+/** Public message when a restart reaches an agent that is not a loop. */
+export const NOT_A_LOOP_SANDBOX_MESSAGE = "This mission's agent is not a loop.";
+/** Public message when another restart already started the next run. */
+export const LOOP_ALREADY_RESTARTED_MESSAGE = 'The loop has already been restarted.';
 
 export const WEBHOOK_PROVIDER_LABEL = 'Webhook agent runner';
 

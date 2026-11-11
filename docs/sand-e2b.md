@@ -451,6 +451,18 @@ pinned version. The checkout must already be a ralph project
    and Stop after iteration to its `/stop` with `graceful: true`, both over
    the same channel; ralph reads them between iterations. Neither reaches a
    loop still in setup or already ended (`409`).
+7. Restart on an ended loop starts the next run (`r2`, `r3`, …). While E2B
+   still has the sandbox (the idle time after the loop ended), it runs
+   there: the checkout and anything not pushed are kept, the sandbox gets a
+   fresh GitHub token and the full run limit again, `beadsmith-run r2`
+   rejoins the tailnet, and the first reader starts a terminal named
+   `ralph-loop-r2` running ralph under the name `<metadata name>-r2`, so
+   ralph's record of the earlier run and hc's finished `ralph-loop` stay
+   apart. A run the sandbox still counts as working is stopped first. Once
+   E2B has destroyed the sandbox, the run starts in a fresh one from the
+   project's current Tackle checkout, numbered on from the last run; the
+   mission follows the new sandbox id. Either way the iterations of each run
+   are stored under its own run id.
 
 A loop still running at `BDX_E2B_MAX_RUN_MINUTES` is destroyed with its
 sandbox and reported failed; anything it had not pushed is lost. Keep the
@@ -484,6 +496,14 @@ and [`ralph-transport.test.ts`](../src/lib/server/e2b/ralph-transport.test.ts)):
    cancelled with an operator stop.
 7. In the sandbox, `tr '\0' '\n' < /proc/<ralph's pid>/environ` lists the
    placeholders and `BEADS_DOLT_*`, and no real model key or GitHub token.
+8. When a `build` loop with `max_iterations` 1 ends, set Iterations to 2 and
+   press Restart within the idle time: the thread adds "Restart the loop
+   for up to 2 iterations.", the mission's sandbox id is unchanged, `hc ls
+--all` lists `ralph-loop` finished and `ralph-loop-r2` live, and the
+   iteration table shows a second run group. After that run ends, wait past
+   the idle time (the sandbox is gone from E2B) and restart again: the
+   mission moves to a new sandbox whose `~/.beadsmith/runs` holds only
+   `r3`, and the table shows a third group.
 
 ## How a chat runs
 
