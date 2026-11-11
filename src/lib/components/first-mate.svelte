@@ -12,6 +12,7 @@
 	import FileIssueDialog from '#lib/components/file-issue-dialog.svelte';
 	import FirstMateConsole from '#lib/components/first-mate-console.svelte';
 	import HotkeyHost from '#lib/components/hotkey-host.svelte';
+	import LoopDialog from '#lib/components/loop-dialog.svelte';
 	import TackleIssueDialog from '#lib/components/tackle-issue-dialog.svelte';
 	import { FIRST_MATE_PATH, firstMatePageHref, isFirstMateHotkey } from '#lib/client/first-mate.js';
 	import type { FirstMateView } from '#lib/client/first-mate.js';
@@ -90,6 +91,7 @@
 {#if !on_auth}
 	<HotkeyHost />
 	<AgentDialog />
+	<LoopDialog />
 	<Dialog.Root open={app_state.first_mate_open} {onOpenChange}>
 		<Dialog.Content class="ui-dialog ui-dialog-palette" showCloseButton={false}>
 			{#if app_state.first_mate_open}

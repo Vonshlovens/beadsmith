@@ -4,8 +4,23 @@
  * thread and the Missions list share one reading and tests cover every state
  * without a DOM.
  */
-import { RALPH_STOP_REASON_TEXT, type RalphIterationOutcome } from '#lib/ralph.js';
-import type { DispatchLoop, DispatchRequest, LoopIteration } from '#lib/types.js';
+import { agentAvailability, type AgentAvailability } from '#lib/client/agent.js';
+import {
+	LOOP_MAX_ITERATIONS,
+	RALPH_STOP_REASON_TEXT,
+	type RalphHarness,
+	type RalphIterationOutcome,
+	type RalphMode
+} from '#lib/ralph.js';
+import type {
+	DispatchLoop,
+	DispatchProjectAllow,
+	DispatchProviderId,
+	DispatchProviderInfo,
+	DispatchRequest,
+	LoopIteration,
+	StatusSnapshot
+} from '#lib/types.js';
 
 /** The Missions page's kind filter. */
 export const MISSION_KINDS = ['all', 'loop', 'one_shot'] as const;
@@ -157,4 +172,169 @@ export function commitRange(
 export function validateText(ok: boolean | null): 'passed' | 'failed' | undefined {
 	if (ok === null) return undefined;
 	return ok ? 'passed' : 'failed';
+}
+
+/**
+ * Where a loop is started from. The bead, when there is one, is what a
+ * single-bead loop works on; its type tells an epic apart, because ralph has
+ * no epic scope yet (ADR-0019 rule 6) and the dialog has to say so.
+ */
+export interface LoopTarget {
+	project_id: string;
+	issue?: { id: string; title: string; issue_type: string };
+}
+
+export type LoopScope = 'project' | 'epic' | 'issue';
+
+/** The page a loop is started from: a project, an epic, or another bead. */
+export function loopScope(target: Pick<LoopTarget, 'issue'>): LoopScope {
+	if (target.issue === undefined) return 'project';
+	return target.issue.issue_type === 'epic' ? 'epic' : 'issue';
+}
+
+/** One way to start a loop, with ralph's mode and a sensible iteration limit. */
+export interface LoopPreset {
+	id: 'bead' | 'build' | 'plan';
+	label: string;
+	hint: string;
+	mode: Extract<RalphMode, 'build' | 'plan'>;
+	/** Narrow the loop to the target bead (`ralph build --bead`). */
+	on_bead: boolean;
+	max_iterations: number;
+}
+
+/**
+ * The presets a scope offers, the one that fits the page first. A bead page
+ * leads with a loop on that bead; every scope can build or refresh the whole
+ * plan. The limits are starting points: a plan settles in a few passes, a
+ * build works through many items.
+ */
+export function loopPresets(scope: LoopScope): LoopPreset[] {
+	const build: LoopPreset = {
+		id: 'build',
+		label: 'Build the plan',
+		hint:
+			scope === 'epic'
+				? 'Works through the open items of the whole project plan, one per iteration. A loop cannot be limited to this epic yet.'
+				: 'Works through the open items of the project plan, one per iteration.',
+		mode: 'build',
+		on_bead: false,
+		max_iterations: 20
+	};
+	const plan: LoopPreset = {
+		id: 'plan',
+		label: 'Plan the project',
+		hint: 'Reads the specs and code and refreshes the plan. Changes no code.',
+		mode: 'plan',
+		on_bead: false,
+		max_iterations: 5
+	};
+	if (scope === 'project') return [build, plan];
+	const bead: LoopPreset = {
+		id: 'bead',
+		label: scope === 'epic' ? 'Loop on this epic' : 'Tackle in a loop',
+		hint:
+			scope === 'epic'
+				? 'Builds this epic as one bead until it is done. Its children are not picked up.'
+				: 'Builds this bead, iterating until it is done or the limit is reached.',
+		mode: 'build',
+		on_bead: true,
+		max_iterations: 10
+	};
+	return [bead, build, plan];
+}
+
+/**
+ * The provider a new launch goes to: the viewer's "Runs on" pick when it
+ * names one, else the server default, with what it can do.
+ */
+function launchRunner(
+	dispatch: StatusSnapshot['dispatch'],
+	picked: DispatchProviderId | undefined
+): DispatchProviderInfo | undefined {
+	const id = picked ?? (dispatch.provider === 'none' ? undefined : dispatch.provider);
+	if (id === undefined) return undefined;
+	const listed = dispatch.providers?.find((entry) => entry.id === id);
+	if (listed !== undefined) return listed;
+	// A server without the providers list reports only its default's capabilities.
+	return id === dispatch.provider && dispatch.capabilities !== undefined
+		? { id, label: id, capabilities: dispatch.capabilities }
+		: undefined;
+}
+
+/**
+ * Whether to offer a loop, and whether it would start. Hidden from viewers
+ * who may not launch (members) and on services where no runner has ralph.
+ * Disabled with the most actionable reason first: dispatch disarmed, the
+ * picked runner has no ralph (and which one does), Tackle not allowed. A
+ * loop changes code and the plan, so it needs Tackle like a Tackle does.
+ *
+ * @param status - Latest health snapshot.
+ * @param allow - The project's File/Tackle allow, when known.
+ * @param picked - The viewer's "Runs on" provider, when they picked one.
+ */
+export function loopAvailability(
+	status: Pick<StatusSnapshot, 'dispatch'> | null,
+	allow?: DispatchProjectAllow,
+	picked?: DispatchProviderId
+): AgentAvailability {
+	const agent = agentAvailability(status, allow);
+	if (status === null || !agent.visible) return { visible: false, enabled: false };
+	const { dispatch } = status;
+	const runner = launchRunner(dispatch, picked);
+	const loopers = (dispatch.providers ?? (runner === undefined ? [] : [runner])).filter(
+		(entry) => entry.capabilities.loop
+	);
+	if (loopers.length === 0) return { visible: false, enabled: false };
+	if (!agent.enabled) return agent;
+	if (runner?.capabilities.loop !== true) {
+		const other = loopers[0]!;
+		return {
+			visible: true,
+			enabled: false,
+			reason: `${runner?.label ?? 'This runner'} does not run loops. Pick ${other.label} under Runs on.`
+		};
+	}
+	if (allow !== undefined && !allow.tackle) {
+		return { visible: true, enabled: false, reason: 'Loops need Tackle allowed for this project.' };
+	}
+	return { visible: true, enabled: true };
+}
+
+/**
+ * Why an iteration limit typed in the dialog would be refused, mirroring the
+ * request schema (1 to {@link LOOP_MAX_ITERATIONS}); undefined when it is fine.
+ */
+export function iterationLimitError(raw: string): string | undefined {
+	const max = LOOP_MAX_ITERATIONS;
+	const text = raw.trim();
+	if (!/^\d+$/.test(text)) return 'Enter a whole number of iterations.';
+	const value = Number(text);
+	if (value < 1 || value > max) return `Between 1 and ${max} iterations.`;
+	return undefined;
+}
+
+/** The loop fields of a launch body, before the idempotency key and runner. */
+export interface LoopLaunch {
+	mode: RalphMode;
+	max_iterations: number;
+	issue_id?: string;
+	harness?: RalphHarness;
+}
+
+/**
+ * The launch for a preset. No harness means ralph's own default, so the
+ * field is left out rather than guessed.
+ */
+export function loopLaunch(
+	preset: LoopPreset,
+	target: Pick<LoopTarget, 'issue'>,
+	settings: { max_iterations: number; harness?: RalphHarness }
+): LoopLaunch {
+	return {
+		mode: preset.mode,
+		max_iterations: settings.max_iterations,
+		...(preset.on_bead && target.issue !== undefined ? { issue_id: target.issue.id } : {}),
+		...(settings.harness === undefined ? {} : { harness: settings.harness })
+	};
 }

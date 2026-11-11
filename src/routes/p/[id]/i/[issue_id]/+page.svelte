@@ -10,6 +10,8 @@
 	import IssueAgentPanel from '#lib/components/issue-agent-panel.svelte';
 	import IssueDetailView from '#lib/components/issue-detail-view.svelte';
 	import { agentAvailability } from '#lib/client/agent.js';
+	import { run_place } from '#lib/client/agent-runner.svelte.js';
+	import { loopAvailability } from '#lib/client/loop.js';
 	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
 	import {
 		issueViewStorageKey,
@@ -75,6 +77,9 @@
 		dispatch_enabled && (project?.allow?.file !== false || project?.allow?.tackle !== false)
 	);
 	const agent_visible = $derived(agentAvailability(statusSnapshot(), project?.allow).visible);
+	const loop_visible = $derived(
+		loopAvailability(statusSnapshot(), project?.allow, run_place.launchField().provider).visible
+	);
 
 	/** Wide screens put the agent beside the issue instead of in a dialog. */
 	const SIDE_AGENT_MIN_WIDTH = 1680;
@@ -108,6 +113,7 @@
 			project_id: data.project_id,
 			issue_id: header.id,
 			issue_title: header.title,
+			issue_type: header.issue_type,
 			...(intent === undefined ? {} : { intent })
 		});
 	}
@@ -132,6 +138,21 @@
 			group: 'Agent',
 			when: () => agent_visible && tackle_enabled,
 			run: () => askAgent('tackle')
+		},
+		{
+			keys: ['L'],
+			label: 'Run a loop on this issue',
+			group: 'Agent',
+			when: () => loop_visible,
+			run: () => {
+				if (!header || header.status === 'closed') {
+					return false;
+				}
+				app_state.openLoop({
+					project_id: data.project_id,
+					issue: { id: header.id, title: header.title, issue_type: header.issue_type }
+				});
+			}
 		},
 		{
 			keys: ['c'],

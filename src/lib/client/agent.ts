@@ -23,6 +23,8 @@ export interface AgentTarget {
 	project_id: string;
 	issue_id: string;
 	issue_title: string;
+	/** The bead's type when known, so a loop started from here can tell an epic apart. */
+	issue_type?: string;
 	/** Preselect an intent. */
 	intent?: AgentIntent;
 	/** Open this mission's thread instead of starting a new one. */

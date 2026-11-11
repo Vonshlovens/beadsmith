@@ -3,7 +3,12 @@ import {
 	commitRange,
 	filterMissions,
 	formatCost,
+	iterationLimitError,
+	loopAvailability,
 	loopFlagsLine,
+	loopLaunch,
+	loopPresets,
+	loopScope,
 	loopRuns,
 	loopStopText,
 	missionKind,
@@ -11,7 +16,12 @@ import {
 	totalCost,
 	validateText
 } from './loop.js';
-import type { LoopIteration } from '#lib/types.js';
+import type {
+	DispatchCapabilities,
+	DispatchHealth,
+	DispatchProviderInfo,
+	LoopIteration
+} from '#lib/types.js';
 
 function iteration(patch: Partial<LoopIteration> = {}): LoopIteration {
 	return {
@@ -135,5 +145,144 @@ describe('mission kind filter', () => {
 		expect(filterMissions(missions, 'loop').map((m) => m.id)).toEqual(['1', '4']);
 		expect(filterMissions(missions, 'one_shot').map((m) => m.id)).toEqual(['2', '3']);
 		expect(filterMissions([], 'loop')).toEqual([]);
+	});
+});
+
+const CAPS: DispatchCapabilities = {
+	live_events: true,
+	follow_up: true,
+	cancel: true,
+	loop: false
+};
+
+function runner(
+	id: DispatchProviderInfo['id'],
+	label: string,
+	loop: boolean
+): DispatchProviderInfo {
+	return { id, label, capabilities: { ...CAPS, loop } };
+}
+
+function health(patch: Partial<DispatchHealth> = {}): { dispatch: DispatchHealth } {
+	const providers = patch.providers ?? [runner('e2b', 'Sand', true)];
+	return {
+		dispatch: {
+			enabled: true,
+			key_configured: true,
+			armed: true,
+			viewer_can_launch: true,
+			provider: providers[0]?.id ?? 'none',
+			capabilities: providers[0]?.capabilities,
+			providers,
+			...patch
+		}
+	};
+}
+
+const BOTH = { file: true, tackle: true };
+
+describe('loopAvailability', () => {
+	it('offers a loop when the picked runner has ralph and Tackle is allowed', () => {
+		expect(loopAvailability(health(), BOTH)).toEqual({ visible: true, enabled: true });
+	});
+
+	it('shows members no control at all', () => {
+		expect(loopAvailability(health({ viewer_can_launch: false }), BOTH).visible).toBe(false);
+		expect(loopAvailability(null, BOTH).visible).toBe(false);
+	});
+
+	it('hides the control when no runner on the service runs loops', () => {
+		const status = health({ providers: [runner('webhook', 'forge', false)] });
+		expect(loopAvailability(status, BOTH).visible).toBe(false);
+	});
+
+	it('explains a disarmed service first', () => {
+		const result = loopAvailability(health({ armed: false }), { file: true, tackle: false });
+		expect(result).toEqual({
+			visible: true,
+			enabled: false,
+			reason: 'Agent dispatch is disarmed in the console.'
+		});
+	});
+
+	it('names the runner that can loop when the picked one cannot', () => {
+		const status = health({
+			providers: [runner('webhook', 'forge', false), runner('e2b', 'Sand', true)]
+		});
+		expect(loopAvailability(status, BOTH)).toEqual({
+			visible: true,
+			enabled: false,
+			reason: 'forge does not run loops. Pick Sand under Runs on.'
+		});
+		expect(loopAvailability(status, BOTH, 'e2b').enabled).toBe(true);
+	});
+
+	it('needs Tackle allowed for the project', () => {
+		expect(loopAvailability(health(), { file: true, tackle: false })).toEqual({
+			visible: true,
+			enabled: false,
+			reason: 'Loops need Tackle allowed for this project.'
+		});
+	});
+
+	it('reads the default provider capabilities from a server without a providers list', () => {
+		const status = health({
+			providers: undefined,
+			provider: 'e2b',
+			capabilities: { ...CAPS, loop: true }
+		});
+		expect(loopAvailability(status, BOTH).enabled).toBe(true);
+	});
+});
+
+describe('loopPresets', () => {
+	it('tells a project, an epic and a bead apart', () => {
+		expect(loopScope({})).toBe('project');
+		expect(loopScope({ issue: { id: 'x-1', title: 'E', issue_type: 'epic' } })).toBe('epic');
+		expect(loopScope({ issue: { id: 'x-2', title: 'T', issue_type: 'task' } })).toBe('issue');
+	});
+
+	it('offers plan-wide presets on a project and leads with the bead elsewhere', () => {
+		expect(loopPresets('project').map((p) => p.id)).toEqual(['build', 'plan']);
+		expect(loopPresets('issue').map((p) => p.id)).toEqual(['bead', 'build', 'plan']);
+		expect(loopPresets('epic')[0]!.label).toBe('Loop on this epic');
+	});
+
+	it('says on an epic that a loop cannot be limited to it', () => {
+		const build = loopPresets('epic').find((p) => p.id === 'build')!;
+		expect(build.hint).toMatch(/cannot be limited to this epic/);
+	});
+});
+
+describe('loopLaunch', () => {
+	const issue = { id: 'x-2', title: 'T', issue_type: 'task' };
+
+	it('narrows a bead preset to the bead and leaves the harness to ralph', () => {
+		const bead = loopPresets('issue')[0]!;
+		expect(loopLaunch(bead, { issue }, { max_iterations: 10 })).toEqual({
+			mode: 'build',
+			max_iterations: 10,
+			issue_id: 'x-2'
+		});
+	});
+
+	it('sends a plan-wide loop without a bead', () => {
+		const plan = loopPresets('issue').find((p) => p.id === 'plan')!;
+		expect(loopLaunch(plan, { issue }, { max_iterations: 5, harness: 'codex' })).toEqual({
+			mode: 'plan',
+			max_iterations: 5,
+			harness: 'codex'
+		});
+	});
+});
+
+describe('iterationLimitError', () => {
+	it('accepts 1 to 200 and refuses anything else', () => {
+		expect(iterationLimitError(' 20 ')).toBeUndefined();
+		expect(iterationLimitError('200')).toBeUndefined();
+		expect(iterationLimitError('0')).toBe('Between 1 and 200 iterations.');
+		expect(iterationLimitError('201')).toBe('Between 1 and 200 iterations.');
+		expect(iterationLimitError('2.5')).toBe('Enter a whole number of iterations.');
+		expect(iterationLimitError('')).toBe('Enter a whole number of iterations.');
 	});
 });

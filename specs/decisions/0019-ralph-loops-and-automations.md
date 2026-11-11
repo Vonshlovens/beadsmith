@@ -239,7 +239,13 @@ Nothing ships with this record. Planned, each in its own change:
   `needs_person`, stored in `dispatch_requests` and cleared by a restart),
   and `GET /api/projects/:id/dispatch/:requestId/iterations` returns its
   iteration rows. ralph's mode, harness, stop reason and outcome lists live
-  in `src/lib/ralph.ts` so the browser and the server read one copy;
+  in `src/lib/ralph.ts` so the browser and the server read one copy. The
+  launch UI has shipped: `src/lib/components/loop-dialog.svelte`, opened from
+  the project page, an issue or epic page and the agent dialog, offers a loop
+  on the bead, a plan-wide build and a plan refresh. It shows only when some
+  runner reports `capabilities.loop`, and explains a refusal (disarmed, the
+  picked runner has no ralph, Tackle not allowed). Without epic scope, an
+  epic page says its build covers the whole plan;
 - automations: tables, the ticker beside `src/lib/server/backup/runtime.ts`,
   and an automations page. ADR-0004's list of what `state.db` holds and
   `docs/contract.md`'s dispatch section are updated when these ship.

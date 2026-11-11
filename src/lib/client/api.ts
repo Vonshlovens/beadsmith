@@ -38,6 +38,7 @@ import type {
 
 import type { Todo, TodoComment, TodoStatus } from '#lib/server/todos/store.js';
 import type { RouteIssue } from '#lib/todos/route-state.js';
+import type { LoopLaunch } from '#lib/client/loop.js';
 import type {
 	MateChat,
 	MateChatDetail,
@@ -458,6 +459,19 @@ export const api = {
 			'POST',
 			`/projects/${encodeURIComponent(project_id)}/dispatch`,
 			{ ...init, body: { operation: 'discuss', ...launch_field(), ...body } }
+		);
+	},
+
+	/** Start a ralph loop (ADR-0019) on the project's plan or on one bead. */
+	launchLoop(
+		project_id: string,
+		body: { idempotency_key: string } & LoopLaunch,
+		init?: RequestInitLike
+	) {
+		return request<{ request: DispatchRequest }>(
+			'POST',
+			`/projects/${encodeURIComponent(project_id)}/dispatch`,
+			{ ...init, body: { operation: 'loop', ...launch_field(), ...body } }
 		);
 	},
 

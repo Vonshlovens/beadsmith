@@ -169,6 +169,16 @@ export function firstMatePageHref(query: string, view: FirstMateView | null): st
 	return search.length > 0 ? `${FIRST_MATE_PATH}?${search}` : FIRST_MATE_PATH;
 }
 
+/**
+ * One mission's thread on the First Mate page, where a launch lands.
+ *
+ * @param project_id - The mission's project.
+ * @param request_id - The mission.
+ */
+export function missionThreadHref(project_id: string, request_id: string): string {
+	return `${FIRST_MATE_PATH}?thread=${encodeURIComponent(request_id)}&project=${encodeURIComponent(project_id)}`;
+}
+
 const READY_PREFIX =
 	/^(what(?:'s| is|s) ready|whats ready|show (?:the )?ready(?: work| queue| deck| issues?)?|list ready(?: work| issues?)?|bd ready|ready(?: work| queue| deck)?)\b/;
 

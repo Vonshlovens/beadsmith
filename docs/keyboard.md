@@ -63,8 +63,8 @@ robot icon.
 | `a`           | Ask an agent about the selected issue |
 | `t`           | Tackle the focused issue (Ready)      |
 
-On a project: `1` parade, `2` list, `3` board, `n` file a new issue, `x` show
-or hide closed issues. On the board, `h` `j` `k` `l` or the arrows move
+On a project: `1` parade, `2` list, `3` board, `n` file a new issue, `L` run a
+loop, `x` show or hide closed issues. On the board, `h` `j` `k` `l` or the arrows move
 between cards and `m` sends the focused card toward another status.
 
 ## Todos (admins)
@@ -184,6 +184,7 @@ here, and `S` / `f s` save a search: a deliberate difference.
 | ----- | ----------------------------- |
 | `a`   | Ask an agent about this issue |
 | `t`   | Tackle it                     |
+| `L`   | Run a loop on it              |
 | `c`   | Write a comment               |
 | `y`   | Copy the issue id             |
 | `Esc` | Back to the list              |
@@ -196,9 +197,21 @@ here, and `S` / `f s` save a search: a deliberate difference.
 | `e` / `2` | Elaborate: rewrite description and criteria |
 | `c` / `3` | Close it with a reason                      |
 | `t` / `4` | Tackle: claim, do the work, open a PR       |
+| `l`       | Run a loop on it instead (the loop dialog)  |
 | `⌘Enter`  | Launch                                      |
 | `Enter`   | Send a reply in a thread (`⇧Enter`: line)   |
 | `n`       | New request (from a thread)                 |
+
+## Loop dialog
+
+Opened with `L` on a project or issue page, or `l` in the agent dialog, when
+a runner on this service runs ralph loops (admins only).
+
+| Keys        | Does                                                       |
+| ----------- | ---------------------------------------------------------- |
+| `1` `2` `3` | Pick a preset: this bead, build the plan, plan the project |
+| `Enter`     | Start, from the iteration field                            |
+| `⌘Enter`    | Start the loop                                             |
 
 ## First Mate
 

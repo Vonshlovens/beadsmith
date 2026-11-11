@@ -19,6 +19,7 @@
 	import PriorityChip from '#lib/components/priority-chip.svelte';
 	import RobotIcon from 'phosphor-svelte/lib/RobotIcon';
 	import HammerIcon from 'phosphor-svelte/lib/HammerIcon';
+	import ArrowsClockwiseIcon from 'phosphor-svelte/lib/ArrowsClockwiseIcon';
 	import StatusBadge from '#lib/components/status-badge.svelte';
 	import TypeChip from '#lib/components/type-chip.svelte';
 	import {
@@ -31,6 +32,8 @@
 	import { extractToc } from '#lib/client/markdown.js';
 	import { issueDetailHref } from '#lib/client/issue-view.js';
 	import { agentAvailability, type AgentIntent } from '#lib/client/agent.js';
+	import { run_place } from '#lib/client/agent-runner.svelte.js';
+	import { loopAvailability } from '#lib/client/loop.js';
 	import { currentProject, statusSnapshot } from '#lib/client/projects.svelte.js';
 	import { app_state } from '#lib/client/stores.svelte.js';
 	import type { IssueDetail, IssueRef, IssueSummary, Mission } from '#lib/types.js';
@@ -67,6 +70,11 @@
 	}: Props = $props();
 
 	const agent = $derived(agentAvailability(statusSnapshot(), currentProject()?.allow));
+	/** Shown whenever a runner has ralph; the dialog explains a refusal. */
+	const loop_visible = $derived(
+		loopAvailability(statusSnapshot(), currentProject()?.allow, run_place.launchField().provider)
+			.visible
+	);
 
 	/** The palette's Recent group lists the issues opened here. */
 	$effect(() => {
@@ -85,7 +93,16 @@
 			project_id,
 			issue_id: header.id,
 			issue_title: header.title,
+			issue_type: header.issue_type,
 			...(intent === undefined ? {} : { intent })
+		});
+	}
+
+	/** Open the loop dialog on this issue. */
+	function runLoop() {
+		app_state.openLoop({
+			project_id,
+			issue: { id: header.id, title: header.title, issue_type: header.issue_type }
 		});
 	}
 
@@ -180,6 +197,20 @@
 							onclick={() => askAgent('tackle')}
 						>
 							<HammerIcon size={14} />
+						</button>
+					{/if}
+					{#if loop_visible && !closed}
+						<button
+							class="btn btn-sm btn-icon"
+							type="button"
+							aria-label="Run a loop on {header.id}"
+							aria-keyshortcuts={variant === 'page' ? 'L' : undefined}
+							{@attach tip(
+								`Run a loop: an agent works on it iteration after iteration${variant === 'page' ? ' (L)' : ''}`
+							)}
+							onclick={runLoop}
+						>
+							<ArrowsClockwiseIcon size={14} />
 						</button>
 					{/if}
 					<button

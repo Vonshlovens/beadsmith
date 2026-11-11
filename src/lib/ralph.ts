@@ -15,6 +15,13 @@ export type RalphMode = (typeof RALPH_MODES)[number];
 export const RALPH_HARNESSES = ['claude', 'codex', 'opencode', 'gh'] as const;
 export type RalphHarness = (typeof RALPH_HARNESSES)[number];
 
+/**
+ * The most iterations one loop may run. A loop always has an iteration
+ * limit: an unbounded loop spends until someone notices, and a Sand sandbox
+ * has a lifetime anyway.
+ */
+export const LOOP_MAX_ITERATIONS = 200;
+
 /** Why a ralph run ended, as its run record names it. */
 export const RALPH_STOP_REASONS = [
 	'max_iterations',
