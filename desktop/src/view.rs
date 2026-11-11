@@ -15,7 +15,7 @@ use rune_kit::{
 
 use crate::app::{BOARD_KEY, Check, Connection, Layout, Load, Pane, Quick, STATUS_FILTERS, State, TABLE_KEY};
 use crate::keys::{self, Command};
-use crate::model::{Failure, IssueDetail, IssueRef, IssueSummary, Project};
+use crate::model::{DepGroup, Failure, IssueDetail, IssueSummary, Project, dep_groups};
 use crate::quick::{self, Target};
 use crate::settings::{DEFAULT_WINDOW, REFRESH_CHOICES};
 use crate::theme::{StatusLook, Theme};
@@ -1427,12 +1427,8 @@ fn detail(d: &IssueDetail, th: &Theme) -> El {
                 .child(Markdown::new(src.clone()).selectable(true).build(&th.prose));
         }
     }
-    if !d.dependencies.is_empty() {
-        body =
-            body.child(section("Depends on", Some(d.dependencies.len()), th)).child(refs(&d.dependencies, "dep", th));
-    }
-    if !d.dependents.is_empty() {
-        body = body.child(section("Blocks", Some(d.dependents.len()), th)).child(refs(&d.dependents, "blocks", th));
+    for group in dep_groups(d) {
+        body = body.child(section(group.heading, Some(group.refs.len()), th)).child(refs(&group, th));
     }
     if !d.comments.is_empty() {
         body = body.child(section("Comments", Some(d.comments.len()), th));
@@ -1466,24 +1462,24 @@ fn detail(d: &IssueDetail, th: &Theme) -> El {
     col().w_full().h_full().child(body.scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0))
 }
 
-fn refs(items: &[IssueRef], prefix: &str, th: &Theme) -> El {
+fn refs(group: &DepGroup, th: &Theme) -> El {
     let t = &th.t;
     // Pulled out by the rows' own padding so their text lines up with the pane's.
     let mut list = col().w_full().gap(1.0).mx(-8.0);
-    for r in items {
+    for r in &group.refs {
         let id = r.id.clone();
         let look = th.status(r.status.as_deref().unwrap_or(""));
         let title = r.title.clone().unwrap_or_else(|| "(not found)".into());
         let status = r.status.as_deref().unwrap_or("missing").replace('_', " ");
-        // Only a `blocks` link holds work back, and most links are that
-        // type, so the others say what they are instead.
-        let kind = r.dep_type.as_deref().filter(|kind| *kind != "blocks");
+        // The heading names the link, except in the catch-all groups, where
+        // each row says what it is.
+        let kind = r.dep_type.as_deref().filter(|_| group.labelled);
         let label = match kind {
             Some(kind) => format!("{}, {status}, {kind}: {title}", r.id),
             None => format!("{}, {status}: {title}", r.id),
         };
         let mut link = row()
-            .key(format!("{prefix}-{}", r.id))
+            .key(format!("{}-{}", group.key, r.id))
             .role("link")
             .label(label)
             .focusable(true)

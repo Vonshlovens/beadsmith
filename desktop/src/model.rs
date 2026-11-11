@@ -104,6 +104,72 @@ pub struct IssueDetail {
     pub comments: Vec<Comment>,
 }
 
+/// One heading's worth of the issue pane's dependency lists.
+#[derive(Debug, PartialEq)]
+pub struct DepGroup<'a> {
+    /// What the linked issues are to this one, as a heading ("Blocked by").
+    pub heading: &'static str,
+    /// Key prefix for the group's rows, unique within the pane, so an issue
+    /// linked twice (blocker and child, say) keeps a row under each heading.
+    pub key: &'static str,
+    /// Whether each row still names its own link type: only the catch-all
+    /// groups, whose heading cannot say it.
+    pub labelled: bool,
+    pub refs: Vec<&'a IssueRef>,
+}
+
+/// The kinds of link the pane names, in Beads' vocabulary, as the web app's
+/// `depLabel` (`src/lib/client/format.ts`) reads them.
+#[derive(Clone, Copy, PartialEq)]
+enum DepKind {
+    Blocks,
+    ParentChild,
+    DiscoveredFrom,
+    Related,
+    Other,
+}
+
+fn dep_kind(dep_type: Option<&str>) -> DepKind {
+    let key = dep_type.unwrap_or("").trim().to_ascii_lowercase().replace('_', "-");
+    match key.as_str() {
+        "blocks" => DepKind::Blocks,
+        "parent-child" => DepKind::ParentChild,
+        "discovered-from" => DepKind::DiscoveredFrom,
+        "related" => DepKind::Related,
+        _ => DepKind::Other,
+    }
+}
+
+/// Group an issue's links by what they mean, so a `related` or `parent-child`
+/// dependent never sits under "Blocks". `dependencies` are read upward (this
+/// issue waits on, is a child of, was discovered from them) and `dependents`
+/// downward, each heading in the web app's words for that direction. Related
+/// links have no direction, so both ends share one heading. A type the pane
+/// does not know keeps the plain direction as its heading and names itself
+/// on each row. Empty groups are left out; the order puts what holds work
+/// back first.
+pub fn dep_groups(d: &IssueDetail) -> Vec<DepGroup<'_>> {
+    use DepKind::*;
+    let up = |kind: DepKind| d.dependencies.iter().filter(move |r| dep_kind(r.dep_type.as_deref()) == kind);
+    let down = |kind: DepKind| d.dependents.iter().filter(move |r| dep_kind(r.dep_type.as_deref()) == kind);
+    let groups = [
+        ("Blocked by", "blocked-by", false, up(Blocks).collect::<Vec<_>>()),
+        ("Blocks", "blocks", false, down(Blocks).collect()),
+        ("Parent", "parent", false, up(ParentChild).collect()),
+        ("Children", "child", false, down(ParentChild).collect()),
+        ("Discovered from", "discovered-from", false, up(DiscoveredFrom).collect()),
+        ("Discovered here", "discovered", false, down(DiscoveredFrom).collect()),
+        ("Related", "related", false, up(Related).chain(down(Related)).collect()),
+        ("Depends on", "depends-on", true, up(Other).collect()),
+        ("Dependents", "dependents", true, down(Other).collect()),
+    ];
+    groups
+        .into_iter()
+        .filter(|(.., refs)| !refs.is_empty())
+        .map(|(heading, key, labelled, refs)| DepGroup { heading, key, labelled, refs })
+        .collect()
+}
+
 /// An issue quick open found, in whichever project holds it: enough to list
 /// it and to go to it. The rest is read when it is opened.
 #[derive(Clone, Debug, PartialEq)]
@@ -208,5 +274,59 @@ mod tests {
         c.add("closed", 2);
         c.add("deferred", 1);
         assert_eq!((c.open, c.closed, c.total, c.active()), (3, 2, 6, 4));
+    }
+    #[test]
+    fn dep_groups_split_links_by_type_and_direction() {
+        let link = |id: &str, kind: Option<&str>| IssueRef {
+            id: id.into(),
+            title: None,
+            status: None,
+            dep_type: kind.map(Into::into),
+        };
+        let d = IssueDetail {
+            summary: IssueSummary {
+                id: "x-1".into(),
+                title: String::new(),
+                status: "open".into(),
+                priority: 2,
+                issue_type: "task".into(),
+                assignee: None,
+                labels: Vec::new(),
+                updated_at: String::new(),
+                dependency_count: 4,
+                dependent_count: 3,
+                comment_count: 0,
+                blocker_count: 1,
+            },
+            description: None,
+            design: None,
+            acceptance_criteria: None,
+            notes: None,
+            created_by: None,
+            created_at: None,
+            dependencies: vec![
+                link("x-2", Some("blocks")),
+                link("x-3", Some("parent_child")),
+                link("x-4", Some("related")),
+                link("x-5", Some("waits-for")),
+            ],
+            dependents: vec![link("x-6", Some("Blocks")), link("x-7", Some("related")), link("x-8", None)],
+            comments: Vec::new(),
+        };
+        let got: Vec<_> = dep_groups(&d)
+            .into_iter()
+            .map(|g| (g.heading, g.labelled, g.refs.iter().map(|r| r.id.as_str()).collect::<Vec<_>>()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("Blocked by", false, vec!["x-2"]),
+                ("Blocks", false, vec!["x-6"]),
+                ("Parent", false, vec!["x-3"]),
+                ("Related", false, vec!["x-4", "x-7"]),
+                ("Depends on", true, vec!["x-5"]),
+                ("Dependents", true, vec!["x-8"]),
+            ]
+        );
     }
 }

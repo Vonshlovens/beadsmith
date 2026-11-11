@@ -80,14 +80,17 @@ fn rows(database: &str) -> Option<&'static [Row]> {
 /// `from` back until `to` closes; other types only link the two. Between them
 /// these cover every case Ready turns on: an open blocker (`lh-4`, `lh-1`,
 /// and `lh-6`, which is open but not ready), a closed one (`lh-3` is ready
-/// again), a link that does not block (`lh-7`), and a blocker that is not in
-/// the project, which blocks because nothing says it is done (`pa-3`).
+/// again), links that do not block (`lh-7`; `lh-5` is also `lh-4`'s child,
+/// and `lh-6` was found while documenting `lh-9`), and a blocker that is not
+/// in the project, which blocks because nothing says it is done (`pa-3`).
 const DEPENDENCIES: &[(&str, &str, &str)] = &[
     ("lh-4", "lh-5", "blocks"),
     ("lh-1", "lh-4", "blocks"),
     ("lh-3", "lh-9", "blocks"),
     ("lh-6", "lh-2", "blocks"),
     ("lh-7", "lh-6", "related"),
+    ("lh-5", "lh-4", "parent-child"),
+    ("lh-6", "lh-9", "discovered-from"),
     ("pa-3", "pa-7", "blocks"),
 ];
 

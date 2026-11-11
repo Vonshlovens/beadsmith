@@ -273,6 +273,15 @@ fn trail_scene(s: &mut State) {
     s.pane = Pane::Detail;
 }
 
+/// Every way the pane groups links: `lh-6` is blocked by one issue, was
+/// discovered from another and is related to a third.
+fn dependencies_scene(s: &mut State) {
+    sample_scene(s);
+    s.issue = Some("lh-6".into());
+    s.table.select("lh-6");
+    s.detail = Load::Ready(Sample.issue("lighthouse", "lh-6").ok().flatten());
+}
+
 /// A link to an issue that is not in the project: its pane says so, and the
 /// trail is the way back.
 fn trail_gone_scene(s: &mut State) {
@@ -397,6 +406,7 @@ fn main() {
             ("connection-invalid", connection_invalid_scene),
             ("ready", ready_scene),
             ("trail", trail_scene),
+            ("dependencies", dependencies_scene),
             ("trail-gone", trail_gone_scene),
             ("reading", reading_scene),
             ("theme-light", theme_light_scene),
