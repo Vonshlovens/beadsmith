@@ -20,6 +20,10 @@ use crate::app::{Layout, Pane, State, Step};
 /// that view. The view itself is keyed per issue so each issue opens at its top.
 pub const DETAIL_ANCHOR: &str = "issue-heading";
 
+/// The scroll view around the shortcuts list (`view::shortcuts_dialog`),
+/// which the reading keys page while the list is open.
+pub const SHORTCUTS_SCROLL: &str = "shortcut-scroll";
+
 /// The element key of a row in quick open's list, by its place in it: what
 /// the view builds the row under and the keys here scroll to.
 pub fn quick_row_key(row: usize) -> String {
@@ -113,24 +117,23 @@ pub fn command(key: &KeyEvent, pane: Pane, typing: bool) -> Option<Command> {
         return None;
     }
     let reading = pane == Pane::Detail;
-    let either = |list: Command, detail: Scroll| Some(if reading { Command::Scroll(detail) } else { list });
+    if reading && let Some(to) = reading_key(key) {
+        return Some(Command::Scroll(to));
+    }
     match &key.key {
-        Key::Down => either(Command::Select(Step::Next), Scroll::PageDown),
-        Key::Up => either(Command::Select(Step::Previous), Scroll::PageUp),
+        Key::Down => Some(Command::Select(Step::Next)),
+        Key::Up => Some(Command::Select(Step::Previous)),
         // The web board's keys. In the table they find nothing to move
         // (`run` says so) and the key goes on to whatever else wants it.
         Key::Left if !reading => Some(Command::Lane(-1)),
         Key::Right if !reading => Some(Command::Lane(1)),
-        Key::Home => either(Command::Select(Step::First), Scroll::Top),
-        Key::End => either(Command::Select(Step::Last), Scroll::Bottom),
+        Key::Home => Some(Command::Select(Step::First)),
+        Key::End => Some(Command::Select(Step::Last)),
         // In the list Rune's own paging of the table is left alone.
-        Key::PageDown if reading => Some(Command::Scroll(Scroll::PageDown)),
-        Key::PageUp if reading => Some(Command::Scroll(Scroll::PageUp)),
         Key::Enter if !m.shift => Some(Command::Open),
         Key::Text(t) => match t.as_str() {
-            "j" => either(Command::Select(Step::Next), Scroll::PageDown),
-            "k" => either(Command::Select(Step::Previous), Scroll::PageUp),
-            " " if reading => Some(Command::Scroll(if m.shift { Scroll::PageUp } else { Scroll::PageDown })),
+            "j" => Some(Command::Select(Step::Next)),
+            "k" => Some(Command::Select(Step::Previous)),
             "h" if !reading => Some(Command::Lane(-1)),
             "l" if !reading => Some(Command::Lane(1)),
             "v" => Some(Command::SwitchLayout),
@@ -147,8 +150,49 @@ pub fn command(key: &KeyEvent, pane: Pane, typing: bool) -> Option<Command> {
     }
 }
 
+/// The keys that move through something being read, as `command` gives
+/// them in the detail pane: arrows, j/k, Space and the page keys page it,
+/// Home and End go to its ends.
+fn reading_key(key: &KeyEvent) -> Option<Scroll> {
+    let m = key.mods;
+    if m.cmd || m.ctrl || m.alt {
+        return None;
+    }
+    match &key.key {
+        Key::Down | Key::PageDown => Some(Scroll::PageDown),
+        Key::Up | Key::PageUp => Some(Scroll::PageUp),
+        Key::Home => Some(Scroll::Top),
+        Key::End => Some(Scroll::Bottom),
+        Key::Text(t) => match t.as_str() {
+            "j" => Some(Scroll::PageDown),
+            "k" => Some(Scroll::PageUp),
+            " " => Some(if m.shift { Scroll::PageUp } else { Scroll::PageDown }),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Move the scroll view keyed `anchor` (or the one around it).
+fn scroll(anchor: &str, to: Scroll, tx: &mut Tx) {
+    match to {
+        Scroll::PageDown => tx.scroll_page(anchor, 1),
+        Scroll::PageUp => tx.scroll_page(anchor, -1),
+        Scroll::Top => tx.scroll_to_y(anchor, 0.0),
+        Scroll::Bottom => tx.scroll_to_bottom_instant(anchor),
+    }
+}
+
 /// The window's key handler (`AppSpec::on_key`).
 pub fn on_key(s: &mut State, key: &KeyEvent, tx: &mut Tx) -> bool {
+    // The shortcuts list is taller than the smallest window: the keys that
+    // page an issue being read page it too, so every row is reachable
+    // without a pointer. Nothing else in it takes a key.
+    if s.shortcuts && s.connection.is_none() {
+        let Some(to) = reading_key(key) else { return false };
+        scroll(SHORTCUTS_SCROLL, to, tx);
+        return true;
+    }
     // A dialog owns the keyboard; Rune closes it on Esc.
     if s.modal_open() {
         return false;
@@ -217,10 +261,7 @@ pub fn run(s: &mut State, command: Command, tx: &mut Tx) -> bool {
         Command::Shortcuts => s.shortcuts = true,
         Command::QuickOpen => return s.open_quick(),
         Command::Theme => s.cycle_appearance(),
-        Command::Scroll(Scroll::PageDown) => tx.scroll_page(DETAIL_ANCHOR, 1),
-        Command::Scroll(Scroll::PageUp) => tx.scroll_page(DETAIL_ANCHOR, -1),
-        Command::Scroll(Scroll::Top) => tx.scroll_to_y(DETAIL_ANCHOR, 0.0),
-        Command::Scroll(Scroll::Bottom) => tx.scroll_to_bottom_instant(DETAIL_ANCHOR),
+        Command::Scroll(to) => scroll(DETAIL_ANCHOR, to, tx),
         Command::TrailBack | Command::TrailForward => {
             let moved = if command == Command::TrailBack { s.go_back() } else { s.go_forward() };
             let Some(id) = moved else { return false };
@@ -488,6 +529,18 @@ mod tests {
         for key in [text("h"), text("l"), Key::Left.into(), Key::Right.into()] {
             assert_eq!(detail(key), None, "an issue being read has no columns to cross");
         }
+    }
+
+    /// The shortcuts list pages by the same keys, and leaves the rest
+    /// (Esc closes it, and a chord such as Cmd-Q still quits).
+    #[test]
+    fn the_reading_keys_page_the_shortcuts_list() {
+        assert_eq!(reading_key(&text("j")), Some(Scroll::PageDown));
+        assert_eq!(reading_key(&Key::PageUp.into()), Some(Scroll::PageUp));
+        assert_eq!(reading_key(&Key::End.into()), Some(Scroll::Bottom));
+        assert_eq!(reading_key(&Key::Escape.into()), None);
+        assert_eq!(reading_key(&text("?")), None);
+        assert_eq!(reading_key(&cmd('q')), None);
     }
 
     #[test]

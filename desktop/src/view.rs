@@ -86,7 +86,9 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     if let Some(form) = &s.connection {
         connection_dialog(s, form, &th.k, &mut layer);
     } else if s.shortcuts {
-        shortcuts_dialog(&th, &mut layer);
+        // Unknown until the first layout, like `shell_w`.
+        let shell_h = cx.layout_size("shell").map_or(DEFAULT_WINDOW.1, |size| size[1]);
+        shortcuts_dialog(&th, shell_h, &mut layer);
     } else if let Some(quick) = &s.quick {
         quick_dialog(s, quick, &th, &mut layer);
     }
@@ -506,9 +508,17 @@ fn connection_dialog(s: &State, form: &Connection, k: &Kit, layer: &mut Vec<El>)
         .build(k, layer);
 }
 
+/// What the shortcuts dialog keeps around its list: the layer's 16 point
+/// margin above and below the panel, and the panel's header (16 points of
+/// padding either side of a 16 point title line).
+const SHORTCUTS_CHROME_H: f32 = 2.0 * 16.0 + 48.0;
+
 /// The keyboard shortcuts, as `?` shows them: `keys::SHORTCUTS` in two
-/// columns so the list fits the smallest window without scrolling.
-fn shortcuts_dialog(th: &Theme, layer: &mut Vec<El>) {
+/// columns. The list is about 815 points tall and the smallest window 560,
+/// so it scrolls inside the window's height (`window_h`) rather than run off
+/// its top and bottom; the page keys, Space and j/k page it
+/// (`keys::on_key`), as they page an issue being read.
+fn shortcuts_dialog(th: &Theme, window_h: f32, layer: &mut Vec<El>) {
     let (k, t) = (&th.k, &th.t);
     let group = |(title, rows): &(&str, &[keys::Shortcut])| {
         let mut list =
@@ -544,12 +554,18 @@ fn shortcuts_dialog(th: &Theme, layer: &mut Vec<El>) {
         .items_start()
         .child(half(vec![group(issues), group(reading)]))
         .child(half(vec![group(everywhere)]));
+    let list = col()
+        .key(keys::SHORTCUTS_SCROLL)
+        .w_full()
+        .max_h((window_h - SHORTCUTS_CHROME_H).max(0.0))
+        .scroll(ScrollSpec { stick_bottom: false })
+        .child(body);
     Dialog::new("shortcuts", "Keyboard shortcuts")
         .width(680.0)
         .fit()
         .open(true)
         .on_close(|s: &mut State| s.shortcuts = false)
-        .child(body)
+        .child(list)
         .build(k, layer);
 }
 
