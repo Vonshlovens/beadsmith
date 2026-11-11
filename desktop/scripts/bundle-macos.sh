@@ -8,11 +8,17 @@
 # script does: it needs only what macOS ships (sips, iconutil, plutil,
 # codesign, ditto) plus cargo.
 #
-# Usage: scripts/bundle-macos.sh [build|install|uninstall]
+# Usage: scripts/bundle-macos.sh [build|install|uninstall|package|version]
 #   build      (default) target/bundle/Beadsmith.app
 #   install    build, then copy the app to /Applications
 #   uninstall  remove the installed app (settings and the Keychain item stay;
 #              the README says how to remove those)
+#   package    build, then zip the app for download beside a SHA-256 file:
+#              target/bundle/Beadsmith-<version>-macos-<arch>.zip[.sha256].
+#              The release workflow runs this, so a release is the same
+#              bundle a local build makes.
+#   version    print the version in Cargo.toml (the release workflow checks
+#              the tag against it)
 #
 # Environment:
 #   BEADSMITH_TARGETS        Rust target triples to build, space separated;
@@ -44,11 +50,16 @@ die() {
   exit 1
 }
 
-[ "$(uname -s)" = Darwin ] || die "this builds a macOS bundle and needs macOS"
-
 # The crate's version is the bundle's: one number to bump, in Cargo.toml.
 version=$(sed -n '/^\[package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)
 [ -n "$version" ] || die "no package version in Cargo.toml"
+
+if [ "${1:-}" = version ]; then
+  echo "$version"
+  exit 0
+fi
+
+[ "$(uname -s)" = Darwin ] || die "this builds a macOS bundle and needs macOS"
 
 build_binary() {
   local built=()
@@ -163,6 +174,34 @@ install() {
   fi
 }
 
+# The download: a zip of the app and a checksum file `shasum -c` reads.
+package() {
+  # Name the archive for what is in the binary, not for what was asked for.
+  local archs arch
+  archs=$(lipo -archs "$app/Contents/MacOS/$name")
+  case $archs in
+    *' '*) arch=universal ;;
+    *) arch=$archs ;;
+  esac
+  local zip=$name-$version-macos-$arch.zip
+  rm -f "$out/$zip" "$out/$zip.sha256"
+  # ditto, not zip: it keeps the bundle's symlinks and extended attributes
+  # the way Finder's Compress does, so the signature still verifies after
+  # unpacking. --keepParent puts Beadsmith.app itself in the archive.
+  ditto -c -k --sequesterRsrc --keepParent "$app" "$out/$zip"
+  # Run in $out so the checksum file names the bare archive and verifies
+  # wherever the two files are downloaded to.
+  (cd "$out" && shasum -a 256 "$zip" >"$zip.sha256")
+  # Unpack it and check what a downloader would get.
+  local check
+  check=$(mktemp -d)
+  ditto -x -k "$out/$zip" "$check"
+  codesign --verify --strict "$check/$name.app" ||
+    die "the app in $zip does not pass codesign --verify"
+  rm -rf "$check"
+  echo "bundle-macos: packaged $out/$zip ($archs)"
+}
+
 uninstall() {
   if [ -d "$installed" ]; then
     rm -rf "$installed"
@@ -179,5 +218,9 @@ case ${1:-build} in
     install
     ;;
   uninstall) uninstall ;;
-  *) die "usage: scripts/bundle-macos.sh [build|install|uninstall]" ;;
+  package)
+    build
+    package
+    ;;
+  *) die "usage: scripts/bundle-macos.sh [build|install|uninstall|package|version]" ;;
 esac

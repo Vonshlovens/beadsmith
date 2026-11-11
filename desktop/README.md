@@ -207,10 +207,13 @@ mark redrawn as vectors because the web app's copies are too small for a
 
 The app is signed ad hoc, which has two consequences:
 
-- It runs on the Mac that built it. Another Mac's Gatekeeper refuses it:
-  that needs a Developer ID signature and notarization, which need Apple
-  credentials this repository does not have. `BEADSMITH_SIGN_IDENTITY` signs
-  with an identity from your keychain instead.
+- It runs on the Mac that built it. Another Mac's Gatekeeper refuses a
+  downloaded copy until its quarantine attribute is cleared
+  ([Install a downloaded build](#install-a-downloaded-build)): opening it
+  without that step needs a Developer ID signature and notarization, which
+  need Apple credentials this repository does not have.
+  `BEADSMITH_SIGN_IDENTITY` signs with an identity from your keychain
+  instead.
 - An ad-hoc signature identifies one exact build, so after installing a new
   build macOS asks once more whether Beadsmith may read its `Beadsmith Dolt`
   Keychain item. Choose **Always Allow**.
@@ -218,6 +221,62 @@ The app is signed ad hoc, which has two consequences:
 Uninstalling removes the app only. The settings file and the Keychain item
 stay; [Where the connection is kept](#where-the-connection-is-kept) says how
 to remove them.
+
+## Install a downloaded build
+
+Tagged versions are built by GitHub Actions and attached to the
+repository's [releases](https://github.com/Vonshlovens/beadsmith/releases)
+as `Beadsmith-<version>-macos-universal.zip`, one app for Apple silicon and
+Intel Macs on macOS 13 or later, with a `.sha256` file beside it.
+
+The build is not notarized. Developer ID signing and notarization need a
+paid Apple Developer account and its credentials, which this repository does
+not have, so the release is signed ad hoc like a local build. macOS marks
+anything a browser downloads as quarantined and refuses to open a quarantined
+app that is not notarized ("Beadsmith is damaged and can't be opened", or
+"Apple could not verify…"). Clearing the mark is the step that says you trust
+this download, so check it first:
+
+```sh
+cd ~/Downloads
+shasum -a 256 -c Beadsmith-<version>-macos-universal.zip.sha256
+ditto -x -k Beadsmith-<version>-macos-universal.zip .
+xattr -dr com.apple.quarantine Beadsmith.app
+mv Beadsmith.app /Applications/
+```
+
+The checksum shows the zip arrived as GitHub has it; it does not show who
+built it. If that matters, build it yourself with the script above: the
+release is that script's output.
+
+Unpacking with `ditto` (or by double-clicking the zip) keeps the signature
+intact. `xattr -dr` removes the quarantine mark from the app and everything
+in it; without it, **System Settings › Privacy & Security › Open Anyway**
+after a refused launch does the same for most macOS versions.
+
+## Cut a release
+
+[`.github/workflows/desktop-release.yml`](../.github/workflows/desktop-release.yml)
+runs on tags named `desktop-v<version>`:
+
+1. Bump `version` in [`Cargo.toml`](Cargo.toml) (and `Cargo.lock`, which
+   `cargo build` updates) and merge that.
+2. Tag the merged commit `desktop-v<version>` and push the tag.
+
+The workflow fails before building if the tag and `Cargo.toml` disagree,
+runs the tests, builds both architectures, and runs
+`scripts/bundle-macos.sh package`, which joins them into one universal app,
+signs it, zips it and writes the checksum. A second job, the only one with
+write access, attaches the two files to a GitHub Release for the tag.
+Running the workflow by hand from a branch does everything but release: the
+zip and checksum are kept as a workflow artifact for 14 days.
+
+The same packaging runs locally, for the host architecture unless
+`BEADSMITH_TARGETS` names more (each needs `rustup target add`):
+
+```sh
+scripts/bundle-macos.sh package      # target/bundle/Beadsmith-<version>-macos-<arch>.zip and .sha256
+```
 
 ## Where the connection is kept
 
@@ -350,7 +409,7 @@ pin is in [`Cargo.toml`](Cargo.toml).
   Manager).
 - Talking to a Beadsmith server's API instead of Dolt, which would bring
   accounts and the project gate (see the ADR's alternatives).
-- A release: downloadable builds, Developer ID signing and notarization.
-  Bundles for Linux and Windows.
+- Developer ID signing and notarization of the macOS download. Bundles for
+  Linux and Windows.
 - The board, the Ready deck across projects, the activity feed, search
   across projects, and any writes.

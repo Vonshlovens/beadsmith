@@ -74,17 +74,25 @@ status and text filters, and the issue detail.
   has to land in both until one of them goes.
 - No TLS yet: the prototype connects in the clear, so it belongs on loopback,
   a tunnel or a private network.
-- Not shipped: there is no release. A script builds a macOS app bundle on
-  the user's own machine and can copy it to `/Applications`. Its signature is
-  ad hoc, so the bundle runs where it was built and nowhere else: Developer
-  ID signing and notarization need Apple credentials the repository does not
-  hold. An ad-hoc signature also names one exact build, so the Keychain asks
-  again for access to the saved password after each rebuild. The web app is
-  unchanged. The
-  crate has its own workflow, `.github/workflows/desktop.yml` (format,
-  Clippy, tests and a headless render of every scene on macOS and Linux),
-  kept out of `ci.yml` so the web app's jobs and its image publish neither
-  wait for a Rust build nor fail on one.
+- Shipped as an unnotarized download only. A script builds a macOS app
+  bundle, on the user's own machine (where it can copy it to
+  `/Applications`) or in a release workflow that runs on `desktop-v<version>`
+  tags and attaches a universal zip and its SHA-256 to a GitHub Release. The
+  signature is ad hoc either way: Developer ID signing and notarization need
+  Apple credentials the repository does not hold. So the bundle opens where
+  it was built, and a downloaded copy opens only after the user clears its
+  quarantine attribute, which is a deliberate step the README explains
+  beside checking the checksum. The checksum covers transport, not
+  provenance. An ad-hoc signature also names one exact build, so the
+  Keychain asks again for access to the saved password after each rebuild or
+  update. The web app is unchanged.
+- The crate has its own workflows, kept out of `ci.yml` so the web app's
+  jobs and its image publish neither wait for a Rust build nor fail on one:
+  `.github/workflows/desktop.yml` (format, Clippy, tests and a headless
+  render of every scene on macOS and Linux) and
+  `.github/workflows/desktop-release.yml`, whose publishing job is the only
+  desktop job with write access to the repository and only uploads the two
+  files the build job made.
 
 ## Alternatives considered
 
@@ -114,7 +122,12 @@ window: it still needs a running server and gains nothing native.
 - macOS bundle: [`desktop/scripts/bundle-macos.sh`](../../desktop/scripts/bundle-macos.sh)
   (release build, `Info.plist` with the crate's version, icon from
   [`desktop/assets/icon.svg`](../../desktop/assets/icon.svg), ad-hoc
-  `codesign`, install and uninstall).
+  `codesign`, install and uninstall, and `package` for the zip and
+  checksum).
+- Release: [`.github/workflows/desktop-release.yml`](../../.github/workflows/desktop-release.yml)
+  on `desktop-v<version>` tags; the tag must match `desktop/Cargo.toml`. A
+  manual run from a branch builds the archive as a workflow artifact and
+  releases nothing.
 - The Rune revision is pinned in `desktop/Cargo.toml`; its toolchain in
   `desktop/rust-toolchain.toml`.
 - Row in [`specs/README.md`](../README.md).
