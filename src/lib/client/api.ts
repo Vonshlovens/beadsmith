@@ -28,6 +28,7 @@ import type {
 	IssueDetailResponse,
 	IssueListResponse,
 	Mission,
+	ModelPoolResponse,
 	Project,
 	ReadyListResponse,
 	StatusSnapshot,
@@ -239,6 +240,11 @@ export const api = {
 	/** Arm or disarm File/Tackle globally. Provider configuration is unchanged. */
 	setDispatchArmed(armed: boolean, init?: RequestInitLike) {
 		return request<{ armed: boolean }>('PUT', '/console/dispatch', { ...init, body: { armed } });
+	},
+
+	/** The Underclass model pool, or `{configured: false}` when it is off (ADR-0022). */
+	modelPool(init?: RequestInitLike) {
+		return request<ModelPoolResponse>('GET', '/console/model-pool', init);
 	},
 
 	/** Backup settings (no secrets), recent runs, and run state. */

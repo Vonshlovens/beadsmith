@@ -218,6 +218,8 @@
 						{/if}
 						<span class="faint"> · {armed ? 'armed' : 'disarmed'}</span>
 					</dd>
+					<dt>Model pool</dt>
+					<dd><a href="/console/model-pool">Underclass accounts and quota</a></dd>
 				</dl>
 				<div class="arm-row">
 					<button
