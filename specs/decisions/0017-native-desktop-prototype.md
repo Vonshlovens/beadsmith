@@ -128,6 +128,14 @@ window: it still needs a running server and gains nothing native.
   wildcards escaped, and a fixed row limit. It reads only the projects the
   sidebar already lists and adds no authority; see
   [Quick open](../../desktop/README.md#quick-open).
+- Issue actions (`keys::issue_action` in `desktop/src/keys.rs`): copy the
+  id, copy a Markdown link, open in the browser. They use only what is on
+  screen and add no read and no authority. Links are built from an optional
+  web address saved in the settings file (`web.url`, `http` or `https`
+  only) on the web app's issue route, `/p/d_<database>/i/<issue id>`
+  (`model::web_issue_url`); the browser, not the desktop app, signs in to
+  the web app. See
+  [Links to the web app](../../desktop/README.md#links-to-the-web-app).
 - The view a relaunch restores (project, status tab, sort, theme choice,
   window size) is kept in the same settings file (`settings::Session`); it
   holds names and numbers only, and an unusable value falls back to its

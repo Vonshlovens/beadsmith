@@ -10,10 +10,10 @@ use rune::TextEdit;
 use rune::{Color, Cx, El, GrowthSpec, LoopSpec, ScrollSpec, Tx, col, el, row, text};
 use rune_kit::{
     Button, ButtonVariant, Cell, Dialog, Field, Keybind, Kit, Markdown, SegmentedControl, Select, Table, TableColumn,
-    TableStyle, TextInput,
+    TableStyle, TextInput, Toast, ToastRegion,
 };
 
-use crate::app::{BOARD_KEY, Check, Connection, Layout, Load, Pane, Quick, STATUS_FILTERS, State, TABLE_KEY};
+use crate::app::{BOARD_KEY, Check, Connection, Layout, Load, Notice, Pane, Quick, STATUS_FILTERS, State, TABLE_KEY};
 use crate::keys::{self, Command};
 use crate::model::{DepGroup, Failure, IssueDetail, IssueSummary, Project, dep_groups};
 use crate::quick::{self, Target};
@@ -102,7 +102,24 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     } else if let Some(quick) = &s.quick {
         quick_dialog(s, quick, &th, &mut layer);
     }
+    if let Some(notice) = &s.notice {
+        layer.push(notice_toast(notice, &th.k));
+    }
     rune_kit::root(body, layer)
+}
+
+/// What an issue action did (`app::Notice`), in the kit's toast at the
+/// window's lower right, over the issue pane rather than the list. It goes by
+/// itself; nothing in it needs an answer.
+fn notice_toast(notice: &Notice, k: &Kit) -> El {
+    let mut toast = Toast::new("notice", notice.title.clone());
+    if notice.done {
+        toast = toast.icon(k, k.glyph.check);
+    }
+    if let Some(detail) = &notice.detail {
+        toast = toast.description(detail.clone());
+    }
+    ToastRegion::new().toast(toast.build(k)).build(k)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -435,6 +452,11 @@ fn connection_dialog(s: &State, form: &Connection, k: &Kit, layer: &mut Vec<El>)
         })
         .build(k)
         .key("password");
+    let web = input(&form.web, "Web address", |f| &mut f.web, false)
+        .placeholder("https://beads.example")
+        .invalid(form.error == Some(crate::settings::FormError::Web))
+        .build(k)
+        .key("web");
     let password_hint = if s.env.password {
         "Set by BEADS_DOLT_PASSWORD_FILE or BEADS_DOLT_PASSWORD."
     } else if cfg!(target_os = "macos") {
@@ -465,7 +487,12 @@ fn connection_dialog(s: &State, form: &Connection, k: &Kit, layer: &mut Vec<El>)
                 ))),
         )
         .child(field("User", user, owned_by("BEADS_DOLT_SERVER_USER", s.env.user.is_some())))
-        .child(field("Password", password, Some(password_hint.into())));
+        .child(field("Password", password, Some(password_hint.into())))
+        .child(field(
+            "Web address",
+            web,
+            Some("Optional. Where the Beadsmith web app is, for links to issues.".into()),
+        ));
 
     // In the body, not the dialog's description: the kit's header does not wrap.
     let about = text("Beadsmith reads one Dolt SQL server and never writes to it. Use a SELECT-only account.")
@@ -1310,7 +1337,7 @@ impl StatusLooks {
 fn detail_pane(s: &State, th: &Theme, roomy: bool) -> El {
     let inner = match (&s.issue, &s.detail) {
         (None, _) => note(th, "Select an issue to read it."),
-        (Some(_), Load::Ready(Some(d))) => detail(d, th),
+        (Some(_), Load::Ready(Some(d))) => detail(d, s.web.is_some(), th),
         (Some(id), Load::Ready(None)) => state(
             th,
             false,
@@ -1380,7 +1407,59 @@ fn trail_bar(s: &State, th: &Theme) -> Option<El> {
     Some(col().w_full().child(bar).child(rule_h(th)))
 }
 
-fn detail(d: &IssueDetail, th: &Theme) -> El {
+/// A small text button in the issue pane's header that runs `command`,
+/// named for what it does with its key in the tooltip, as the trail's are.
+fn issue_action(key: &'static str, words: &'static str, chord: &str, command: Command, th: &Theme) -> El {
+    row()
+        .key(key)
+        .role("button")
+        .label(words)
+        .help(format!("{words} ({})", keys::key_label(chord)))
+        .focusable(true)
+        .focus_ring(2.0, 1.0, th.t.em_400)
+        .h(22.0)
+        .px(6.0)
+        .center_y()
+        .radius(th.k.radius.sm)
+        .hover(th.k.c.hover)
+        .on_press_tx(move |s: &mut State, tx: &mut Tx| keys::perform(s, command, tx))
+        .child(text(words).font(th.ty.xs).color(th.t.tx_mid).a11y_hidden())
+}
+
+/// The issue's id and what can be done with it: copied, and, when the web
+/// app's address is saved (`linked`), linked to and opened there. Secondary,
+/// so quiet: words in the muted ink, a fill only under the pointer.
+fn issue_actions(id: &str, linked: bool, th: &Theme) -> El {
+    let mut actions = row().key("issue-actions").gap(2.0).center_y().child(issue_action(
+        "copy-id",
+        "Copy ID",
+        "y",
+        Command::CopyId,
+        th,
+    ));
+    if linked {
+        actions = actions
+            .child(issue_action("copy-link", "Copy link", "⇧Y", Command::CopyLink, th))
+            .child(issue_action("open-web", "Open in web", "⇧O", Command::OpenWeb, th));
+    }
+    row()
+        .w_full()
+        .gap(8.0)
+        .center_y()
+        .child(
+            text(id.to_string())
+                .font(th.ty.xs)
+                .color(th.t.tx_dim)
+                .selectable(true)
+                .selection_color(th.k.selection())
+                .truncate()
+                .grow(1.0)
+                .min_w(0.0),
+        )
+        .child(actions)
+}
+
+fn detail(d: &IssueDetail, linked: bool, th: &Theme) -> El {
     let t = &th.t;
     let i = &d.summary;
     let mut chips = row().gap(10.0).center_y().wrap();
@@ -1405,18 +1484,14 @@ fn detail(d: &IssueDetail, th: &Theme) -> El {
         facts = facts.child(fact(label, value.as_deref().unwrap_or("—"), th));
     }
 
-    let heading = col()
-        .key(keys::DETAIL_ANCHOR)
-        .gap(4.0)
-        .child(text(i.id.clone()).font(th.ty.xs).color(t.tx_dim).selectable(true).selection_color(th.k.selection()))
-        .child(
-            text(i.title.clone())
-                .font(th.ty.md_strong)
-                .color(t.tx_hi)
-                .wrap()
-                .selectable(true)
-                .selection_color(th.k.selection()),
-        );
+    let heading = col().key(keys::DETAIL_ANCHOR).gap(4.0).child(issue_actions(&i.id, linked, th)).child(
+        text(i.title.clone())
+            .font(th.ty.md_strong)
+            .color(t.tx_hi)
+            .wrap()
+            .selectable(true)
+            .selection_color(th.k.selection()),
+    );
 
     let mut body = col()
         .key(format!("issue-{}", i.id))

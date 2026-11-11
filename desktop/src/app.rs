@@ -15,7 +15,9 @@ use rune::{Latest, TextEdit, Tx, Waker};
 use rune_kit::{SortDir, TableState};
 
 use crate::dolt::{Config, Credential, Dolt};
-use crate::model::{Failure, Hit, IssueDetail, IssueSummary, Project, Source, Unconfigured};
+use crate::model::{
+    Failure, Hit, IssueDetail, IssueSummary, Project, Source, Unconfigured, markdown_link, web_issue_url,
+};
 use crate::quick::{self, Target};
 use crate::settings::{self, Backing, Env, FormError, Lookup, SecretStore, Session, StoreError, Stored};
 use crate::theme::Appearance;
@@ -271,12 +273,14 @@ pub struct Connection {
     pub saving: bool,
     /// A connection is already saved, so a blank password keeps its password.
     pub saved: bool,
+    /// Where the web app for this server is, for issue links; blank for none.
+    pub web: TextEdit,
 }
 
 impl Connection {
     /// The form over what is in effect now. A field the environment sets
     /// shows that value; the view disables it and says which variable owns it.
-    fn new(env: &Env, stored: Option<&Stored>) -> Connection {
+    fn new(env: &Env, stored: Option<&Stored>, web: Option<&str>) -> Connection {
         let current = env.config(stored);
         let host = current.as_ref().map(|c| c.host.clone()).unwrap_or_default();
         let port = current.as_ref().map_or(env.port.unwrap_or(settings::DEFAULT_PORT), |c| c.port);
@@ -290,6 +294,45 @@ impl Connection {
             error: None,
             saving: false,
             saved: stored.is_some(),
+            web: TextEdit::new(web.unwrap_or_default()),
+        }
+    }
+}
+
+/// How long a notice stays up: long enough to read three words, short
+/// enough not to sit over the list.
+const NOTICE_SECS: f64 = 2.5;
+
+/// A brief confirmation in the window's corner (`State::notice`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Notice {
+    pub title: String,
+    /// The action happened (else this says why it could not).
+    pub done: bool,
+    /// The text concerned, such as what was copied.
+    pub detail: Option<String>,
+    /// When it goes, on the app clock; set by the first `tick` after it was
+    /// raised, because a key handler has no clock.
+    until: Option<f64>,
+}
+
+/// Why the selected issue has no web link. The window never writes, so
+/// these are things the reader can change, said in the notice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoLink {
+    NoIssue,
+    /// No web address is saved in connection settings.
+    NoWebAddress,
+    /// The web app does not list a database by this name.
+    Unlisted,
+}
+
+impl NoLink {
+    pub fn message(self) -> &'static str {
+        match self {
+            NoLink::NoIssue => "Select an issue first.",
+            NoLink::NoWebAddress => "Add the web app's address in Connection Settings to link to issues.",
+            NoLink::Unlisted => "The web app does not list this project, so it has no link.",
         }
     }
 }
@@ -395,6 +438,12 @@ pub struct State {
     search_req: Latest<SearchAnswer>,
     /// The connection screen, when open.
     pub connection: Option<Connection>,
+    /// The web app's address for this server (`settings::load_web`), the
+    /// base of issue links. None hides the actions that need it.
+    pub web: Option<String>,
+    /// A short word that an action did what it said ("Copied lh-1"), shown
+    /// until `tick` finds it expired.
+    pub notice: Option<Notice>,
     pub env: Env,
     lookup: Lookup,
     prefs: rune::prefs::Prefs,
@@ -475,6 +524,8 @@ impl State {
             detail_req: Latest::default(),
             search_req: Latest::default().debounce(SEARCH_PAUSE),
             connection: None,
+            web: settings::load_web(&backing.prefs),
+            notice: None,
             env: backing.env,
             lookup: backing.lookup,
             prefs: backing.prefs,
@@ -922,6 +973,42 @@ impl State {
         None
     }
 
+    // -- Actions on the issue being read ---------------------------------------------------------
+
+    /// The selected issue's title, from its pane when that has landed, else
+    /// from its row.
+    fn issue_title(&self) -> Option<&str> {
+        let id = self.issue.as_deref()?;
+        if let Load::Ready(Some(d)) = &self.detail
+            && d.summary.id == id
+        {
+            return Some(&d.summary.title);
+        }
+        self.issues.ready()?.iter().find(|i| i.id == id).map(|i| i.title.as_str())
+    }
+
+    /// The web app's page for the selected issue (`model::web_issue_url`).
+    pub fn issue_url(&self) -> Result<String, NoLink> {
+        let (Some(id), Some(db)) = (self.issue.as_deref(), self.project.as_deref()) else {
+            return Err(NoLink::NoIssue);
+        };
+        let base = self.web.as_deref().ok_or(NoLink::NoWebAddress)?;
+        web_issue_url(base, db, id).ok_or(NoLink::Unlisted)
+    }
+
+    /// The selected issue as a Markdown link to its web page.
+    pub fn issue_markdown(&self) -> Result<String, NoLink> {
+        let url = self.issue_url()?;
+        let id = self.issue.as_deref().unwrap_or_default();
+        Ok(markdown_link(id, self.issue_title(), &url))
+    }
+
+    /// Say briefly that an action happened, or why it could not. A newer
+    /// notice replaces the one showing and gets its own full time.
+    pub fn notify(&mut self, done: bool, title: impl Into<String>, detail: Option<String>) {
+        self.notice = Some(Notice { title: title.into(), done, detail, until: None });
+    }
+
     // -- The window's own refresh --------------------------------------------------------------
 
     /// Re-read everything on screen without being asked. Unlike `refresh`
@@ -971,6 +1058,13 @@ impl State {
             self.refresh_quietly();
             changed = true;
         }
+        if let Some(notice) = &mut self.notice {
+            let until = *notice.until.get_or_insert(self.now + NOTICE_SECS);
+            if self.now >= until {
+                self.notice = None;
+                changed = true;
+            }
+        }
         let age = self.age().map(|(n, _)| n);
         if age != self.age_drawn {
             self.age_drawn = age;
@@ -987,8 +1081,9 @@ impl State {
             let (age, unit) = (self.now - at, if self.now - at < 3600.0 { 60.0 } else { 3600.0 });
             unit - age % unit
         });
+        let notice = self.notice.as_ref().and_then(|n| n.until).map(|until| until - self.now);
         // Never sooner than a moment, so rounding at a boundary cannot spin the loop.
-        [refresh, words].into_iter().flatten().reduce(f64::min).map(|wait| wait.max(0.05))
+        [refresh, words, notice].into_iter().flatten().reduce(f64::min).map(|wait| wait.max(0.05))
     }
 
     /// The window gained or lost focus (`App::on_focus`). Coming back is
@@ -1039,7 +1134,7 @@ impl State {
 
     pub fn open_connection(&mut self) {
         if self.connection.is_none() {
-            self.connection = Some(Connection::new(&self.env, Stored::load(&self.prefs).as_ref()));
+            self.connection = Some(Connection::new(&self.env, Stored::load(&self.prefs).as_ref(), self.web.as_deref()));
         }
     }
 
@@ -1069,6 +1164,11 @@ impl State {
     /// taken from the environment: what a test or a save would connect to.
     fn connection_target(&mut self) -> Option<Stored> {
         let form = self.connection.as_mut()?;
+        if let Err(e) = settings::parse_web(&form.web.text) {
+            form.check = Check::Idle;
+            form.error = Some(e);
+            return None;
+        }
         match Stored::parse(&form.host.text, &form.port.text, &form.user.text) {
             Ok(typed) => {
                 let config = self.env.config(Some(&typed))?;
@@ -1134,13 +1234,16 @@ impl State {
     }
 
     fn finish_save(&mut self, target: Stored) {
-        if target.save(&mut self.prefs).is_err() {
+        // Checked by `connection_target` before the save began.
+        let web = self.connection.as_ref().and_then(|f| settings::parse_web(&f.web.text).ok()).flatten();
+        if settings::save_web(&mut self.prefs, web.as_deref()).is_err() || target.save(&mut self.prefs).is_err() {
             if let Some(form) = &mut self.connection {
                 form.saving = false;
                 form.error = Some(FormError::File);
             }
             return;
         }
+        self.web = web;
         self.close_connection();
         self.connect(target.config());
     }
@@ -1497,6 +1600,60 @@ mod tests {
         assert_eq!((saved.host.as_str(), saved.port, saved.user.as_str()), ("127.0.0.1", 1, "reader"));
         assert_eq!(s.source.label(), "Dolt 127.0.0.1:1");
         assert_eq!((&s.projects, &s.project), (&Load::Loading, &None), "the window starts over on the new server");
+    }
+
+    #[test]
+    fn the_web_address_is_saved_with_the_connection_and_checked_first() {
+        let mut s = State::launch(backing(Env::default(), Arc::new(MemoryStore::default())));
+        type_into(&mut s, "127.0.0.1", "1", "reader", "");
+        s.connection.as_mut().unwrap().web.replace_text("beads.example");
+        s.save_connection();
+        let form = s.connection.as_ref().expect("an address without a scheme keeps the form open");
+        assert_eq!(form.error, Some(FormError::Web));
+        assert_eq!(Stored::load(&s.prefs), None, "nothing is saved while a field is wrong");
+
+        s.connection.as_mut().unwrap().web.replace_text("https://beads.example/");
+        s.save_connection();
+        assert!(s.connection.is_none());
+        assert_eq!(s.web.as_deref(), Some("https://beads.example"));
+        assert_eq!(settings::load_web(&s.prefs).as_deref(), Some("https://beads.example"));
+        s.open_connection();
+        assert_eq!(s.connection.as_ref().unwrap().web.text, "https://beads.example", "the form shows it again");
+    }
+
+    /// The links follow the web app's issue route and use only what is on
+    /// screen: no request is made for them.
+    #[test]
+    fn issue_links_need_a_selection_and_a_web_address() {
+        let mut s = loaded();
+        assert_eq!(s.issue_url(), Err(NoLink::NoIssue));
+        s.select_issue("lh-2");
+        assert_eq!(s.issue_url(), Err(NoLink::NoWebAddress));
+        s.web = Some("https://beads.example".into());
+        assert_eq!(s.issue_url().as_deref(), Ok("https://beads.example/p/d_lighthouse/i/lh-2"));
+        let title = &Sample.issues("lighthouse").unwrap().into_iter().find(|i| i.id == "lh-2").unwrap().title;
+        assert_eq!(
+            s.issue_markdown(),
+            Ok(format!("[lh-2: {title}](https://beads.example/p/d_lighthouse/i/lh-2)")),
+            "the title comes from the row before the issue's pane lands"
+        );
+        s.project = Some("Not-Listed".into());
+        assert_eq!(s.issue_url(), Err(NoLink::Unlisted));
+    }
+
+    #[test]
+    fn a_notice_goes_after_its_time_and_a_newer_one_starts_over() {
+        let mut s = loaded();
+        s.tick(10.0);
+        s.notify(true, "Copied the id", Some("lh-1".into()));
+        assert!(!s.tick(10.1), "the first tick only starts its clock");
+        assert_eq!(s.next_tick().map(|w| (w * 10.0).round() / 10.0), Some(NOTICE_SECS));
+        s.tick(11.0);
+        s.notify(true, "Copied a Markdown link", None);
+        s.tick(12.0);
+        assert!(s.notice.is_some(), "replaced at 11, so it has its own time");
+        assert!(s.tick(12.0 + NOTICE_SECS));
+        assert_eq!(s.notice, None);
     }
 
     #[test]

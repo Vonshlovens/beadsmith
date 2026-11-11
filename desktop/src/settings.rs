@@ -54,6 +54,12 @@ pub fn save_refresh(prefs: &mut Prefs, secs: u32) -> Result<(), PrefsError> {
     prefs.set(REFRESH_KEY, &secs)
 }
 
+/// Where the Beadsmith web app for this server is served, such as
+/// `https://beads.example`: the base of the links "Copy Link" and "Open in
+/// Beadsmith Web" make. Optional, because the desktop app reads Dolt
+/// directly and needs no web app; without it those two actions are absent.
+const WEB_KEY: &str = "web.url";
+
 /// The window's content size in points when nothing is remembered, and the
 /// smallest it goes: below that the table's columns no longer fit.
 pub const DEFAULT_WINDOW: (f32, f32) = (1440.0, 880.0);
@@ -147,6 +153,43 @@ impl Session {
     }
 }
 
+/// The saved web address, already checked by `parse_web`. One that no
+/// longer passes (a hand-edited file) is no address, so no link is ever made
+/// from it.
+pub fn load_web(prefs: &Prefs) -> Option<String> {
+    prefs.get::<String>(WEB_KEY).and_then(|url| parse_web(&url).ok().flatten())
+}
+
+pub fn save_web(prefs: &mut Prefs, url: Option<&str>) -> Result<(), PrefsError> {
+    match url {
+        _ if prefs.get::<String>(WEB_KEY).as_deref() == url => Ok(()),
+        Some(url) => prefs.set(WEB_KEY, &url.to_string()),
+        None => prefs.remove(WEB_KEY),
+    }
+}
+
+/// The web address as typed in the connection form: blank for none, else an
+/// `http` or `https` address with a host and no query or fragment, kept
+/// without its trailing slash so a route can be appended to it. A path is
+/// allowed, for a web app served under one.
+pub fn parse_web(text: &str) -> Result<Option<String>, FormError> {
+    let url = text.trim().trim_end_matches('/');
+    if url.is_empty() {
+        return Ok(None);
+    }
+    let lower = url.to_ascii_lowercase();
+    let rest = ["https://", "http://"]
+        .iter()
+        .find_map(|scheme| lower.starts_with(scheme).then(|| &url[scheme.len()..]))
+        .ok_or(FormError::Web)?;
+    let host = rest.split('/').next().unwrap_or_default();
+    let bad = |c: char| c.is_whitespace() || c.is_control() || matches!(c, '?' | '#' | '"' | '<' | '>' | '\\');
+    if host.is_empty() || host.starts_with(':') || rest.contains(bad) {
+        return Err(FormError::Web);
+    }
+    Ok(Some(url.to_string()))
+}
+
 /// The connection the settings file holds. No password: see the module docs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stored {
@@ -205,6 +248,8 @@ impl Stored {
 pub enum FormError {
     Host,
     Port,
+    /// The web address is not an http or https address.
+    Web,
     /// The keychain refused the password, or this platform has none.
     Keychain,
     /// The settings file could not be written.
@@ -216,6 +261,7 @@ impl FormError {
         match self {
             FormError::Host => "Enter the server's host name or address.",
             FormError::Port => "The port must be a number from 1 to 65535.",
+            FormError::Web => "The web address must start with http:// or https:// and name a host.",
             FormError::Keychain if cfg!(target_os = "macos") => "The password could not be saved to the Keychain.",
             FormError::Keychain => "This build cannot store a password. Set BEADS_DOLT_PASSWORD_FILE instead.",
             FormError::File => "The settings file could not be written.",
@@ -411,6 +457,39 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("beadsmith-desktop-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir.join("prefs.json")
+    }
+
+    #[test]
+    fn a_web_address_is_http_with_a_host_and_loses_its_trailing_slash() {
+        assert_eq!(parse_web("  "), Ok(None));
+        assert_eq!(parse_web(" https://beads.example/ "), Ok(Some("https://beads.example".into())));
+        assert_eq!(parse_web("HTTP://127.0.0.1:5173"), Ok(Some("HTTP://127.0.0.1:5173".into())));
+        assert_eq!(parse_web("https://host.example/beads//"), Ok(Some("https://host.example/beads".into())));
+        for bad in [
+            "beads.example",
+            "ftp://beads.example",
+            "javascript:alert(1)",
+            "https://",
+            "https:///p",
+            "https://:80",
+            "https://beads example",
+            "https://beads.example/?q=1",
+            "https://beads.example/#top",
+        ] {
+            assert_eq!(parse_web(bad), Err(FormError::Web), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_web_address_round_trips_and_a_damaged_one_is_none() {
+        let mut prefs = Prefs::memory();
+        assert_eq!(load_web(&prefs), None);
+        save_web(&mut prefs, Some("https://beads.example")).unwrap();
+        assert_eq!(load_web(&prefs).as_deref(), Some("https://beads.example"));
+        save_web(&mut prefs, None).unwrap();
+        assert_eq!(load_web(&prefs), None);
+        prefs.set(WEB_KEY, &"file:///etc/passwd".to_string()).unwrap();
+        assert_eq!(load_web(&prefs), None, "a hand-edited file cannot make a link of another scheme");
     }
 
     #[test]

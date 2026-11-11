@@ -28,6 +28,10 @@ The decision record is
   criteria and notes, labels, dependencies both ways and comments. A
   dependency is a link: follow it, and the ones after it, then come back the
   way you came with the arrows above the issue or `⌘[` and `⌘]`.
+- Hands an issue on: copy its id (`y`), copy a Markdown link to its page in
+  the Beadsmith web app (`⇧Y`) or open that page (`⇧O`), from the buttons
+  above the issue, the Issue menu or the keys. See
+  [Links to the web app](#links-to-the-web-app).
 - Jumps anywhere with quick open (`⌘K`): type a project's name, or an issue's
   id or part of its title, and go to it in whichever project holds it. See
   [Quick open](#quick-open).
@@ -163,6 +167,19 @@ in both themes.
 - Below 1280 points wide the table drops its Type and Assignee columns (the
   detail pane shows both) so titles keep their room.
 
+## Links to the web app
+
+The desktop app reads Dolt itself and needs no web app, but a team that runs
+one shares issues by its links. Give its address (for example
+`https://beads.example`) under Web address in Connection Settings and the
+issue pane offers Copy link and Open in web beside Copy ID; without one only
+Copy ID shows, and `⇧Y` or `⇧O` says where to add it. A link is the web
+app's issue page, `<address>/p/d_<database>/i/<issue id>`
+([`src/routes/p/[id]/i/[issue_id]`](../src/routes/p/%5Bid%5D/i/%5Bissue_id%5D/+page.svelte)),
+and a copied Markdown link reads `[lh-1: Title](<link>)`. These actions use
+what is already on screen: nothing is read from or written to the server,
+and the browser, not this app, signs in to the web app.
+
 ## Keyboard
 
 Every action is reachable without a pointer. Keys follow the web app's
@@ -176,6 +193,9 @@ is Ctrl off macOS. Plain keys never fire while you type in a field.
 | `k` / `↑`            | Previous issue                                                                 |
 | `Home` / `End`       | First or last issue                                                            |
 | `o` / `Enter`        | Read the selected issue                                                        |
+| `y`                  | Copy the selected issue's id                                                   |
+| `⇧Y`                 | Copy a Markdown link to it in the web app                                      |
+| `⇧O`                 | Open it in the web app                                                         |
 | `s`                  | Sort by the next column                                                        |
 | `⇧S`                 | Reverse the sort                                                               |
 | `/` / `⌘F`           | Filter issues                                                                  |
@@ -367,6 +387,7 @@ scripts/bundle-macos.sh package      # target/bundle/Beadsmith-<version>-macos-<
 | What                | Where                                                                                                                                                             |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Host, port and user | `prefs.json` in the OS config folder: `~/Library/Application Support/Beadsmith` on macOS, `$XDG_CONFIG_HOME/Beadsmith` on Linux, `%APPDATA%\Beadsmith` on Windows |
+| Web app address     | `web.url` in the same `prefs.json` (see [Links to the web app](#links-to-the-web-app))                                                                            |
 | Refresh interval    | `refresh.seconds` in the same `prefs.json` (see [Automatic refresh](#automatic-refresh))                                                                          |
 | The view            | `view.*`, `ui.theme` and `window.size` in the same `prefs.json` (see [What a relaunch remembers](#what-a-relaunch-remembers))                                     |
 | Password, on macOS  | The login Keychain, as a generic password named `Beadsmith Dolt` with the account `user@host:port`                                                                |

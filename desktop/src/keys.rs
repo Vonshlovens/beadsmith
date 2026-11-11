@@ -69,6 +69,12 @@ pub enum Command {
     TrailBack,
     /// Forward again after `TrailBack`.
     TrailForward,
+    /// Copy the selected issue's id, as `y` does on the web issue page.
+    CopyId,
+    /// Copy a Markdown link to the selected issue's web page.
+    CopyLink,
+    /// Open the selected issue's web page in the browser.
+    OpenWeb,
     CloseWindow,
     Quit,
 }
@@ -138,6 +144,11 @@ pub fn command(key: &KeyEvent, pane: Pane, typing: bool) -> Option<Command> {
             "l" if !reading => Some(Command::Lane(1)),
             "v" => Some(Command::SwitchLayout),
             "o" => Some(Command::Open),
+            // The web issue page's key, and its capital for the link.
+            "y" => Some(Command::CopyId),
+            "Y" => Some(Command::CopyLink),
+            // `o` reads the issue here; the capital reads it over there.
+            "O" => Some(Command::OpenWeb),
             "/" => Some(Command::Filter),
             "r" => Some(Command::Refresh),
             "s" => Some(Command::SortNext),
@@ -267,8 +278,44 @@ pub fn run(s: &mut State, command: Command, tx: &mut Tx) -> bool {
             let Some(id) = moved else { return false };
             reveal(s, &id, tx);
         }
+        Command::CopyId | Command::CopyLink | Command::OpenWeb => return issue_action(s, command, tx),
         Command::CloseWindow => tx.close_window(),
         Command::Quit => tx.quit(),
+    }
+    true
+}
+
+/// Copy from or open the selected issue. Nothing here reaches the server:
+/// the id, title and project are already on screen, and the link is built
+/// from the saved web address (`State::issue_url`). Each says what it did in
+/// a notice, or why it could not; with no issue selected the key passes on.
+fn issue_action(s: &mut State, command: Command, tx: &mut Tx) -> bool {
+    let Some(id) = s.issue.clone() else { return false };
+    match command {
+        Command::CopyId => {
+            tx.copy(id.clone());
+            s.notify(true, "Copied the id", Some(id));
+        }
+        Command::CopyLink => match s.issue_markdown() {
+            Ok(link) => {
+                tx.copy(link.clone());
+                s.notify(true, "Copied a Markdown link", Some(link));
+            }
+            Err(why) => s.notify(false, "No link to the web app", Some(why.message().into())),
+        },
+        _ => match s.issue_url() {
+            // The browser coming forward is the confirmation.
+            Ok(url) => {
+                if tx.open_url(&url).is_err() {
+                    s.notify(false, "Could not open the link", Some(url));
+                }
+            }
+            Err(why) => s.notify(false, "No link to the web app", Some(why.message().into())),
+        },
+    }
+    // The notice's clock starts on the next `poll` (`State::tick`).
+    if s.notice.is_some() {
+        tx.wake_after(std::time::Duration::ZERO);
     }
     true
 }
@@ -419,6 +466,9 @@ pub fn menu() -> Vec<MenuItem<State>> {
         MenuItem::separator().menu("Go"),
         keyed("Back Along Links", |s, tx| perform(s, Command::TrailBack, tx), "cmd+[").menu("Go"),
         keyed("Forward Along Links", |s, tx| perform(s, Command::TrailForward, tx), "cmd+]").menu("Go"),
+        MenuItem::new("Copy Issue ID", |s, tx| perform(s, Command::CopyId, tx)).menu("Issue"),
+        MenuItem::new("Copy Markdown Link", |s, tx| perform(s, Command::CopyLink, tx)).menu("Issue"),
+        MenuItem::new("Open in Beadsmith Web", |s, tx| perform(s, Command::OpenWeb, tx)).menu("Issue"),
         MenuItem::new("Keyboard Shortcuts", |s, tx| perform(s, Command::Shortcuts, tx)).menu("Help"),
     ]
 }
@@ -436,6 +486,9 @@ pub const SHORTCUTS: &[(&str, &[Shortcut])] = &[
             (&["k", "↑"], "Previous issue"),
             (&["Home", "End"], "First or last issue"),
             (&["o", "Enter"], "Read the selected issue"),
+            (&["y"], "Copy the selected issue's id"),
+            (&["⇧Y"], "Copy a Markdown link to it in the web app"),
+            (&["⇧O"], "Open it in the web app"),
             (&["s"], "Sort by the next column"),
             (&["⇧S"], "Reverse the sort"),
             (&["/", "⌘F"], "Filter issues"),
@@ -512,6 +565,9 @@ mod tests {
         assert_eq!(list(Key::Left.into()), Some(Command::Lane(-1)));
         assert_eq!(list(text("l")), Some(Command::Lane(1)));
         assert_eq!(list(Key::Right.into()), Some(Command::Lane(1)));
+        assert_eq!(list(text("y")), Some(Command::CopyId));
+        assert_eq!(list(text("Y")), Some(Command::CopyLink));
+        assert_eq!(list(text("O")), Some(Command::OpenWeb));
         assert_eq!(list(text("x")), None);
     }
 
@@ -556,9 +612,18 @@ mod tests {
         assert_eq!(typing(cmd('[')), Some(Command::TrailBack));
         assert_eq!(typing(cmd(']')), Some(Command::TrailForward));
         assert_eq!(typing(Key::Escape.into()), Some(Command::Back));
-        for key in
-            [text("j"), text("r"), text("/"), text("?"), text("v"), text("h"), Key::Down.into(), Key::Enter.into()]
-        {
+        for key in [
+            text("j"),
+            text("r"),
+            text("/"),
+            text("?"),
+            text("v"),
+            text("h"),
+            text("y"),
+            text("O"),
+            Key::Down.into(),
+            Key::Enter.into(),
+        ] {
             assert_eq!(typing(key), None);
         }
         let shifted = KeyEvent { key: Key::Command('r'), mods: Mods { cmd: true, shift: true, ..Mods::default() } };
@@ -574,6 +639,7 @@ mod tests {
         assert!(!Command::Refresh.repeats() && !Command::Open.repeats() && !Command::Back.repeats());
         assert!(!Command::TrailBack.repeats() && !Command::TrailForward.repeats());
         assert!(!Command::QuickOpen.repeats());
+        assert!(!Command::CopyId.repeats() && !Command::CopyLink.repeats() && !Command::OpenWeb.repeats());
     }
 
     #[test]

@@ -225,6 +225,7 @@ fn connection_filled(s: &mut State) {
     form.host.replace_text("dolt.example");
     form.user.replace_text("reader");
     form.password.replace_text("not a real password");
+    form.web.replace_text("https://beads.example");
 }
 
 fn connection_testing_scene(s: &mut State) {
@@ -306,6 +307,21 @@ fn trail_gone_scene(s: &mut State) {
 fn reading_scene(s: &mut State) {
     sample_scene(s);
     s.pane = Pane::Detail;
+}
+
+/// The web app's address is saved, so the issue offers its link beside its
+/// id, and a Markdown link has just been copied (`y`, `⇧Y`, `⇧O`).
+fn issue_link_scene(s: &mut State) {
+    sample_scene(s);
+    s.web = Some("https://beads.example".into());
+    let link = s.issue_markdown().unwrap_or_default();
+    s.notify(true, "Copied a Markdown link", Some(link));
+}
+
+/// `⇧Y` with no web address saved: the notice says where to add one.
+fn issue_no_link_scene(s: &mut State) {
+    sample_scene(s);
+    s.notify(false, "No link to the web app", Some(app::NoLink::NoWebAddress.message().into()));
 }
 
 /// The theme chosen in the window, whatever the system's: the title bar's
@@ -417,6 +433,8 @@ fn main() {
             ("dependencies", dependencies_scene),
             ("trail-gone", trail_gone_scene),
             ("reading", reading_scene),
+            ("issue-link", issue_link_scene),
+            ("issue-no-link", issue_no_link_scene),
             ("theme-light", theme_light_scene),
             ("theme-dark", theme_dark_scene),
             ("shortcuts", shortcuts_scene),

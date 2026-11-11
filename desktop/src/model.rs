@@ -263,6 +263,54 @@ impl Source for Unconfigured {
     }
 }
 
+/// The web app's page for an issue, under `base` (a checked web address,
+/// `settings::parse_web`). The route is the web app's issue page,
+/// `src/routes/p/[id]/i/[issue_id]/+page.svelte`, whose project id is the
+/// database name behind `d_` (`serverProjectId` in
+/// `src/lib/server/discovery.ts`). None for a database the web app does not
+/// list (`DB_NAME_PATTERN` in `src/lib/server/dolt/names.ts`), whose link
+/// would only lead to a "not found" page.
+pub fn web_issue_url(base: &str, database: &str, id: &str) -> Option<String> {
+    let listed = (1..=64).contains(&database.len())
+        && database.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+    listed.then(|| format!("{base}/p/d_{database}/i/{}", percent_encode(id)))
+}
+
+/// `s` with everything but URL-unreserved characters percent-encoded, as
+/// `encodeURIComponent` would: Beads ids are letters, digits, `-`, `_` and
+/// `.`, so a real id passes through unchanged.
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// A Markdown link to an issue, `[lh-1: Title](url)` (`[lh-1](url)` while
+/// the title is unknown), for pasting into a note, a pull request or a chat.
+/// Characters that would end the link text early or start formatting are
+/// escaped, so any title reads as written.
+pub fn markdown_link(id: &str, title: Option<&str>, url: &str) -> String {
+    let words = match title {
+        Some(title) => format!("{id}: {title}"),
+        None => id.to_string(),
+    };
+    let mut text = String::with_capacity(words.len());
+    for c in words.chars() {
+        if matches!(c, '\\' | '[' | ']' | '*' | '_' | '`' | '<' | '>') {
+            text.push('\\');
+        }
+        // A line break would end the paragraph and so the link.
+        text.push(if c == '\n' || c == '\r' { ' ' } else { c });
+    }
+    format!("[{text}]({url})")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,6 +323,38 @@ mod tests {
         c.add("deferred", 1);
         assert_eq!((c.open, c.closed, c.total, c.active()), (3, 2, 6, 4));
     }
+
+    /// The web app's issue route: `/p/d_<database>/i/<issue id>`.
+    #[test]
+    fn web_links_follow_the_web_apps_issue_route() {
+        let base = "https://beads.example";
+        assert_eq!(
+            web_issue_url(base, "lighthouse", "lh-1").as_deref(),
+            Some("https://beads.example/p/d_lighthouse/i/lh-1")
+        );
+        assert_eq!(
+            web_issue_url("http://h.example/beads", "my_db2", "pa-2.1").as_deref(),
+            Some("http://h.example/beads/p/d_my_db2/i/pa-2.1")
+        );
+        assert_eq!(web_issue_url(base, "lh", "a b/c").as_deref(), Some("https://beads.example/p/d_lh/i/a%20b%2Fc"));
+        for unlisted in ["", "Upper", "with-dash", &"x".repeat(65)] {
+            assert_eq!(web_issue_url(base, unlisted, "lh-1"), None, "{unlisted}");
+        }
+    }
+
+    #[test]
+    fn markdown_links_escape_the_title() {
+        assert_eq!(
+            markdown_link("lh-1", Some("Ship it"), "https://b.example/x"),
+            "[lh-1: Ship it](https://b.example/x)"
+        );
+        assert_eq!(
+            markdown_link("lh-2", Some("Fix [the] *bold* `code` \\ path_name\nnext"), "u"),
+            "[lh-2: Fix \\[the\\] \\*bold\\* \\`code\\` \\\\ path\\_name next](u)"
+        );
+        assert_eq!(markdown_link("lh_3", None, "u"), "[lh\\_3](u)");
+    }
+
     #[test]
     fn dep_groups_split_links_by_type_and_direction() {
         let link = |id: &str, kind: Option<&str>| IssueRef {
