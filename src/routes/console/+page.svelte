@@ -218,8 +218,6 @@
 						{/if}
 						<span class="faint"> · {armed ? 'armed' : 'disarmed'}</span>
 					</dd>
-					<dt>Model pool</dt>
-					<dd><a href="/console/model-pool">Underclass accounts and quota</a></dd>
 				</dl>
 				<div class="arm-row">
 					<button
@@ -465,8 +463,19 @@
 		</section>
 	{/if}
 
-	<!-- Accounts and backups do not depend on Dolt being reachable, so they
-	     render even when the snapshot above failed. -->
+	<!-- The model pool, accounts and backups do not depend on Dolt being
+	     reachable, so they render even when the snapshot above failed: an
+	     operator whose catalog is down can still check Underclass quota. -->
+	<section class="sec" aria-labelledby="console-model-pool">
+		<div class="sec-hd">
+			<span class="lbl" id="console-model-pool">Model pool</span><span class="rule"></span>
+		</div>
+		<div class="panel card-pad pool-row">
+			<p class="hint">Underclass accounts, quota and recent attempts for launched agents.</p>
+			<a class="btn btn-sm" href="/console/model-pool">Open model pool</a>
+		</div>
+	</section>
+
 	<section class="sec" aria-labelledby="console-accounts">
 		<div class="sec-hd">
 			<span class="lbl" id="console-accounts">Accounts</span><span class="rule"></span>
@@ -549,6 +558,16 @@
 		gap: var(--s-3);
 		flex-wrap: wrap;
 		margin-top: var(--s-4);
+	}
+	.pool-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--s-3);
+		flex-wrap: wrap;
+	}
+	.pool-row .hint {
+		margin: 0;
 	}
 	.arm-help {
 		margin: 0;

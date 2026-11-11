@@ -4,8 +4,8 @@ Agents that Beadsmith launches can reach their models through
 [Underclass](https://github.com/ghuntley/underclass), which pools several
 model subscriptions behind one endpoint and moves work between them as their
 quotas fill ([ADR-0022](../specs/decisions/0022-underclass-model-gateway.md)).
-The console's **Model pool** page (`/console/model-pool`, linked from the
-Dispatch row of the console's Health panel) shows that pool to admins, so you
+The console's **Model pool** page (`/console/model-pool`, linked from its own
+section of the console, which renders even when Dolt is unreachable) shows that pool to admins, so you
 can tell whether it can take more work, and which account is holding it back,
 without opening Underclass's own interface.
 
