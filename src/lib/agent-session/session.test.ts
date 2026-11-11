@@ -394,6 +394,29 @@ describe('AgentSession attach', () => {
 		expect(fake.core.terminals.size).toBe(1);
 	});
 
+	it('replays a finished turn between its marks without touching the terminal', async () => {
+		const fake = new FakeClaude();
+		const { session: starter, events: live } = session();
+		await starter.start(await open(fake.core));
+		const mark = await starter.send('One');
+		await until(() => results(live).length === 1);
+		await starter.send('Two');
+		await until(() => results(live).length === 2);
+		const first = live.slice(0, live.indexOf(results(live)[0]));
+		const end = parseSessionEventId(results(live)[0].id)!.line;
+		const calls = fake.core.calls.length;
+
+		const { session: s, events } = session();
+		expect(await s.replay(await open(fake.core), mark, end)).toBe(end);
+		expect(events).toEqual(first);
+		const methods = fake.core.calls.slice(calls).map((c) => c.method);
+		expect(new Set(methods)).toEqual(new Set(['file.read']));
+
+		const { session: resumed, events: rest } = session({ after: first[0].id });
+		await resumed.replay(await open(fake.core), mark, end);
+		expect(rest).toEqual(first.slice(1));
+	});
+
 	it('launches a fresh CLI when nothing ran yet and starts reading at the end', async () => {
 		const fake = new FakeClaude();
 		const { session: s, events } = session();

@@ -25,7 +25,9 @@
  *   `turn.json`. The CLI runs on in its terminal with nobody connected.
  * - Status and live events attach a session core to that mark; it says when
  *   the turn ended and how. The first to see the end writes `result.json`,
- *   which later reads return without touching hc. A finished run gets a short
+ *   which later status reads return without touching hc. A stream of a
+ *   finished run replays the turn's transcript lines (from the mark to the
+ *   line the result's event id names) and then that result. A finished run gets a short
  *   idle timeout, after which the sandbox pauses (not billed); a follow-up
  *   resumes it with the CLI still in its terminal.
  *
@@ -829,7 +831,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		info: SandboxInfo,
 		run_id: string,
 		redact: string
-	): Promise<{ done?: StoredResult; turn?: TurnMark }> {
+	): Promise<{ done?: StoredResult; turn?: TurnMark; files?: RunFiles }> {
 		let files = await readRun(sandbox, run_id);
 		if (sessionIdOf(info) === undefined && settledUpdate(files) === undefined) {
 			return {
@@ -850,9 +852,61 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			if (done.status === 'failed' && files.exit_code !== undefined && files.result === undefined) {
 				await logSetupFailure(sandbox, run_id, files.exit_code, redact);
 			}
-			return { done };
+			return { done, files };
 		}
 		return { turn: files.turn };
+	}
+
+	/**
+	 * The last transcript line of a finished run's turn. The result's event
+	 * id names it (the session core gives its own events the last line it
+	 * read). A run cancelled before a result was stored has none: then the
+	 * next run's turn starts after it, and with no next turn the
+	 * transcript's current end is still this run's.
+	 */
+	async function turnEndLine(
+		sandbox: SandboxRef,
+		run_id: string,
+		files: RunFiles
+	): Promise<number | undefined> {
+		const stored = parseSessionEventId(files.result?.event_id);
+		if (stored !== undefined) return stored.line;
+		const next = await readRun(sandbox, `r${runNumber(run_id) + 1}`);
+		return next.turn === undefined ? undefined : next.turn.first_line - 1;
+	}
+
+	/**
+	 * Emit a finished run's transcript events (those after `after`) by
+	 * reading the transcript between its turn's first and last lines. Returns
+	 * the last line read, or undefined when the run had no turn to replay.
+	 * A transcript that cannot be read leaves the stream with its result only.
+	 */
+	async function replayTurn(
+		sandbox: SandboxRef,
+		info: SandboxInfo,
+		run_id: string,
+		files: RunFiles,
+		redact: string,
+		on_event: (event: MissionEvent) => Promise<void>,
+		after: string | undefined
+	): Promise<number | undefined> {
+		if (files.turn === undefined || sessionIdOf(info) === undefined) return undefined;
+		const end = await turnEndLine(sandbox, run_id, files);
+		const events: MissionEvent[] = [];
+		let client: HcClient | undefined;
+		let last: number;
+		try {
+			client = await connectHc(sandbox);
+			const session = newSession(info, redact, (event) => void events.push(event), { after });
+			last = await session.replay(client, files.turn, end);
+		} catch (error) {
+			log(`Sand mission ${sandbox.id}/${run_id}: transcript replay failed: ${String(error)}`);
+			return undefined;
+		} finally {
+			client?.close();
+		}
+		for (const event of events) await on_event(event);
+		return last;
 	}
 
 	// ---------------------------------------------------------------- loops
@@ -1539,13 +1593,31 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			const signal = options.signal;
 			const seen = parseSessionEventId(options.last_event_id);
 
-			/** A run that ended before (or without) a turn to follow: its stored result. */
-			const finish = async (done: StoredResult): Promise<AgentStreamOutcome> => {
+			/**
+			 * A run that ended before the stream got to follow it: its turn's
+			 * transcript replayed, then its stored result.
+			 */
+			const finish = async (done: StoredResult, files?: RunFiles): Promise<AgentStreamOutcome> => {
+				const replayed =
+					files === undefined
+						? undefined
+						: await replayTurn(
+								sandbox,
+								info,
+								run_id,
+								files,
+								redact,
+								on_event,
+								options.last_event_id
+							);
 				const stored = parseSessionEventId(done.event_id);
+				// Without a stored id, the result sorts after the replayed lines and the client's last id.
+				const line = Math.max(seen?.line ?? 0, replayed ?? 0);
+				const index = seen?.line === line ? seen.index + 1 : 0;
 				const id =
 					done.event_id !== undefined && stored !== undefined
 						? done.event_id
-						: `${seen?.line ?? 0}.${Math.max(SYNTHETIC_INDEX, (seen?.index ?? 0) + 1)}`;
+						: `${line}.${Math.max(SYNTHETIC_INDEX, index)}`;
 				const already =
 					stored !== undefined &&
 					seen !== undefined &&
@@ -1568,7 +1640,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			for (;;) {
 				if (signal?.aborted === true) return 'disconnected';
 				const step = await advance(sandbox, info, run_id, redact);
-				if (step.done !== undefined) return finish(step.done);
+				if (step.done !== undefined) return finish(step.done, step.files);
 				if (step.turn !== undefined) {
 					turn = step.turn;
 					break;

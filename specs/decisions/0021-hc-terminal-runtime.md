@@ -247,7 +247,10 @@ Shipped:
   (`attach` with `relaunch: false` for reads, so a lost terminal fails the
   turn instead of starting the CLI). The CLI session id is sandbox
   metadata; a follow-up is the next message to the running CLI. A stream of
-  a finished run sends its stored result only. The dispatch stream-json
+  a finished run replays its turn's transcript lines (`AgentSession.replay`,
+  file reads only) from the turn mark's first line to the line the stored
+  result's event id names, then the stored result, so a follow-up's events
+  never appear in an earlier run's thread. The dispatch stream-json
   mapping is gone.
 - First Mate chats run on the session core on both runners
   (`src/lib/mate-runner/session.ts`, `ChatAgent`), and the mate runner's

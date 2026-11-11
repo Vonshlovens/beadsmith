@@ -708,7 +708,12 @@ describe('E2B provider', () => {
 		const result = JSON.parse(sandboxes.get('sbx1')!.file('r1', 'result.json')!);
 		expect(result).toMatchObject({ status: 'succeeded', event_id: events.at(-1)!.id });
 
-		// A finished run replays only its stored result, unless the client has it.
+		// A finished run replays its transcript and result, from after what the client has.
+		const replay: MissionEvent[] = [];
+		expect(
+			await provider.streamMissionEvents!('sbx1', 'r1', async (e) => void replay.push(e))
+		).toBe('terminal');
+		expect(replay).toEqual(events);
 		const again: MissionEvent[] = [];
 		const after = events[1].id;
 		expect(
@@ -716,12 +721,55 @@ describe('E2B provider', () => {
 				last_event_id: after
 			})
 		).toBe('terminal');
-		expect(again).toEqual([events.at(-1)]);
+		expect(again).toEqual(events.slice(2));
 		const none: MissionEvent[] = [];
 		await provider.streamMissionEvents!('sbx1', 'r1', async (e) => void none.push(e), {
 			last_event_id: events.at(-1)!.id
 		});
 		expect(none).toEqual([]);
+	});
+
+	it('replays a finished run without the runs after it', async () => {
+		const { provider, claude } = setup();
+		await provider.launch(TACKLE);
+		await provider.getRun('sbx1', 'r1');
+		expect(await provider.createRun!('sbx1', 'Now add tests')).toEqual({ run_id: 'r2' });
+		expect((await provider.getRun('sbx1', 'r2')).status).toBe('succeeded');
+
+		const first: MissionEvent[] = [];
+		const second: MissionEvent[] = [];
+		await provider.streamMissionEvents!('sbx1', 'r1', async (e) => void first.push(e));
+		await provider.streamMissionEvents!('sbx1', 'r2', async (e) => void second.push(e));
+		expect(first.map((e) => e.type)).toEqual(['tool_call', 'tool_call', 'assistant', 'result']);
+		expect(second.map((e) => e.type)).toEqual(['tool_call', 'tool_call', 'assistant', 'result']);
+		const line = (e: MissionEvent) => Number(e.id.split('.')[0]);
+		expect(Math.max(...first.map(line))).toBeLessThan(Math.min(...second.map(line)));
+		// The stored ids are the live ones, so the replay resumes where a client stopped.
+		expect(second.at(-1)!.id).not.toBe(first.at(-1)!.id);
+		expect(claude.sends()).toEqual(['Tackle bw-1', 'Now add tests']);
+	});
+
+	it('bounds a cancelled run with no stored result by the next run', async () => {
+		const { provider, claude, sandboxes } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		await provider.getRun('sbx1', 'r1');
+		await provider.cancelRun!('sbx1', 'r1');
+		const sandbox = sandboxes.get('sbx1')!;
+		expect(sandbox.file('r1', 'result.json')).toBeUndefined();
+
+		// Only the cancelled run's lines so far: its result sorts after them.
+		const before: MissionEvent[] = [];
+		await provider.streamMissionEvents!('sbx1', 'r1', async (e) => void before.push(e));
+		expect(before.map((e) => e.type)).toEqual(['tool_call', 'result']);
+		expect(before.at(-1)).toMatchObject({ id: '2.9000', status: 'cancelled' });
+
+		claude.auto = true;
+		expect(await provider.createRun!('sbx1', 'Try again')).toEqual({ run_id: 'r2' });
+		expect((await provider.getRun('sbx1', 'r2')).status).toBe('succeeded');
+		const after: MissionEvent[] = [];
+		await provider.streamMissionEvents!('sbx1', 'r1', async (e) => void after.push(e));
+		expect(after).toEqual(before);
 	});
 
 	it('resumes a live stream after the last id the client saw', async () => {
