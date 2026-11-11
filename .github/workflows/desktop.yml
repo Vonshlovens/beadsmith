@@ -82,6 +82,10 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
 
+      # The notices are generated from Cargo.lock (desktop/README.md, Third-party
+      # licenses); a dependency change that did not regenerate them fails here.
+      - run: scripts/third-party-notices.py --check
+
       # Every scene in both themes, on the renderer the window uses. The
       # images are uploaded so a reviewer can look at a UI change without
       # building it.

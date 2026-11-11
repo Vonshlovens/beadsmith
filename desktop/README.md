@@ -502,7 +502,8 @@ The live-server tests read, and save a connection to a scratch settings file
 and relaunch from it. The Keychain test writes one item under a test-only
 service name and deletes it.
 
-CI runs the first three and `scripts/snap-scenes.sh` on macOS and Linux for
+CI runs the first three, the notices check (see
+[Third-party licenses](#third-party-licenses)) and `scripts/snap-scenes.sh` on macOS and Linux for
 every pull request and push to `main` that touches `desktop/`
 ([`.github/workflows/desktop.yml`](../.github/workflows/desktop.yml)), and
 uploads the scene images as an artifact. It is a separate workflow from the
@@ -547,6 +548,21 @@ and the palette says the issues are missing.
 
 Rune is pre-release and asks apps to pin a revision of its `dev` branch; the
 pin is in [`Cargo.toml`](Cargo.toml).
+
+## Third-party licenses
+
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) lists every crate the
+macOS binary is built from, Rune's included, with its license, and
+reproduces the license texts that a listing alone does not satisfy. It is
+generated from `Cargo.lock`, so after any dependency change run:
+
+```sh
+scripts/third-party-notices.py          # rewrite the file
+scripts/third-party-notices.py --check  # what CI runs: fail if it is stale
+```
+
+It needs `python3` and `cargo` and lists the dependencies of the two macOS
+targets, whatever machine runs it, so it is the same file on Linux CI.
 
 ## Not done yet
 
