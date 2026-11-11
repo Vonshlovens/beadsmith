@@ -254,7 +254,7 @@ screen shows **Runs on**.
 | `BDX_E2B_MAX_RUN_MINUTES`                     | Dispatch: a run's time limit. Default 55 (E2B's free plan stops a sandbox after an hour).                                                                         |
 | `BDX_E2B_IDLE_MINUTES`                        | Dispatch: how long a finished mission waits for a follow-up before pausing. Default 10.                                                                           |
 | `BDX_E2B_MATE_IDLE_MINUTES`                   | Chats: how long a quiet chat's sandbox stays up before pausing. Default 15.                                                                                       |
-| `BDX_E2B_MATE_MAX_SESSIONS`                   | Chats: live chat processes at once; idle ones are stopped to make room. Default 3.                                                                                |
+| `BDX_E2B_MATE_MAX_SESSIONS`                   | Chats: live chat CLIs at once; idle ones are stopped to make room. Default 3.                                                                                     |
 
 Secrets are read when used and never stored in `state.db`, logged or sent to
 the browser. A missing required setting leaves that use of Sand inactive, and
@@ -262,10 +262,9 @@ the console says so (`E2B settings are incomplete`).
 
 ## Terminals (hc)
 
-Missions run interactive Claude Code in an
+Missions and chats run interactive Claude Code in an
 [hc](https://github.com/herdrdev/herdr-core) terminal
-([ADR-0021](../specs/decisions/0021-hc-terminal-runtime.md)); chats still
-start their own headless `claude -p` until they move too. The template
+([ADR-0021](../specs/decisions/0021-hc-terminal-runtime.md)). The template
 carries what the terminals need:
 
 - `hc`, the version and `linux-x86_64` SHA-256 pinned in
@@ -365,27 +364,35 @@ they have not been run against E2B yet.
 
 The chat runner is the mate runner's own core
 ([`src/lib/mate-runner/`](../src/lib/mate-runner/)) running inside
-Beadsmith, with an E2B spawner instead of SSH. The sandbox is found again by
-the chat's session id. Claude Code runs in `/home/user/mate`. Chat logs live
-under `<state dir>/sand-mate`. Deleting a chat deletes its sandbox; if E2B
-cannot be reached, the chat stays so the delete can be retried.
+Beadsmith, reaching the chat's sandbox over the E2B process channel instead
+of SSH. The sandbox is found again by the chat's session id. Claude Code
+runs interactively in an hc terminal in `/home/user/mate`, driven by the
+session core exactly as on the forge runner
+([first-mate.md](first-mate.md#how-the-runner-runs-a-chat)); `beadsmith-hc
+connect` starts the sandbox's hc core on first use, with the sandbox's
+environment. Chat logs live under `<state dir>/sand-mate`. Deleting a chat
+deletes its sandbox; if E2B cannot be reached, the chat stays so the delete
+can be retried.
 
-On every create and resume, Beadsmith writes First Mate's standing
-instructions (`AGENTS.md`) and the crew tools relay (`.crew/relay.cjs` and
-`.crew/mcp.json`) into that directory, so changing them needs no template
-rebuild. It starts the relay's serve side over the E2B commands API, then
-Claude Code with `--mcp-config`; Claude Code starts the relay's stdio side
-as an MCP server. A tool call travels as a JSON line over a unix socket to
+Whenever Beadsmith connects to a chat's sandbox (the chat's first message,
+or the first after a restart, an eviction or a lost channel), it writes
+First Mate's standing instructions (`AGENTS.md`) and the crew tools relay
+(`.crew/relay.cjs` and `.crew/mcp.json`) into that directory, so changing
+them needs no template rebuild. It ends a Claude Code left from before (it
+was talking to the old relay), starts the relay's serve side over the E2B
+commands API, then launches Claude Code with `--mcp-config` (resuming the
+session when its transcript is there); Claude Code starts the relay's stdio
+side as an MCP server. A tool call travels as a JSON line over a unix socket to
 the serve side, out on its stdout to Beadsmith, and the reply comes back on
 its stdin. Beadsmith runs the call as the chat's owner, looked up from the
 session on every call, so a deleted chat or a banned owner gets nothing. The
-relay is restarted if it exits (five times per chat process) and stopped
-with Claude Code. No token or address in the sandbox reaches Beadsmith any
+relay is restarted if it exits (five times per connection) and stopped
+with the connection. No token or address in the sandbox reaches Beadsmith any
 other way ([ADR-0020](../specs/decisions/0020-first-mate-crew-tools.md)).
 
-E2B errors and the end of Claude Code's stderr, when it exits badly, go to
-Beadsmith's server log with credential shapes stripped; the browser only
-sees a fixed message. Mission sandboxes do the same for a failed setup's
+E2B and hc errors, and a launch that fails, go to Beadsmith's server log
+with credential shapes stripped; the browser only sees a fixed message (or,
+for a CLI stopped at a first-run prompt, that the image must pre-accept it). Mission sandboxes do the same for a failed setup's
 `setup.log`.
 
 ## Costs and limits

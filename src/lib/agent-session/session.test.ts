@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { connectHc, type HcClient } from '#lib/hc/client.js';
 import type { MissionEvent } from '#lib/mission-events.js';
-import { FakeHcCore, type FakeTerminal } from '#lib/test/fake-hc.js';
+import { FakeClaude as SharedFakeClaude } from '#lib/test/fake-claude.js';
+import type { FakeHcCore, FakeTerminal } from '#lib/test/fake-hc.js';
 import { claudeCode } from './claude-code';
 import {
 	AgentSession,
@@ -15,6 +16,12 @@ import {
 const SESSION = '0b7c1f2e-3d4a-4b5c-8d6e-7f8091a2b3c4';
 const LAUNCH = { session_id: SESSION, cwd: '/home/user/run', config_dir: '/home/user/.claude' };
 const TRANSCRIPT = `/home/user/.claude/projects/-home-user-run/${SESSION}.jsonl`;
+/** The shared fake, writing this suite's transcript before any launch. */
+class FakeClaude extends SharedFakeClaude {
+	constructor() {
+		super({ transcript: TRANSCRIPT });
+	}
+}
 const TIMING = { poll_ms: 5, startup_ms: 500, settle_ms: 100, turn_ms: 5_000 };
 
 const later = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -36,56 +43,6 @@ async function open(core: FakeHcCore): Promise<HcClient> {
 	const client = await connectHc(core.connect());
 	clients.push(client);
 	return client;
-}
-
-/** A fake Claude Code: idle at launch, and a scripted turn per message. */
-class FakeClaude {
-	readonly core = new FakeHcCore();
-	readonly lines: string[] = [];
-	/** What a message does; the default answers and ends the turn. */
-	onMessage: (t: FakeTerminal, text: string) => void = (t, text) => this.answer(t, `Echo: ${text}`);
-	/** Status reported right after launch. */
-	launch_status: string | null = 'idle';
-
-	constructor() {
-		this.core.onRun = (t) => {
-			if (this.launch_status !== null) this.core.setStatus(t.address, this.launch_status);
-		};
-		this.core.onSend = (t, text) => {
-			queueMicrotask(() => {
-				this.write({ type: 'user', message: { role: 'user', content: text } });
-				this.core.setStatus(t.address, 'working');
-				this.onMessage(t, text);
-			});
-		};
-	}
-
-	write(entry: unknown): void {
-		this.lines.push(JSON.stringify(entry));
-		this.core.files.set(TRANSCRIPT, this.lines.map((l) => `${l}\n`).join(''));
-	}
-
-	say(text: string): void {
-		this.write({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
-	}
-
-	endTurn(t: FakeTerminal, state = 'idle', duration = 42): void {
-		this.write({ type: 'system', subtype: 'turn_duration', durationMs: duration });
-		this.core.endTurn(t.address, state);
-	}
-
-	answer(t: FakeTerminal, text: string): void {
-		this.write({
-			type: 'assistant',
-			message: { content: [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: {} }] }
-		});
-		this.write({
-			type: 'user',
-			message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'out' }] }
-		});
-		this.say(text);
-		this.endTurn(t);
-	}
 }
 
 function session(extra: Partial<AgentSessionOptions> = {}): {

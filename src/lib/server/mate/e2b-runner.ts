@@ -2,10 +2,12 @@
  * First Mate chats in E2B sandboxes ("Sand"; ADR-0018, docs/sand-e2b.md).
  *
  * This is the mate runner's own core (`src/lib/mate-runner/server.ts`: chat
- * logs, one long-lived Claude Code process per chat, message dedupe,
- * interrupt, resume after a restart), run inside Beadsmith with an E2B
- * spawner instead of SSH. Each chat gets its own sandbox, found again by its
- * session id in the sandbox metadata. A quiet chat's sandbox pauses after
+ * logs, interactive Claude Code in an hc terminal per chat driven by the
+ * session core, message dedupe and queueing, interrupt, resume after a
+ * restart), run inside Beadsmith with a connector that reaches the chat's
+ * sandbox over the E2B process channel instead of SSH (ADR-0021 rule 1).
+ * Each chat gets its own sandbox, found again by its session id in the
+ * sandbox metadata. A quiet chat's sandbox pauses after
  * `BDX_E2B_MATE_IDLE_MINUTES` (not billed for compute); the next message
  * resumes it and the same Claude Code session continues.
  *
@@ -15,13 +17,12 @@
  * through crew tools (ADR-0020), relayed over the E2B process channel by
  * `crew-bridge.ts` and run here as the chat's owner.
  */
-import { EventEmitter } from 'node:events';
-import { PassThrough, Writable } from 'node:stream';
 import { encodeMissionEvent, type MissionEvent } from '#lib/mission-events.js';
 import { ChatStore } from '#lib/mate-runner/event-log.js';
 import { createRunnerCore, RunnerFault, type RunnerCore } from '#lib/mate-runner/server.js';
-import type { AgentLaunch, AgentProcess, SpawnAgent } from '#lib/mate-runner/session.js';
-import { claudeArgs, shellQuote } from '#lib/mate-runner/spawn.js';
+import type { ConnectAgent } from '#lib/mate-runner/session.js';
+import { SESSION_LABEL, type SessionTiming } from '#lib/agent-session/session.js';
+import type { HcClient } from '#lib/hc/client.js';
 import type { E2bMateSettings } from '../env.js';
 import { createCrewMcpHandler } from '../crew/mcp.js';
 import { getMateStore } from '../state/db.js';
@@ -32,17 +33,16 @@ import {
 	createSdkDriver,
 	modelPlaceholderEnvs,
 	readModelCredential,
-	type InteractiveCommand,
 	type SandboxDriver,
 	type SandboxRef
 } from '../e2b/sandbox.js';
-import { MATE_WORKDIR } from '../e2b/image.js';
+import { CLAUDE_CONFIG_DIR, MATE_WORKDIR } from '../e2b/image.js';
+import { connectSandboxHc } from '../e2b/hc-transport.js';
 import {
 	CREW_MCP_CONFIG_PATH,
 	prepareChatSandbox,
 	startCrewBridge,
 	stopRelayCommand,
-	TextTail,
 	type CrewBridge,
 	type CrewBridgeDeps
 } from './crew-bridge.js';
@@ -64,6 +64,10 @@ export interface E2bMateDeps {
 	now?: () => number;
 	/** Crew tools for the chat; defaults to the production handler and chat store. */
 	crew?: CrewBridgeDeps;
+	/** Reach a sandbox's hc core; defaults to the `beadsmith-hc` carrier. */
+	connect_hc?: ConnectSandboxHc;
+	/** Session timing (tests shorten it). */
+	timing?: SessionTiming;
 	/**
 	 * Server-side diagnostics (E2B errors, stderr tails). Never shown in the
 	 * browser, which gets fixed messages only.
@@ -96,102 +100,22 @@ export function defaultCrewBridgeDeps(): CrewBridgeDeps {
 	};
 }
 
+/** Open an hc client on a sandbox's core (the E2B process channel). */
+export type ConnectSandboxHc = (sandbox: SandboxRef) => Promise<HcClient>;
+
 /**
- * A Claude Code process in a chat's sandbox, shaped like a child process for
- * `AgentSession`. Writes before the process starts are queued in order.
+ * Reach each chat's own sandbox and its hc core. Every connect (a chat's
+ * first message, or the first after a restart, an eviction or a lost
+ * channel) refreshes the relay, MCP config and instructions, ends a CLI left
+ * from before (it was talking to the old relay) and starts the crew relay,
+ * so the session core's launch resumes the conversation against the new one.
  */
-class SandboxAgentProcess extends EventEmitter implements AgentProcess {
-	readonly stdin: Writable;
-	readonly stdout = new PassThrough();
-	readonly stderr = new PassThrough();
-	#command: InteractiveCommand | undefined;
-	#queue: Promise<void> = Promise.resolve();
-	#killed = false;
-	#on_activity: () => void;
-	#started: Promise<void> | undefined;
-	#resolveStarted: (() => void) | undefined;
-
-	constructor(on_activity: () => void) {
-		super();
-		this.#on_activity = on_activity;
-		this.stdin = new Writable({
-			write: (chunk: Buffer | string, _encoding, callback) => {
-				const data = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
-				this.#on_activity();
-				this.#queue = this.#queue.then(async () => {
-					await this.#ready();
-					await this.#command?.sendStdin(data);
-				});
-				this.#queue.then(
-					() => callback(),
-					(error: Error) => callback(error)
-				);
-			},
-			final: (callback) => {
-				this.#queue = this.#queue.then(async () => {
-					await this.#ready();
-					await this.#command?.closeStdin();
-				});
-				this.#queue.then(
-					() => callback(),
-					() => callback()
-				);
-			}
-		});
-	}
-
-	#ready(): Promise<void> {
-		this.#started ??= new Promise((resolve) => {
-			this.#resolveStarted = resolve;
-		});
-		return this.#started;
-	}
-
-	get killed(): boolean {
-		return this.#killed;
-	}
-
-	attach(command: InteractiveCommand): void {
-		this.#command = command;
-		void this.#ready();
-		this.#resolveStarted?.();
-		if (this.#killed) void command.kill().catch(() => undefined);
-		void command.wait().then((code) => this.exited(code));
-	}
-
-	output(chunk: string): void {
-		this.#on_activity();
-		this.stdout.write(chunk);
-	}
-
-	exited(code: number | null): void {
-		this.stdout.end();
-		this.stderr.end();
-		this.emit('exit', code);
-	}
-
-	failed(error: Error): void {
-		void this.#ready();
-		this.#resolveStarted?.();
-		this.stdout.end();
-		this.stderr.end();
-		this.emit('error', error);
-	}
-
-	kill(): boolean {
-		this.#killed = true;
-		void this.#command?.kill().catch(() => undefined);
-		return true;
-	}
-}
-
-/** Spawn each chat's Claude Code in that chat's own sandbox. */
-export function e2bSpawner(deps: Required<E2bMateDeps>): SpawnAgent {
-	const { settings, driver, read_secret, now, crew, log } = deps;
+export function e2bConnector(deps: Required<E2bMateDeps>): ConnectAgent {
+	const { settings, driver, read_secret, now, crew, log, connect_hc } = deps;
 	const idle_ms = settings.idle_minutes * 60_000;
 	const known = new Map<string, string>();
 
-	async function sandboxFor(session_id: string): Promise<{ sandbox: SandboxRef; fresh: boolean }> {
+	async function sandboxFor(session_id: string): Promise<SandboxRef> {
 		let id = known.get(session_id);
 		if (id === undefined) {
 			const [found] = await driver.find({ [SESSION_KEY]: session_id });
@@ -201,7 +125,7 @@ export function e2bSpawner(deps: Required<E2bMateDeps>): SpawnAgent {
 			try {
 				const sandbox = await driver.connect(id, idle_ms);
 				known.set(session_id, sandbox.id);
-				return { sandbox, fresh: false };
+				return sandbox;
 			} catch (error) {
 				log(`Sand chat ${label(session_id)}: could not resume ${id}, creating: ${String(error)}`);
 				known.delete(session_id);
@@ -222,72 +146,52 @@ export function e2bSpawner(deps: Required<E2bMateDeps>): SpawnAgent {
 			throw error;
 		}
 		known.set(session_id, sandbox.id);
-		return { sandbox, fresh: true };
+		return sandbox;
 	}
 
-	return (launch: AgentLaunch) => {
-		let last_keepalive = 0;
-		let sandbox: SandboxRef | undefined;
-		const keepalive = () => {
-			const at = now();
-			if (sandbox === undefined || at - last_keepalive < KEEPALIVE_EVERY_MS) return;
-			last_keepalive = at;
-			void sandbox.setTimeout(idle_ms).catch(() => undefined);
-		};
-		const process = new SandboxAgentProcess(keepalive);
+	return async (session_id) => {
+		let client: HcClient | undefined;
 		let bridge: CrewBridge | undefined;
-		// The relay lives exactly as long as this chat process.
-		const stopBridge = () => bridge?.stop();
-		process.once('exit', stopBridge);
-		process.once('error', stopBridge);
-		void (async () => {
-			try {
-				const found = await sandboxFor(launch.session_id);
-				sandbox = found.sandbox;
-				// Every create and resume: current relay, MCP config and instructions.
-				await prepareChatSandbox(sandbox);
-				// A new sandbox has no session to resume: start it under the same id.
-				const args = claudeArgs({
-					...(found.fresh ? { ...launch, resume: false } : launch),
-					mcp_config: CREW_MCP_CONFIG_PATH
-				});
-				// After a pause, the previous process for this chat may still be there.
-				await sandbox.exec(
-					`pkill -f -- ${shellQuote(`claude .*${launch.session_id}`)} 2>/dev/null; ${stopRelayCommand()}`
-				);
-				// Without the relay the chat still talks; its crew tool calls fail
-				// and the agent says so, which beats no chat at all.
-				bridge = await startCrewBridge({
-					sandbox,
-					session_id: launch.session_id,
-					deps: crew,
-					log
-				}).catch((error: unknown) => {
-					log(`Sand chat ${label(launch.session_id)}: crew relay did not start: ${String(error)}`);
-					return undefined;
-				});
-				if (process.killed) bridge?.stop();
-				const stderr = new TextTail();
-				const command = await sandbox.interactive(['claude', ...args].map(shellQuote).join(' '), {
-					cwd: MATE_WORKDIR,
-					on_stdout: (chunk) => process.output(chunk),
-					on_stderr: (chunk) => stderr.push(chunk)
-				});
-				void command.wait().then((code) => {
-					if (code === 0 || process.killed) return;
-					log(
-						`Sand chat ${label(launch.session_id)}: Claude Code exited (${code ?? 'connection lost'})${
-							stderr.text === '' ? '' : `: ${stderr.text}`
-						}`
-					);
-				});
-				process.attach(command);
-			} catch (error) {
-				log(`Sand chat ${label(launch.session_id)}: the agent could not start: ${String(error)}`);
-				process.failed(new Error('The sandbox could not start the agent.'));
+		try {
+			const sandbox = await sandboxFor(session_id);
+			await prepareChatSandbox(sandbox);
+			// hc connect starts the core on first use, with the sandbox's environment.
+			client = await connect_hc(sandbox);
+			for (const terminal of await client.list({ labels: { [SESSION_LABEL]: session_id } })) {
+				if (terminal.state === 'live') await client.kill(terminal.address);
 			}
-		})();
-		return process;
+			await sandbox.exec(stopRelayCommand());
+			// Without the relay the chat still talks; its crew tool calls fail
+			// and the agent says so, which beats no chat at all.
+			bridge = await startCrewBridge({ sandbox, session_id, deps: crew, log }).catch(
+				(error: unknown) => {
+					log(`Sand chat ${label(session_id)}: crew relay did not start: ${String(error)}`);
+					return undefined;
+				}
+			);
+			let last_keepalive = 0;
+			return {
+				client,
+				launch: {
+					cwd: MATE_WORKDIR,
+					config_dir: CLAUDE_CONFIG_DIR,
+					mcp_config: CREW_MCP_CONFIG_PATH
+				},
+				// A quiet chat's sandbox pauses after the idle time; activity extends it.
+				touch() {
+					const at = now();
+					if (at - last_keepalive < KEEPALIVE_EVERY_MS) return;
+					last_keepalive = at;
+					void sandbox.setTimeout(idle_ms).catch(() => undefined);
+				},
+				release: () => bridge?.stop()
+			};
+		} catch (error) {
+			client?.close();
+			bridge?.stop();
+			log(`Sand chat ${label(session_id)}: the agent could not start: ${String(error)}`);
+			throw new Error('The sandbox could not start the agent.');
+		}
 	};
 }
 
@@ -320,17 +224,21 @@ export function createE2bMateRunner(deps: E2bMateDeps): MateRunner & { close(): 
 	const store = new ChatStore(deps.settings.state_dir);
 	// E2B errors can echo request headers; every line is stripped of credential shapes.
 	const log = deps.log ?? ((message: string) => console.warn(message));
+	const clean = (message: string) => log(sanitizeResultSummary(message, '') ?? message);
 	const core: RunnerCore = createRunnerCore({
 		store,
-		spawn: e2bSpawner({
+		connect: e2bConnector({
 			settings: deps.settings,
 			driver,
 			read_secret,
 			now: deps.now ?? Date.now,
 			crew: deps.crew ?? defaultCrewBridgeDeps(),
-			log: (message) => log(sanitizeResultSummary(message, '') ?? message)
+			log: clean,
+			connect_hc: deps.connect_hc ?? connectSandboxHc,
+			timing: deps.timing ?? {}
 		}),
-		max_live_sessions: deps.settings.max_sessions
+		max_live_sessions: deps.settings.max_sessions,
+		agent: { timing: deps.timing, log: clean }
 	});
 
 	return {
@@ -376,7 +284,7 @@ export function createE2bMateRunner(deps: E2bMateDeps): MateRunner & { close(): 
 
 		async interrupt(chat_id) {
 			try {
-				core.interrupt(chat_id);
+				await core.interrupt(chat_id);
 			} catch (error) {
 				throw toRunnerError(error);
 			}

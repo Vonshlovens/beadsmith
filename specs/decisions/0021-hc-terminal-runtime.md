@@ -248,12 +248,28 @@ Shipped:
   turn instead of starting the CLI). The CLI session id is sandbox
   metadata; a follow-up is the next message to the running CLI. A stream of
   a finished run sends its stored result only. The dispatch stream-json
-  mapping is gone; chats still use the mate runner's.
+  mapping is gone.
+- First Mate chats run on the session core on both runners
+  (`src/lib/mate-runner/session.ts`, `ChatAgent`), and the mate runner's
+  stream-json mapping is gone, so one transcript mapping serves everything.
+  The runner core takes a `ConnectAgent` (an hc client plus where the CLI
+  runs) instead of a process spawner: `sshConnector` runs `ssh <guest> hc
+  connect` with the pinned host key, and the Sand chat runner
+  (`src/lib/server/mate/e2b-runner.ts`) connects over the `beadsmith-hc`
+  carrier, first ending a CLI left talking to an old crew relay. A chat
+  holds a channel only while it has an agent: the first message after a
+  start, an eviction or a lost channel connects and `attach`es (following
+  the live terminal, or launching with `--resume` when a transcript
+  exists). Messages sent during a turn wait in the runner and go in when
+  it ends, which keeps contract v1's "no busy answer"; interrupt drops
+  them. A CLI `blocked` on a question gets no message pasted into it; the
+  message fails with an error saying so. Shutdown and eviction kill the
+  CLI, as they ended the headless process before; a runner that crashed
+  finds the CLI still live and follows it. The wire contract is
+  unchanged (still version 1).
 
 Planned, each in its own change:
 
-- chats on the session core, deleting the mate runner's stream-json
-  mapping;
 - the forge guest's hc and the runner wired to it;
 - the relay route, its audit rows in `state.db` (0004 updated when they
   ship), and the terminal view in First Mate chats and mission threads.

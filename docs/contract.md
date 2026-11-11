@@ -131,9 +131,10 @@ GitHub keys added by E2B's egress and mission sandboxes on the tailnet under
 their own tag ([ADR-0018](../specs/decisions/0018-sand-e2b-sandboxes.md)).
 Accepted and being implemented: every agent runs as an interactive CLI in an
 hc (herdr-core) terminal inside its sandbox or guest
-([ADR-0021](../specs/decisions/0021-hc-terminal-runtime.md)). Today agents
-still run headless and Beadsmith holds no terminal connection to any agent
-machine.
+([ADR-0021](../specs/decisions/0021-hc-terminal-runtime.md)). Sand missions
+and First Mate chats do so today; Beadsmith and the forge runner reach each
+hc core only over the sandbox's process channel or SSH, and there is no
+admin terminal relay yet.
 
 A machine that runs agents is classified by what it holds, not by where it
 runs:

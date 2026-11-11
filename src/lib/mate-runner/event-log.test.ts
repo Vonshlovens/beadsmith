@@ -29,7 +29,7 @@ describe('crash recovery', () => {
 	it('reports unfinished queued work even if the last completed turn has a result', () => {
 		const dir = directory();
 		const log = new ChatStore(dir).get('chat');
-		log.setMeta({ session_id: 'test', scope: null, started: true, pending: 1, created_at: '' });
+		log.setMeta({ session_id: 'test', scope: null, pending: 1, created_at: '' });
 		log.append({ type: 'result', status: 'succeeded' });
 		const recovered = new ChatStore(dir).get('chat');
 		expect(recovered.after(undefined).at(-1)).toMatchObject({ type: 'error' });

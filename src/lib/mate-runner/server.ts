@@ -14,23 +14,26 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { encodeMissionEvent, type MissionEvent } from '../mission-events.js';
 import { CHAT_ID_PATTERN, type ChatStore } from './event-log.js';
-import { AgentSession, type SpawnAgent } from './session.js';
+import { ChatAgent, type ChatAgentOptions, type ConnectAgent } from './session.js';
 import { verifyRequest } from './signature.js';
 
 export const MAX_BODY_BYTES = 64 * 1024;
 export const MAX_PROMPT_CHARS = 16_000;
 const HEARTBEAT_MS = 15_000;
 const MESSAGE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
-const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Lowercase, as Beadsmith makes them: Claude Code names the transcript after it. */
+const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SCOPE_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 
-/** What the runner core needs: chat logs and a way to start an agent. */
+/** What the runner core needs: chat logs and a way to reach a chat's hc core. */
 export interface RunnerCoreOptions {
 	store: ChatStore;
-	spawn: SpawnAgent;
-	/** Live agent processes at once; idle ones are stopped to make room. */
+	connect: ConnectAgent;
+	/** Live agent CLIs at once; idle ones are stopped to make room. */
 	max_live_sessions?: number;
 	now?: () => Date;
+	/** Session timing and server-side diagnostics, passed to each chat. */
+	agent?: ChatAgentOptions;
 }
 
 export interface RunnerOptions extends RunnerCoreOptions {
@@ -90,7 +93,7 @@ function sseFrame(event: MissionEvent): string {
 export function createRunnerCore(options: RunnerCoreOptions) {
 	const now = options.now ?? (() => new Date());
 	const max_live = options.max_live_sessions ?? 3;
-	const sessions = new Map<string, AgentSession>();
+	const sessions = new Map<string, ChatAgent>();
 	if (!Number.isInteger(max_live) || max_live < 1) throw new Error('invalid session limit');
 	// Serialize mutations across awaits so eviction, deletion and admission cannot race.
 	let mutations: Promise<unknown> = Promise.resolve();
@@ -108,16 +111,16 @@ export function createRunnerCore(options: RunnerCoreOptions) {
 		if (!CHAT_ID_PATTERN.test(chat_id)) throw new RunnerFault(400, 'Invalid chat id.');
 	}
 
-	function session(chat_id: string): AgentSession {
+	function session(chat_id: string): ChatAgent {
 		let found = sessions.get(chat_id);
 		if (found === undefined) {
-			found = new AgentSession(options.store.get(chat_id), options.spawn);
+			found = new ChatAgent(options.store.get(chat_id), options.connect, options.agent);
 			sessions.set(chat_id, found);
 		}
 		return found;
 	}
 
-	/** Make room for one more live process, or refuse when every one is busy. */
+	/** Make room for one more live CLI, or refuse when every one is busy. */
 	async function reserveSlot(chat_id: string): Promise<void> {
 		const live = [...sessions.entries()].filter(([id, s]) => id !== chat_id && s.running);
 		if (live.length < max_live) return;
@@ -157,7 +160,6 @@ export function createRunnerCore(options: RunnerCoreOptions) {
 			log.setMeta({
 				session_id,
 				scope: typeof scope === 'string' ? scope : null,
-				started: false,
 				created_at: now().toISOString()
 			});
 		} else if (log.meta.session_id !== session_id) {
@@ -201,10 +203,10 @@ export function createRunnerCore(options: RunnerCoreOptions) {
 			for (const event of log.after(after)) listener(event);
 			return log.subscribe(listener);
 		},
-		/** Interrupt the running turn; the session survives. */
-		interrupt(chat_id: string): void {
+		/** Interrupt the running turn and drop queued messages; the session survives. */
+		async interrupt(chat_id: string): Promise<void> {
 			requireChat(chat_id);
-			sessions.get(chat_id)?.interrupt();
+			await sessions.get(chat_id)?.interrupt();
 		},
 		/** Stop the session and forget the chat. */
 		deleteChat(chat_id: string): Promise<void> {
@@ -304,7 +306,7 @@ export function createRunnerHandler(options: RunnerOptions) {
 			} else if (action === '/events' && method === 'GET') {
 				streamEvents(chat_id, url.searchParams.get('after') ?? undefined, req, res);
 			} else if (action === '/interrupt' && method === 'POST') {
-				core.interrupt(chat_id);
+				await core.interrupt(chat_id);
 				sendJson(res, 202, { ok: true });
 			} else if (action === undefined && method === 'DELETE') {
 				await core.deleteChat(chat_id);
