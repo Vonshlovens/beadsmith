@@ -153,6 +153,21 @@ jobs:
           .#checks.x86_64-linux.test
           .#checks.x86_64-linux.beads-toplevel
 
+  # nix/pnpm-deps.nix carries a hash for each Linux architecture. The
+  # existing app/host builds verify x86_64; fetch the store natively on ARM
+  # too, so a lockfile refresh cannot leave its hash unverified.
+  pnpm-deps-arm:
+    needs: test
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/nix
+        with:
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - run: nix build -L --no-link .#packages.aarch64-linux.pnpmDeps
+
   # NixOS VM test (nix/tests/beadsmith.nix) under KVM: Beadsmith and Dolt
   # boot, /healthz answers, bd can init, create and list ready work.
   vm:
@@ -238,7 +253,7 @@ jobs:
   # older run can never move it backwards.
   deploy-branch:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [test, bd-compat, quickstart, public-scan, nix, vm, image]
+    needs: [test, bd-compat, quickstart, public-scan, nix, pnpm-deps-arm, vm, image]
     runs-on: ubuntu-latest
     concurrency:
       group: deploy-branch
