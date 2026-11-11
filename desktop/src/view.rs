@@ -8,12 +8,14 @@ use std::borrow::Cow;
 use rune::TextEdit;
 use rune::{Color, Cx, El, LoopSpec, ScrollSpec, Tx, col, el, row, text};
 use rune_kit::{
-    Button, ButtonVariant, Cell, Dialog, Field, Keybind, Kit, Markdown, Table, TableColumn, TableStyle, TextInput,
+    Button, ButtonVariant, Cell, Dialog, Field, Keybind, Kit, Markdown, Select, Table, TableColumn, TableStyle,
+    TextInput,
 };
 
 use crate::app::{Check, Connection, Load, Pane, STATUS_FILTERS, State, TABLE_KEY};
 use crate::keys::{self, Command};
 use crate::model::{Failure, IssueDetail, IssueRef, Project};
+use crate::settings::REFRESH_CHOICES;
 use crate::theme::{StatusLook, Theme};
 
 /// The web app's `--rail-w`.
@@ -37,16 +39,16 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let panes = row().key("panes").w_full().grow(1.0).min_h(0.0).child(sidebar(s, &th)).child(rule_v(&th));
     // With no project list there is no table or issue to frame, so the
     // reason takes the room of both panes instead of repeating in each.
+    let mut layer = Vec::new();
     let panes = match server_state(s, &th) {
         Some(state) => panes.child(state),
-        None => panes.child(main_pane(s, &th, roomy)).child(rule_v(&th)).child(detail_pane(s, &th, roomy)),
+        None => panes.child(main_pane(s, &th, roomy, &mut layer)).child(rule_v(&th)).child(detail_pane(s, &th, roomy)),
     };
     let mut body = col().key("shell").w_full().h_full().fill(th.t.bg).child(title_bar(&th, cx.titlebar_inset()));
     if let Some(failure) = s.stale.failure() {
         body = body.child(stale_banner(s, failure, &th));
     }
     let body = body.child(panes);
-    let mut layer = Vec::new();
     if let Some(form) = &s.connection {
         connection_dialog(s, form, &th.k, &mut layer);
     } else if s.shortcuts {
@@ -120,10 +122,17 @@ fn stale_banner(s: &State, failure: Failure, th: &Theme) -> El {
         .fill(t.s2)
         .child(el().size(7.0, 7.0).radius(3.5).fill(t.amber).a11y_hidden())
         .child(words);
-    for action in failure_actions(failure, s.is_loading(), k) {
+    for action in failure_actions(failure, busy(s), k) {
         banner = banner.child(action);
     }
     col().w_full().child(banner).child(rule_h(th))
+}
+
+/// A read the user asked for is in flight. The window's own refreshes are
+/// not counted: they must not turn buttons into "Refreshing" once a minute
+/// (`freshness` marks them instead).
+fn busy(s: &State) -> bool {
+    s.is_loading() && !s.background
 }
 
 /// The buttons that recover from `failure`, the likelier fix first and
@@ -152,10 +161,10 @@ fn failure_actions(failure: Failure, busy: bool, k: &Kit) -> Vec<El> {
 /// projects to show: why it failed, or that it has none.
 fn server_state(s: &State, th: &Theme) -> Option<El> {
     let state = match &s.projects {
-        Load::Failed(f) => failure_state(*f, s.is_loading(), th),
+        Load::Failed(f) => failure_state(*f, busy(s), th),
         Load::Ready(projects) if projects.is_empty() => {
-            let refresh = Button::new(if s.is_loading() { "Refreshing" } else { "Refresh" })
-                .variant(if s.is_loading() { ButtonVariant::Loading } else { ButtonVariant::Neutral })
+            let refresh = Button::new(if busy(s) { "Refreshing" } else { "Refresh" })
+                .variant(if busy(s) { ButtonVariant::Loading } else { ButtonVariant::Neutral })
                 .on_press(|s: &mut State| s.refresh())
                 .build(&th.k)
                 .key("refresh");
@@ -515,7 +524,38 @@ fn connection_status(form: &Connection, k: &Kit) -> El {
 // ---------------------------------------------------------------------------------------------
 // Issue table
 
-fn main_pane(s: &State, th: &Theme, roomy: bool) -> El {
+/// How fresh the list is, and how it stays so: its age, with a bead that
+/// pulses while the window re-reads by itself, and the interval it does that
+/// on. Beside Refresh because all three answer "is this current?". The bead
+/// keeps its room when idle so the words do not shift as reads come and go,
+/// and it is not announced: a status spoken every minute would be noise.
+///
+/// Below `ROOMY_W` the age drops its "Updated": the project's name is what
+/// identifies the list, and it must not be the thing that truncates.
+fn freshness(s: &State, th: &Theme, roomy: bool, layer: &mut Vec<El>) -> El {
+    let t = &th.t;
+    let mut bead = el().key("refreshing").size(7.0, 7.0).radius(3.5).a11y_hidden();
+    if s.background {
+        bead = bead.fill(t.mint).looping(LoopSpec::opacity(1.4, 0.0, 0.35, 1.0));
+    }
+    let mut age = row().key("freshness").gap(6.0).center_y().child(bead);
+    if let Some(words) = s.updated_label() {
+        let shown = if roomy { words.clone() } else { words.trim_start_matches("Updated ").to_string() };
+        age = age.child(text(shown).key("updated").label(words).font(th.ty.xs).color(t.tx_dim));
+    }
+    let choices = REFRESH_CHOICES.map(|(label, _)| label);
+    let interval = Select::new("auto-refresh", &choices)
+        .label("Automatic refresh")
+        .current(s.auto_refresh_label())
+        .open(s.refresh_menu)
+        .on_toggle(|s: &mut State| s.refresh_menu = !s.refresh_menu)
+        .on_close(|s: &mut State| s.refresh_menu = false)
+        .on_choose(|s: &mut State, label, _| s.choose_auto_refresh(label))
+        .build(&th.k, layer);
+    row().gap(4.0).center_y().child(age).child(interval)
+}
+
+fn main_pane(s: &State, th: &Theme, roomy: bool, layer: &mut Vec<El>) -> El {
     let (k, t) = (&th.k, &th.t);
     let title = match s.current_project() {
         Some(p) => p.name.clone(),
@@ -541,8 +581,8 @@ fn main_pane(s: &State, th: &Theme, roomy: bool) -> El {
         .build(k)
         .key("search");
 
-    let refresh = Button::new(if s.is_loading() { "Refreshing" } else { "Refresh" })
-        .variant(if s.is_loading() { ButtonVariant::Loading } else { ButtonVariant::GhostMuted })
+    let refresh = Button::new(if busy(s) { "Refreshing" } else { "Refresh" })
+        .variant(if busy(s) { ButtonVariant::Loading } else { ButtonVariant::GhostMuted })
         .on_press(|s: &mut State| s.refresh())
         .build(k)
         .key("refresh");
@@ -561,6 +601,7 @@ fn main_pane(s: &State, th: &Theme, roomy: bool) -> El {
                 .child(text(title.clone()).font(th.ty.md_strong).color(t.tx_hi).truncate().min_w(0.0))
                 .child(text(count).font(th.ty.xs).color(t.tx_dim))
                 .child(el().grow(1.0))
+                .child(freshness(s, th, roomy, layer))
                 .child(refresh),
         )
         .child(search.w_full());
@@ -571,7 +612,7 @@ fn main_pane(s: &State, th: &Theme, roomy: bool) -> El {
         }
         Load::Ready(_) if s.visible.is_empty() => no_matches(s, th),
         Load::Ready(_) => issue_table(s, th, roomy),
-        Load::Failed(f) => failure_state(*f, s.is_loading(), th),
+        Load::Failed(f) => failure_state(*f, busy(s), th),
         Load::Loading => table_skeleton(th, roomy),
         // The project list is still on its way: the table it will fill.
         Load::Idle if s.projects.ready().is_none() => table_skeleton(th, roomy),
@@ -772,7 +813,7 @@ fn detail_pane(s: &State, th: &Theme, roomy: bool) -> El {
             "It is no longer on the server. It may have been deleted or renamed since the list loaded.",
             Vec::new(),
         ),
-        (Some(_), Load::Failed(f)) => failure_state(*f, s.is_loading(), th),
+        (Some(_), Load::Failed(f)) => failure_state(*f, busy(s), th),
         (Some(_), _) => detail_skeleton(th),
     };
     let mut pane = col().key("detail").w(if roomy { 380.0 } else { 320.0 }).h_full();

@@ -30,6 +30,11 @@ The decision record is
 - Refreshes on the Refresh button above the table, `r` or `⌘R`. A refresh
   that fails keeps what was on screen under a banner that says it may be out
   of date; a failed read never shows as an empty list.
+- Keeps itself current: it re-reads every minute and when its window comes
+  back to the front, without moving the selection, the scroll position, the
+  sort or the filters. The toolbar says how old the list is ("Updated 3 min
+  ago") and holds the interval (off, 30 s, 1, 5 or 15 min). See
+  [Automatic refresh](#automatic-refresh).
 - Says what is happening in every pane: outlines of the rows while they
   load, an empty project, filters that match nothing (with Clear filters),
   and each connection failure with Retry and Connection settings.
@@ -63,6 +68,32 @@ link issues without blocking; the issue pane names the type beside them.
 Following a dependency link leaves a trail, shown as back and forward
 arrows above the issue. Choosing an issue in the list starts a new one: the
 trail is for a chain of blockers, not for every row passed on the way.
+
+## Automatic refresh
+
+The window re-reads the project list, the open project's issues and the
+issue being read on the interval chosen beside the Refresh button, and once
+more when it regains focus if its data is more than five seconds old. That
+second rule is there because the moment you come back to the window is when
+you read it, and macOS may hold a hidden app's timers back.
+
+- Nothing blanks or jumps. New rows arrive under the same selection, sort
+  and filters, which are kept by issue id and column rather than by row. A
+  bead pulses beside the list's age while a read is in flight; the Refresh
+  button only turns busy for a refresh you asked for.
+- A read is never started while another is in flight, so a server slower
+  than the interval is not asked faster than it answers.
+- A read that fails over loaded data shows the same banner as a failed
+  manual refresh, and the age keeps counting from the last good list. An
+  unreachable server is asked again on the interval. A rejected or missing
+  password is not: retrying it every minute could lock the account or make
+  the Keychain prompt repeatedly, so the window waits for Retry.
+- Nothing is read behind an open dialog.
+- "Auto off" turns off both the interval and the read on focus.
+
+The interval is saved as `refresh.seconds` in the settings file described
+under [Where the connection is kept](#where-the-connection-is-kept). A
+missing or unrecognised value is one minute.
 
 ## How it looks
 
@@ -283,6 +314,7 @@ scripts/bundle-macos.sh package      # target/bundle/Beadsmith-<version>-macos-<
 | What                | Where                                                                                                                                                             |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Host, port and user | `prefs.json` in the OS config folder: `~/Library/Application Support/Beadsmith` on macOS, `$XDG_CONFIG_HOME/Beadsmith` on Linux, `%APPDATA%\Beadsmith` on Windows |
+| Refresh interval    | `refresh.seconds` in the same `prefs.json` (see [Automatic refresh](#automatic-refresh))                                                                          |
 | Password, on macOS  | The login Keychain, as a generic password named `Beadsmith Dolt` with the account `user@host:port`                                                                |
 | Password, elsewhere | Not stored: this build has no keychain binding off macOS, so set `BEADS_DOLT_PASSWORD_FILE`                                                                       |
 
@@ -337,7 +369,9 @@ them all: the data (`sample`, `filtered`, `ready`), every pane while it loads
 (`loading`, `loading-issues`, `loading-issue`), the empty and failed states
 (`no-projects`, `empty-project`, `no-matches`, `issue-gone`, `unconfigured`,
 `unreachable`, `auth-rejected`, `credential-unavailable`, `issues-failed`,
-`issue-failed`), a failed refresh over loaded data (`stale`), the
+`issue-failed`), a failed refresh over loaded data (`stale`), the window
+re-reading by itself (`refreshing`) and its interval being chosen
+(`auto-refresh`), the
 connection screen (`connection` for a first launch, then `connection-*`),
 an issue being read from the keyboard (`reading`), one reached by
 following dependency links (`trail`, and `trail-gone` for a link to an issue
@@ -354,7 +388,9 @@ scripts/snap-scenes.sh            # target/scenes/<scene>-<theme>.png
 ```
 
 Keys can be exercised the same way: a script of timed key presses runs
-against a scene through the real key routing.
+against a scene through the real key routing. The clock is virtual, so a
+script can also sit through refresh intervals, and `{"t":30,"focus":true}`
+brings the window to the front.
 
 ```sh
 echo '[{"t":0.1,"type":"key","name":"j"},{"t":0.3,"type":"key","name":"Enter"}]' > keys.json

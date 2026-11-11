@@ -2,6 +2,12 @@
 //! `Latest` workers; answers land in `poll` on the UI thread, and a newer
 //! request supersedes an older one (switching projects quickly never shows a
 //! stale list).
+//!
+//! The window also re-reads by itself (`State::tick`): on an interval and
+//! when it regains focus. Those reads go through the same requests and the
+//! same landing code as a refresh asked for by hand, so there is one way for
+//! new data to reach the screen, and it keeps the selection, the sort and the
+//! filters because they are held by issue id and column, not by row.
 
 use std::sync::Arc;
 
@@ -48,6 +54,13 @@ impl Stale {
         self.projects.or(self.issues).or(self.detail)
     }
 }
+
+/// A window that comes back to the front re-reads if its data is at least
+/// this old (seconds), whatever the interval: the moment someone returns to
+/// the app is when they look at it, and macOS may have held its timers back
+/// while it was hidden. Short enough to feel immediate, long enough that
+/// flicking between windows does not send a read per switch.
+const FOCUS_REFRESH_AFTER: f64 = 5.0;
 
 /// The issue table's element key.
 pub const TABLE_KEY: &str = "issues";
@@ -199,6 +212,26 @@ pub struct State {
     pub pane: Pane,
     /// The keyboard shortcuts overlay is open.
     pub shortcuts: bool,
+    /// Seconds between the window's own refreshes, one of
+    /// `settings::REFRESH_CHOICES`; 0 is never.
+    pub auto_refresh: u32,
+    /// The toolbar's list of those choices is open.
+    pub refresh_menu: bool,
+    /// The reads in flight were started by the window, not asked for: the
+    /// view marks them with a quiet bead instead of a busy Refresh button.
+    pub background: bool,
+    /// When the list on screen arrived, on the app clock (`now`).
+    pub updated: Option<f64>,
+    /// The app clock at the latest `tick`: seconds since the first frame.
+    now: f64,
+    /// When a refresh was last started, by hand or not. The interval counts
+    /// from here, so a refresh asked for by hand postpones the next one.
+    asked: f64,
+    /// The window came to the front since the last `tick`.
+    focus_gained: bool,
+    /// The age the view last drew in "Updated … ago", so a `tick` redraws
+    /// only when the words change.
+    age_drawn: Option<u64>,
     projects_req: Latest<Result<Vec<Project>, Failure>>,
     issues_req: Latest<IssuesAnswer>,
     detail_req: Latest<DetailAnswer>,
@@ -252,6 +285,14 @@ impl State {
             stale: Stale::default(),
             pane: Pane::List,
             shortcuts: false,
+            auto_refresh: settings::load_refresh(&backing.prefs),
+            refresh_menu: false,
+            background: false,
+            updated: None,
+            now: 0.0,
+            asked: 0.0,
+            focus_gained: false,
+            age_drawn: None,
             projects_req: Latest::default(),
             issues_req: Latest::default(),
             detail_req: Latest::default(),
@@ -283,8 +324,31 @@ impl State {
         if self.projects.ready().is_none() {
             self.projects = Load::Loading;
         }
+        self.request_projects();
+    }
+
+    // The requests alone, with no change to what is on screen: what a
+    // refresh by hand and the window's own refresh share.
+
+    fn request_projects(&mut self) {
         let source = self.source.clone();
         self.projects_req.request((), move |()| source.projects());
+    }
+
+    fn request_issues(&mut self, db: &str) {
+        let source = self.source.clone();
+        self.issues_req.request(db.to_string(), move |db| {
+            let answer = source.issues(&db);
+            (db, answer)
+        });
+    }
+
+    fn request_detail(&mut self, db: String, id: &str) {
+        let source = self.source.clone();
+        self.detail_req.request((db, id.to_string()), move |(db, id)| {
+            let answer = source.issue(&db, &id);
+            (db, id, answer)
+        });
     }
 
     pub fn select_project(&mut self, name: &str) {
@@ -300,15 +364,13 @@ impl State {
             self.detail_req.cancel();
             self.stale.issues = None;
             self.stale.detail = None;
+            self.updated = None;
+            self.background = false;
         } else if self.issues.ready().is_none() {
             // A retry after a failed first read: show it as pending again.
             self.issues = Load::Loading;
         }
-        let source = self.source.clone();
-        self.issues_req.request(name.to_string(), move |db| {
-            let answer = source.issues(&db);
-            (db, answer)
-        });
+        self.request_issues(name);
     }
 
     /// Choose an issue from the list. Choosing another one ends the trail of
@@ -363,17 +425,14 @@ impl State {
             self.issue = Some(id.to_string());
             self.detail = Load::Loading;
             self.stale.detail = None;
+            self.background = false;
         } else if self.detail.ready().is_none() {
             self.detail = Load::Loading;
         }
         if !self.table.is_selected(id) {
             self.table.select(id.to_string());
         }
-        let source = self.source.clone();
-        self.detail_req.request((db, id.to_string()), move |(db, id)| {
-            let answer = source.issue(&db, &id);
-            (db, id, answer)
-        });
+        self.request_detail(db, id);
     }
 
     // -- Keyboard ------------------------------------------------------------------------------
@@ -382,7 +441,7 @@ impl State {
 
     /// A dialog owns the keyboard: no window shortcut may act under it.
     pub fn modal_open(&self) -> bool {
-        self.connection.is_some() || self.shortcuts
+        self.connection.is_some() || self.shortcuts || self.refresh_menu
     }
 
     /// The selected issue's row among the visible ones. `None` when nothing
@@ -459,6 +518,8 @@ impl State {
     /// failed with nothing to show goes back to loading, and one that failed
     /// over earlier data keeps that data until the new answer lands.
     pub fn refresh(&mut self) {
+        self.asked = self.now;
+        self.background = false;
         self.load_projects();
         if let Some(p) = self.project.clone() {
             self.select_project(&p);
@@ -466,6 +527,119 @@ impl State {
         if let Some(i) = self.issue.clone() {
             self.select_issue(&i);
         }
+    }
+
+    // -- The window's own refresh --------------------------------------------------------------
+
+    /// Re-read everything on screen without being asked. Unlike `refresh`
+    /// it changes nothing until answers land: no pane goes back to loading,
+    /// not even one showing a failure, so a server that stays down does not
+    /// make the window flash once a minute.
+    fn refresh_quietly(&mut self) {
+        self.asked = self.now;
+        self.background = true;
+        self.request_projects();
+        let Some(db) = self.project.clone() else { return };
+        self.request_issues(&db);
+        if let Some(id) = self.issue.clone() {
+            self.request_detail(db, &id);
+        }
+    }
+
+    /// Whether the window may read by itself now. Not under a dialog, which
+    /// should not have the window change behind it. Not while a read is in
+    /// flight: `Latest` drops a superseded request, so on a server slower
+    /// than the interval every read would be replaced before it answered.
+    /// And not after a failure only the user can cure: retrying a rejected
+    /// password every minute can lock the account, and a missing one would
+    /// have the Keychain ask again and again.
+    fn may_refresh(&self) -> bool {
+        let transient = |f: Failure| matches!(f, Failure::Unreachable | Failure::Unknown);
+        let worth_asking = match &self.projects {
+            Load::Ready(_) => self.stale.failure().is_none_or(transient),
+            Load::Failed(f) => transient(*f),
+            Load::Idle | Load::Loading => false,
+        };
+        self.auto_refresh > 0 && worth_asking && !self.modal_open() && !self.is_loading()
+    }
+
+    /// One turn of the UI loop at `clock` (seconds since the first frame):
+    /// land finished reads, start the window's own refresh when one is due,
+    /// and notice when "Updated … ago" needs new words. True when the view
+    /// must be rebuilt.
+    pub fn tick(&mut self, clock: f64) -> bool {
+        self.now = clock;
+        let mut changed = self.land();
+        let wait = match std::mem::take(&mut self.focus_gained) {
+            true => FOCUS_REFRESH_AFTER.min(f64::from(self.auto_refresh)),
+            false => f64::from(self.auto_refresh),
+        };
+        if self.may_refresh() && self.now - self.asked >= wait {
+            self.refresh_quietly();
+            changed = true;
+        }
+        let age = self.age().map(|(n, _)| n);
+        if age != self.age_drawn {
+            self.age_drawn = age;
+            changed = true;
+        }
+        changed
+    }
+
+    /// Seconds until `tick` has something to do with no answer landing: the
+    /// next refresh, or the next change of "Updated … ago".
+    fn next_tick(&self) -> Option<f64> {
+        let refresh = self.may_refresh().then(|| self.asked + f64::from(self.auto_refresh) - self.now);
+        let words = self.updated.map(|at| {
+            let (age, unit) = (self.now - at, if self.now - at < 3600.0 { 60.0 } else { 3600.0 });
+            unit - age % unit
+        });
+        // Never sooner than a moment, so rounding at a boundary cannot spin the loop.
+        [refresh, words].into_iter().flatten().reduce(f64::min).map(|wait| wait.max(0.05))
+    }
+
+    /// The window gained or lost focus (`App::on_focus`). Coming back is
+    /// handled by the next `tick`, which has the clock.
+    pub fn window_focus(&mut self, focused: bool, tx: &mut Tx) {
+        if focused {
+            self.focus_gained = true;
+            tx.wake_after(std::time::Duration::ZERO);
+        }
+    }
+
+    /// How old the list on screen is: a number and whether it counts hours
+    /// (else minutes). `None` before a list has arrived.
+    fn age(&self) -> Option<(u64, bool)> {
+        let age = (self.now - self.updated?).max(0.0);
+        Some(if age < 3600.0 { ((age / 60.0) as u64, false) } else { ((age / 3600.0) as u64, true) })
+    }
+
+    /// "Updated 3 min ago": when the list on screen arrived. An age, not a
+    /// time of day, because it answers the question the reader has (can I
+    /// trust this list?) without arithmetic, and needs no time zone.
+    pub fn updated_label(&self) -> Option<String> {
+        Some(match self.age()? {
+            (0, false) => "Updated just now".to_string(),
+            (n, false) => format!("Updated {n} min ago"),
+            (n, true) => format!("Updated {n} h ago"),
+        })
+    }
+
+    /// The label of the refresh interval in effect.
+    pub fn auto_refresh_label(&self) -> Option<&'static str> {
+        settings::REFRESH_CHOICES.iter().find(|(_, secs)| *secs == self.auto_refresh).map(|(label, _)| *label)
+    }
+
+    /// Choose a refresh interval by its label in `settings::REFRESH_CHOICES`
+    /// and remember it. `asked` is left alone: turning refresh on over an
+    /// old list reads at once.
+    pub fn choose_auto_refresh(&mut self, label: &str) {
+        self.refresh_menu = false;
+        let Some((_, secs)) = settings::REFRESH_CHOICES.iter().find(|(l, _)| *l == label) else { return };
+        self.auto_refresh = *secs;
+        // A settings file that cannot be written costs only the memory of
+        // this choice; it holds for the run, and there is nothing to retry.
+        let _ = settings::save_refresh(&mut self.prefs, *secs);
     }
 
     // -- Connection settings -------------------------------------------------------------------
@@ -594,6 +768,9 @@ impl State {
         self.pane = Pane::List;
         self.detail = Load::Idle;
         self.stale = Stale::default();
+        self.updated = None;
+        self.background = false;
+        self.asked = self.now;
         self.load_projects();
     }
 
@@ -601,12 +778,16 @@ impl State {
         self.projects_req.is_pending() || self.issues_req.is_pending() || self.detail_req.is_pending()
     }
 
-    /// Land finished work. True when visible state changed.
-    pub fn poll(&mut self, tx: &mut Tx) -> bool {
-        let changed = self.land();
+    /// `AppSpec::poll`: one `tick`, then ask to be woken for the next one.
+    /// Rune keeps no timer thread for this; the wake only schedules a frame.
+    pub fn poll(&mut self, clock: f64, tx: &mut Tx) -> bool {
+        let changed = self.tick(clock);
         // Answers land without animation, so the first second after launch stays still.
         if changed {
             tx.instant();
+        }
+        if let Some(wait) = self.next_tick() {
+            tx.wake_after(std::time::Duration::from_secs_f64(wait));
         }
         changed
     }
@@ -619,6 +800,10 @@ impl State {
                 Ok(projects) => {
                     let first = projects.first().map(|p| p.name.clone());
                     let current_gone = self.project.as_ref().is_some_and(|c| !projects.iter().any(|p| &p.name == c));
+                    // A server with no projects has no list to date but this one.
+                    if projects.is_empty() {
+                        self.updated = Some(self.now);
+                    }
                     self.projects = Load::Ready(projects);
                     self.stale.projects = None;
                     if (self.project.is_none() || current_gone)
@@ -637,7 +822,10 @@ impl State {
             changed = true;
             match answer {
                 Ok(issues) => {
+                    // The selection, sort and filters are kept by issue id
+                    // and column, so the new rows fall under them as they are.
                     self.issues = Load::Ready(issues);
+                    self.updated = Some(self.now);
                     self.stale.issues = None;
                     self.resort();
                     self.refilter();
@@ -683,6 +871,9 @@ impl State {
                     }
                 }
             }
+        }
+        if changed && !self.is_loading() {
+            self.background = false;
         }
         changed
     }
@@ -1049,12 +1240,13 @@ mod tests {
         }
     }
 
-    /// Land answers until no request is pending.
+    /// Land answers until no request is pending and none is left to take.
+    /// Pending is read before landing: once nothing is pending every answer
+    /// is there to take, and a landing that takes one may have started
+    /// another read (the first project's issues), so it goes round again.
     fn drain(s: &mut State) {
         for _ in 0..500 {
-            s.land();
-            if !s.is_loading() {
-                s.land();
+            if !s.is_loading() && !s.land() {
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -1144,6 +1336,223 @@ mod tests {
         drain(&mut s);
         assert!(s.issues.ready().is_some());
         assert_eq!(s.stale, Stale::default());
+    }
+
+    /// The sample server with a lighthouse project whose issues change
+    /// between reads, as other people's work changes a real one.
+    struct Shifting {
+        lighthouse: std::sync::Mutex<Vec<IssueSummary>>,
+    }
+
+    impl Source for Shifting {
+        fn projects(&self) -> Result<Vec<Project>, Failure> {
+            Sample.projects()
+        }
+        fn issues(&self, database: &str) -> Result<Vec<IssueSummary>, Failure> {
+            if database == "lighthouse" { Ok(self.lighthouse.lock().unwrap().clone()) } else { Sample.issues(database) }
+        }
+        fn issue(&self, database: &str, id: &str) -> Result<Option<IssueDetail>, Failure> {
+            Sample.issue(database, id)
+        }
+        fn label(&self) -> String {
+            "Shifting".into()
+        }
+    }
+
+    #[test]
+    fn the_windows_own_refresh_merges_new_rows_under_the_same_view() {
+        let source = Arc::new(Shifting { lighthouse: std::sync::Mutex::new(Sample.issues("lighthouse").unwrap()) });
+        let mut s = State::new(source.clone(), Backing::detached());
+        s.load_projects();
+        drain(&mut s);
+        s.sort("priority", SortDir::Descending);
+        s.status_filter = 2; // Open
+        s.search.replace_text("lh-");
+        s.refilter();
+        let (gone, kept) = (ids(&s)[0].clone(), ids(&s)[1].clone());
+        s.select_issue(&kept);
+        drain(&mut s);
+        assert!(s.open_detail());
+        s.trail.back.push("lh-1".into());
+        let before = (s.issues.clone(), s.detail.clone(), s.visible.clone(), s.trail.clone());
+
+        // Meanwhile, on the server: the selected issue is renamed, the row
+        // above it is deleted, a new one is filed, and the order changes.
+        {
+            let mut issues = source.lighthouse.lock().unwrap();
+            issues.retain(|i| i.id != gone);
+            let mut filed = issues.iter().find(|i| i.id == kept).unwrap().clone();
+            filed.id = "lh-99".into();
+            filed.priority = 0;
+            issues.push(filed);
+            issues.iter_mut().find(|i| i.id == kept).unwrap().title = "Renamed".into();
+            issues.reverse();
+        }
+
+        s.tick(0.0);
+        assert!(!s.tick(59.0) && s.asked == 0.0, "not before the interval");
+        assert!(s.tick(60.0) && s.asked == 60.0 && s.background);
+        assert_eq!((&s.issues, &s.detail, &s.visible), (&before.0, &before.1, &before.2), "nothing blanks meanwhile");
+        drain(&mut s);
+
+        assert_eq!(s.issue.as_deref(), Some(kept.as_str()), "the selection is the same issue");
+        assert!(s.table.is_selected(&kept));
+        let row = s.selected_row().expect("still among the rows");
+        assert_eq!(s.visible_issue(row).unwrap().title, "Renamed", "with its new content");
+        assert!(matches!(s.detail, Load::Ready(Some(_))));
+        assert_eq!((s.pane, &s.trail), (Pane::Detail, &before.3), "reading it, the way back intact");
+        assert_eq!((s.status_filter, s.search.text.as_str()), (2, "lh-"), "the filters hold");
+        assert_eq!(s.table.sort(), Some(("priority", SortDir::Descending)), "and the sort");
+        let rows = ids(&s);
+        assert!(rows.contains(&"lh-99".to_string()) && !rows.contains(&gone), "{rows:?}");
+        let priorities: Vec<_> = (0..rows.len()).map(|r| s.visible_issue(r).unwrap().priority).collect();
+        assert!(priorities.windows(2).all(|p| p[0] >= p[1]), "new rows are sorted in: {priorities:?}");
+        assert!((0..rows.len()).all(|r| s.visible_issue(r).unwrap().status == "open"));
+        assert_eq!((s.updated, s.background, s.stale), (Some(60.0), false, Stale::default()));
+    }
+
+    #[test]
+    fn the_window_refreshes_on_its_interval_and_when_it_comes_back() {
+        let mut s = State::new(Arc::new(Sample), Backing::detached());
+        assert_eq!(s.auto_refresh, settings::DEFAULT_REFRESH);
+        s.load_projects();
+        drain(&mut s);
+        s.tick(0.0);
+        s.tick(59.9);
+        assert_eq!(s.asked, 0.0);
+        s.tick(60.0);
+        assert!(s.asked == 60.0 && s.background);
+        drain(&mut s);
+        assert!(!s.background);
+
+        // A refresh by hand is not a background one, and postpones the next.
+        s.tick(100.0);
+        s.refresh();
+        assert!(s.asked == 100.0 && !s.background);
+        drain(&mut s);
+        s.tick(159.0);
+        assert_eq!(s.asked, 100.0);
+        s.tick(160.0);
+        assert_eq!(s.asked, 160.0);
+        drain(&mut s);
+
+        // Never behind a dialog; as soon as it closes.
+        s.shortcuts = true;
+        s.tick(300.0);
+        assert_eq!(s.asked, 160.0);
+        s.shortcuts = false;
+        s.tick(300.0);
+        assert_eq!(s.asked, 300.0);
+        drain(&mut s);
+
+        // Off is off, for the interval and for coming back to the window.
+        s.refresh_menu = true;
+        s.choose_auto_refresh("Auto off");
+        assert_eq!((s.auto_refresh, s.refresh_menu, s.auto_refresh_label()), (0, false, Some("Auto off")));
+        s.focus_gained = true;
+        s.tick(10_000.0);
+        assert!(
+            s.asked == 300.0 && s.next_tick().is_some_and(|wait| wait > 60.0),
+            "only the age label asks for a wake"
+        );
+
+        // Turned on over an old list, it reads at once.
+        s.choose_auto_refresh("Auto 5 min");
+        s.tick(10_000.0);
+        assert_eq!(s.asked, 10_000.0);
+        drain(&mut s);
+        // Coming back to the window re-reads sooner than the interval, but
+        // not on every flick between windows.
+        s.focus_gained = true;
+        s.tick(10_004.0);
+        assert!(s.asked == 10_000.0 && !s.focus_gained);
+        s.tick(10_005.0);
+        assert_eq!(s.asked, 10_000.0, "focus is an event, not a state");
+        s.focus_gained = true;
+        s.tick(10_005.0);
+        assert!(s.asked == 10_005.0 && s.background);
+        drain(&mut s);
+
+        assert_eq!(settings::load_refresh(&s.prefs), 300, "the choice is in the settings file");
+        s.choose_auto_refresh("no such choice");
+        assert_eq!(s.auto_refresh, 300);
+    }
+
+    #[test]
+    fn the_windows_own_refresh_retries_quietly_and_leaves_the_users_failures_alone() {
+        let source = Flaky::new(Some(Failure::Unreachable));
+        let mut s = State::new(source.clone(), Backing::detached());
+        s.load_projects();
+        drain(&mut s);
+        s.tick(60.0);
+        assert_eq!(s.asked, 60.0, "an unreachable server is asked again");
+        assert_eq!(s.projects, Load::Failed(Failure::Unreachable), "without the pane going back to loading");
+        drain(&mut s);
+        assert_eq!(s.projects, Load::Failed(Failure::Unreachable));
+
+        source.set(None);
+        s.tick(120.0);
+        drain(&mut s);
+        assert!(s.projects.ready().is_some() && s.issues.ready().is_some(), "and the window fills when it answers");
+        assert_eq!(s.updated, Some(120.0));
+
+        // Over loaded data a failed read is the stale banner, and the age
+        // keeps counting from the last good list.
+        source.set(Some(Failure::Unreachable));
+        s.tick(180.0);
+        drain(&mut s);
+        assert_eq!((s.stale.failure(), s.updated), (Some(Failure::Unreachable), Some(120.0)));
+        assert_eq!(s.updated_label().as_deref(), Some("Updated 1 min ago"));
+        source.set(Some(Failure::AuthenticationRejected));
+        s.tick(240.0);
+        assert_eq!(s.asked, 240.0);
+        drain(&mut s);
+        assert_eq!(s.stale.failure(), Some(Failure::AuthenticationRejected));
+
+        // A rejected password is not sent again until the user asks.
+        s.tick(300.0);
+        s.focus_gained = true;
+        s.tick(360.0);
+        assert!(s.asked == 240.0 && !s.may_refresh());
+        source.set(None);
+        s.refresh();
+        drain(&mut s);
+        assert_eq!(s.stale, Stale::default());
+        assert!(s.may_refresh());
+
+        for (first, retried) in [(Failure::CredentialUnavailable, false), (Failure::Unknown, true)] {
+            let mut s = State::new(Flaky::new(Some(first)), Backing::detached());
+            s.load_projects();
+            drain(&mut s);
+            s.tick(60.0);
+            assert_eq!(s.asked == 60.0, retried, "{first:?}");
+            drain(&mut s);
+        }
+    }
+
+    #[test]
+    fn the_age_of_the_list_is_said_in_minutes_then_hours() {
+        let mut s = loaded();
+        s.auto_refresh = 0;
+        assert_eq!((s.updated_label(), s.next_tick()), (None, None), "no list has arrived, and nothing to wake for");
+        s.updated = Some(10.0);
+        assert!(s.tick(10.0));
+        assert_eq!(s.updated_label().as_deref(), Some("Updated just now"));
+        assert!(!s.tick(40.0), "the same words: no redraw");
+        assert!(s.next_tick().is_some_and(|wait| (wait - 30.0).abs() < 1e-6), "woken when the words change");
+        assert!(s.tick(70.0));
+        assert_eq!(s.updated_label().as_deref(), Some("Updated 1 min ago"));
+        s.tick(10.0 + 3599.0);
+        assert_eq!(s.updated_label().as_deref(), Some("Updated 59 min ago"));
+        assert!(s.tick(10.0 + 3600.0));
+        assert_eq!(s.updated_label().as_deref(), Some("Updated 1 h ago"));
+        assert!(!s.tick(10.0 + 5000.0));
+        assert!(s.tick(10.0 + 7200.0));
+        assert_eq!(s.updated_label().as_deref(), Some("Updated 2 h ago"));
+
+        // Another project's list has its own age.
+        s.select_project("pantry");
+        assert_eq!(s.updated_label(), None);
     }
 
     #[test]

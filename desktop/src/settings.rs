@@ -29,6 +29,30 @@ pub const DEFAULT_USER: &str = "root";
 const HOST_KEY: &str = "dolt.host";
 const PORT_KEY: &str = "dolt.port";
 const USER_KEY: &str = "dolt.user";
+const REFRESH_KEY: &str = "refresh.seconds";
+
+/// How often the window can re-read the server by itself: the choices the
+/// toolbar offers, as seconds between reads, 0 for never. A fixed list
+/// rather than a free number, so the control can always show the setting in
+/// effect and no file can ask for a read every second.
+pub const REFRESH_CHOICES: [(&str, u32); 5] =
+    [("Auto off", 0), ("Auto 30 s", 30), ("Auto 1 min", 60), ("Auto 5 min", 300), ("Auto 15 min", 900)];
+/// Often enough that a list left open is rarely wrong, and one small read a
+/// minute is nothing to a server the web app polls harder.
+pub const DEFAULT_REFRESH: u32 = 60;
+
+/// The saved refresh interval. A missing file, a missing key or a value that
+/// is not one of the choices is the default, without an error.
+pub fn load_refresh(prefs: &Prefs) -> u32 {
+    prefs
+        .get::<u32>(REFRESH_KEY)
+        .filter(|secs| REFRESH_CHOICES.iter().any(|(_, c)| c == secs))
+        .unwrap_or(DEFAULT_REFRESH)
+}
+
+pub fn save_refresh(prefs: &mut Prefs, secs: u32) -> Result<(), PrefsError> {
+    prefs.set(REFRESH_KEY, &secs)
+}
 
 /// The connection the settings file holds. No password: see the module docs.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -358,6 +382,26 @@ mod tests {
         assert_eq!((s.port, s.user.as_str()), (DEFAULT_PORT, DEFAULT_USER), "bad fields fall back to defaults");
         std::fs::write(&path, r#"{"dolt.port":3306}"#).unwrap();
         assert_eq!(Stored::load(&Prefs::at(&path)), None, "no host, no connection");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn the_refresh_interval_round_trips_and_falls_back_to_the_default() {
+        let path = scratch("refresh");
+        assert_eq!(load_refresh(&Prefs::at(&path)), DEFAULT_REFRESH, "a missing file is the default");
+        let mut prefs = Prefs::at(&path);
+        for (_, secs) in REFRESH_CHOICES {
+            save_refresh(&mut prefs, secs).unwrap();
+            assert_eq!(load_refresh(&Prefs::at(&path)), secs, "a second open reads it back, off included");
+        }
+        stored().save(&mut prefs).unwrap();
+        assert_eq!(load_refresh(&Prefs::at(&path)), 900, "saving a connection leaves it alone");
+        for bad in
+            [r#"{"refresh.seconds":1}"#, r#"{"refresh.seconds":"often"}"#, r#"{"refresh.seconds":-60}"#, "{ not json"]
+        {
+            std::fs::write(&path, bad).unwrap();
+            assert_eq!(load_refresh(&Prefs::at(&path)), DEFAULT_REFRESH, "{bad}");
+        }
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 

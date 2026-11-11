@@ -116,6 +116,11 @@ window: it still needs a running server and gains nothing native.
   (precedence, the settings file through Rune's `prefs`, the Keychain through
   the `security-framework` crate); the form's state is in
   [`desktop/src/app.rs`](../../desktop/src/app.rs).
+- Automatic refresh (`State::tick` in `desktop/src/app.rs`): the same three
+  reads as a manual refresh, on a saved interval and on window focus, never
+  overlapping and never repeating a rejected or missing password. It adds no
+  statement and no authority; see
+  [Automatic refresh](../../desktop/README.md#automatic-refresh).
 - Tests: `cargo test` in `desktop/` (unit: no server, no keychain);
   `cargo test -- --ignored` against a live server and the real Keychain.
   Headless scenes: `cargo run -- --snap out.png --scene sample`.

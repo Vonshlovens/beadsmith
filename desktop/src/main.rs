@@ -48,6 +48,20 @@ fn sample_scene(s: &mut State) {
     s.issue = Some("lh-1".into());
     s.table.select("lh-1");
     s.detail = Load::Ready(Sample.issue("lighthouse", "lh-1").ok().flatten());
+    s.updated = Some(0.0);
+}
+
+/// The window re-reading by itself: everything stays, and a bead beside the
+/// list's age says a read is in flight.
+fn refreshing_scene(s: &mut State) {
+    sample_scene(s);
+    s.background = true;
+}
+
+/// The refresh interval being chosen.
+fn auto_refresh_scene(s: &mut State) {
+    sample_scene(s);
+    s.refresh_menu = true;
 }
 
 fn filtered_scene(s: &mut State) {
@@ -278,6 +292,8 @@ fn main() {
             ("empty-project", empty_project_scene),
             ("no-matches", no_matches_scene),
             ("stale", stale_scene),
+            ("refreshing", refreshing_scene),
+            ("auto-refresh", auto_refresh_scene),
             ("issues-failed", issues_failed_scene),
             ("issue-failed", issue_failed_scene),
             ("issue-gone", issue_gone_scene),
@@ -293,12 +309,12 @@ fn main() {
             ("shortcuts", shortcuts_scene),
         ],
         setup: Some(|s, waker| s.setup(waker)),
-        poll: Some(|s, _, tx| s.poll(tx)),
+        poll: Some(|s, clock, tx| s.poll(clock, tx)),
         on_key: Some(keys::on_key),
         families: theme::FAMILIES,
         ..AppSpec::new("Beadsmith", (1440.0, 880.0), init, view::view)
     };
-    let mut app = App::new(spec).chrome(chrome());
+    let mut app = App::new(spec).chrome(chrome()).on_focus(|s, focused, tx| s.window_focus(focused, tx));
     // Rune has native menus on macOS only; elsewhere the keys alone answer.
     if cfg!(target_os = "macos") || rune::tooling::is_headless() {
         // Edit and Window menus, so Cmd-W, Cmd-M and the editing keys are the system's.
