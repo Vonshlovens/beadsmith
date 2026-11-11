@@ -216,8 +216,32 @@ export const automation_create_schema = z
 	})
 	.strict();
 
-/** Body of `PATCH /api/automations/:id`: pause or resume. */
-export const automation_patch_schema = z.object({ enabled: z.boolean() }).strict();
+/**
+ * Body of `PATCH /api/automations/:id`: pause or resume, or edit. An edit
+ * replaces the name, schedule and overlap, and a loop automation's agent CLI
+ * and iteration limit; it keeps the project, the operation, any launch text
+ * (which the browser never sees, so it could not send it back), the runner
+ * and the model and effort. Changing those is a new automation.
+ */
+export const automation_patch_schema = z.union([
+	z.object({ enabled: z.boolean() }).strict(),
+	z
+		.object({
+			name: z.string().trim().min(1).max(AUTOMATION_NAME_MAX),
+			...automation_schedule_shape,
+			overlap: z.enum(AUTOMATION_OVERLAPS),
+			loop: z
+				.object({
+					harness: loop_launch_shape.harness,
+					max_iterations: loop_launch_shape.max_iterations
+				})
+				.strict()
+				.optional()
+		})
+		.strict()
+]);
+export type AutomationPatchBody = z.infer<typeof automation_patch_schema>;
+export type AutomationEditBody = Exclude<AutomationPatchBody, { enabled: boolean }>;
 
 /** Query of `GET /api/automations`. */
 export const automations_query_schema = z.object({ project: project_id_schema.optional() });

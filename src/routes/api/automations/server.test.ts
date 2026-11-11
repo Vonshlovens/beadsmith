@@ -208,6 +208,84 @@ describe('/api/automations/:id', () => {
 		);
 	});
 
+	it('edits the schedule and loop settings and keeps the history', async () => {
+		const id = await createdId();
+		await RUN(event('POST', `/api/automations/${id}/run`, { params: { id } }) as Event<typeof RUN>);
+		const edit = {
+			name: 'Weekday build',
+			cron: '30 9 * * 1-5',
+			time_zone: 'Europe/London',
+			overlap: 'queue',
+			loop: { max_iterations: 4, harness: 'codex' }
+		};
+		const response = await PATCH(
+			event('PATCH', `/api/automations/${id}`, { params: { id }, body: edit }) as Event<
+				typeof PATCH
+			>
+		);
+		expect(response.status).toBe(200);
+		const view = ((await response.json()) as { automation: AutomationView }).automation;
+		expect(view).toMatchObject({
+			name: 'Weekday build',
+			cron: '30 9 * * 1-5',
+			time_zone: 'Europe/London',
+			overlap: 'queue',
+			launch: {
+				operation: 'loop',
+				issue_id: 'bw-1',
+				loop: { mode: 'build', max_iterations: 4, harness: 'codex' }
+			}
+		});
+		const detail = (await (
+			await GET_ONE(
+				event('GET', `/api/automations/${id}`, { params: { id } }) as Event<typeof GET_ONE>
+			)
+		).json()) as AutomationDetailResponse;
+		expect(detail.runs).toHaveLength(1);
+
+		// No harness means ralph's default again.
+		await PATCH(
+			event('PATCH', `/api/automations/${id}`, {
+				params: { id },
+				body: { ...edit, loop: { max_iterations: 4 } }
+			}) as Event<typeof PATCH>
+		);
+		expect((await store.get(id))?.payload).toEqual({
+			operation: 'loop',
+			mode: 'build',
+			issue_id: 'bw-1',
+			max_iterations: 4
+		});
+	});
+
+	it('refuses an edit with a bad schedule, extra keys, or loop settings on a non-loop', async () => {
+		const id = await createdId();
+		const patch = (body: unknown, target = id) =>
+			PATCH(
+				event('PATCH', `/api/automations/${target}`, { params: { id: target }, body }) as Event<
+					typeof PATCH
+				>
+			);
+		const edit = { name: 'x', cron: '0 2 * * *', time_zone: 'UTC', overlap: 'skip' };
+		expect((await patch({ ...edit, cron: '0 0 30 2 *' })).status).toBe(400);
+		expect((await patch({ ...edit, time_zone: 'Nowhere/Land' })).status).toBe(400);
+		expect((await patch({ ...edit, project_id: 'd_other' })).status).toBe(400);
+		expect((await patch({ ...edit, enabled: false })).status).toBe(400);
+		expect((await patch({ ...edit, loop: { max_iterations: 0 } })).status).toBe(400);
+		expect((await store.get(id))?.name).toBe('Nightly build on the epic');
+
+		const tackle = await create({
+			...NIGHTLY,
+			launch: { operation: 'tackle', issue_id: 'bw-1' }
+		});
+		const tackle_id = ((await tackle.json()) as { automation: AutomationView }).automation.id;
+		expect((await patch({ ...edit, loop: { max_iterations: 3 } }, tackle_id)).status).toBe(400);
+		expect((await patch(edit, tackle_id)).status).toBe(200);
+
+		const missing = 'au_' + '0'.repeat(32);
+		expect((await patch(edit, missing)).status).toBe(404);
+	});
+
 	it('runs now, records the run with its mission, and shows it in the history', async () => {
 		const id = await createdId();
 		const response = await RUN(

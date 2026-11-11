@@ -50,7 +50,7 @@ import type { Todo, TodoComment, TodoStatus } from '#lib/server/todos/store.js';
 import type { RouteIssue } from '#lib/todos/route-state.js';
 import type { AgentChoice } from '#lib/client/agent-choice.js';
 import type { LoopLaunch } from '#lib/client/loop.js';
-import type { AutomationLoopLaunch } from '#lib/client/automations.js';
+import type { AutomationEdit, AutomationLoopLaunch } from '#lib/client/automations.js';
 import type {
 	MateChat,
 	MateChatDetail,
@@ -629,6 +629,19 @@ export const api = {
 			...init,
 			body: { ...launch_field(), ...body }
 		});
+	},
+
+	/**
+	 * Edit its name, schedule and overlap, and a loop's agent CLI and
+	 * iteration limit (absent `harness` means ralph's default). The project,
+	 * what it runs, the runner and the model and effort stay as saved.
+	 */
+	updateAutomation(id: string, body: AutomationEdit, init?: RequestInitLike) {
+		return request<{ automation: AutomationView }>(
+			'PATCH',
+			`/automations/${encodeURIComponent(id)}`,
+			{ ...init, body }
+		);
 	},
 
 	/** Pause (`false`) or resume (`true`) the schedule. */

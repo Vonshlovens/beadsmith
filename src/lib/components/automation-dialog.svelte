@@ -7,8 +7,14 @@
 	 * them. The schedule previews its next fire times from the server, which
 	 * owns the cron parser. Saving lands on the automation's page. The server
 	 * checks everything again.
+	 *
+	 * Given `automation`, it edits that one in place so its history stays:
+	 * the name, the schedule, the overlap and a loop's agent CLI and
+	 * iteration limit change; the project, what it runs, the runner and the
+	 * model and effort are shown as saved (changing them is a new
+	 * automation, since the browser never sees a launch's text to send back).
 	 */
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import CalendarCheckIcon from 'phosphor-svelte/lib/CalendarCheckIcon';
@@ -22,26 +28,38 @@
 	import { ApiError, api, errorMessage } from '#lib/client/api.js';
 	import { run_place } from '#lib/client/agent-runner.svelte.js';
 	import {
+		automationEdit,
 		automationLaunch,
 		browserTimeZone,
 		describeSchedule,
 		formatSlot,
+		launchSummary,
 		SCHEDULE_PRESETS,
 		type AutomationTarget
 	} from '#lib/client/automations.js';
 	import { iterationLimitError, loopAvailability, loopPresets } from '#lib/client/loop.js';
 	import { projectList, statusSnapshot } from '#lib/client/projects.svelte.js';
 	import { tip } from '#lib/client/tooltip.js';
-	import { AUTOMATION_NAME_MAX, type AutomationOverlap } from '#lib/automations.js';
+	import {
+		AUTOMATION_NAME_MAX,
+		type AutomationOverlap,
+		type AutomationView
+	} from '#lib/automations.js';
 	import { RALPH_HARNESSES, type RalphHarness } from '#lib/ralph.js';
 
 	interface Props {
 		open: boolean;
 		/** The project to start with, such as the list's filter. */
 		project_id?: string;
+		/** Edit this saved automation instead of creating one. */
+		automation?: AutomationView;
 	}
 
-	let { open = $bindable(false), project_id }: Props = $props();
+	let { open = $bindable(false), project_id, automation }: Props = $props();
+	const editing = $derived(automation !== undefined);
+	/** The saved loop's flags while editing; a non-loop automation has none to edit. */
+	const saved_loop = $derived(automation?.launch.loop);
+	const has_loop = $derived(!editing || saved_loop !== undefined);
 
 	const [BUILD, PLAN] = loopPresets('project');
 	const WHAT: { id: AutomationTarget; label: string; hint: string; max_iterations: number }[] = [
@@ -98,23 +116,22 @@
 		preview !== null && 'error' in preview ? preview.error : undefined
 	);
 	const project_name = $derived(projects.find((p) => p.id === project)?.name);
+	const provider = $derived(
+		automation === undefined ? run_place.launchField().provider : automation.provider
+	);
 	const availability = $derived(
-		loopAvailability(
-			statusSnapshot(),
-			projects.find((p) => p.id === project)?.allow,
-			run_place.launchField().provider
-		)
+		loopAvailability(statusSnapshot(), projects.find((p) => p.id === project)?.allow, provider)
 	);
 	// As in the loop dialog: only when the runner runs loops and can choose a
 	// model, since the server refuses a choice anywhere else.
 	const choice_takes = $derived(
-		availability.enabled && launchTakesChoice(statusSnapshot(), run_place.launchField().provider)
+		!editing && availability.enabled && launchTakesChoice(statusSnapshot(), provider)
 	);
 	const can_save = $derived(
 		!submitting &&
 			project !== '' &&
-			limit_error === undefined &&
-			bead_error === undefined &&
+			(!has_loop || limit_error === undefined) &&
+			(editing || bead_error === undefined) &&
 			name_error === undefined &&
 			schedule_error === undefined
 	);
@@ -137,6 +154,22 @@
 	});
 
 	function reset() {
+		tried = false;
+		server_error = undefined;
+		if (automation !== undefined) {
+			project = automation.project_id;
+			const loop = automation.launch.loop;
+			what = loop?.mode === 'plan' ? 'plan' : loop?.issue_id === undefined ? 'build' : 'bead';
+			bead = loop?.issue_id ?? '';
+			harness = loop?.harness ?? 'default';
+			iterations = String(loop?.max_iterations ?? WHAT[0]!.max_iterations);
+			cron = automation.cron;
+			time_zone = automation.time_zone;
+			overlap = automation.overlap;
+			name = automation.name;
+			name_touched = true;
+			return;
+		}
 		project = project_id ?? projects[0]?.id ?? '';
 		what = 'build';
 		bead = '';
@@ -146,8 +179,6 @@
 		time_zone = browserTimeZone();
 		overlap = 'skip';
 		name_touched = false;
-		tried = false;
-		server_error = undefined;
 	}
 
 	// Ask the server for the next fire times while the schedule is typed.
@@ -192,7 +223,28 @@
 		if (!can_save) return;
 		submitting = true;
 		try {
-			const { automation } = await api.createAutomation({
+			if (automation !== undefined) {
+				const { automation: saved } = await api.updateAutomation(
+					automation.id,
+					automationEdit(automation.launch, {
+						name,
+						cron,
+						time_zone,
+						overlap,
+						max_iterations: Number(iterations.trim()),
+						...(harness === 'default' ? {} : { harness })
+					})
+				);
+				open = false;
+				toast.success('Automation updated', {
+					description: saved.next_run
+						? `Next run ${formatSlot(saved.next_run, saved.time_zone)}`
+						: undefined
+				});
+				await invalidateAll();
+				return;
+			}
+			const { automation: created } = await api.createAutomation({
 				project_id: project,
 				name: name.trim(),
 				cron: cron.trim(),
@@ -210,11 +262,11 @@
 			});
 			open = false;
 			toast.success('Automation saved', {
-				description: automation.next_run
-					? `First run ${formatSlot(automation.next_run, automation.time_zone)}`
+				description: created.next_run
+					? `First run ${formatSlot(created.next_run, created.time_zone)}`
 					: undefined
 			});
-			await goto(`/automations/${automation.id}`);
+			await goto(`/automations/${created.id}`);
 		} catch (error) {
 			// Shown in the form, which keeps everything typed.
 			server_error = errorMessage(error);
@@ -229,7 +281,9 @@
 		<form class="form" onsubmit={save} novalidate>
 			<div class="modal-hd">
 				<CalendarCheckIcon size={15} aria-hidden="true" />
-				<Dialog.Title class="hd-title">New automation</Dialog.Title>
+				<Dialog.Title class="hd-title"
+					>{editing ? 'Edit automation' : 'New automation'}</Dialog.Title
+				>
 				<span class="ti">{project_name ?? ''}</span>
 				<span class="spacer"></span>
 				<button
@@ -245,10 +299,17 @@
 
 			<div class="modal-bd">
 				<div class="grid2">
-					<label class="field">
-						<span class="lbl">Project</span>
-						<SelectField bind:value={project} items={project_items} aria-label="Project" />
-					</label>
+					{#if automation}
+						<div class="field">
+							<span class="lbl">Project</span>
+							<span class="fixed">{automation.project_name}</span>
+						</div>
+					{:else}
+						<label class="field">
+							<span class="lbl">Project</span>
+							<SelectField bind:value={project} items={project_items} aria-label="Project" />
+						</label>
+					{/if}
 					<label class="field">
 						<span class="lbl">Name</span>
 						<input
@@ -268,56 +329,74 @@
 
 				<fieldset class="group mt-4">
 					<legend class="lbl">What it runs</legend>
-					<div class="presets" role="radiogroup" aria-label="What the loop works on">
-						{#each WHAT as entry (entry.id)}
-							<button
-								class="preset"
-								class:is-on={what === entry.id}
-								type="button"
-								role="radio"
-								aria-checked={what === entry.id}
-								onclick={() => pick(entry.id)}>{entry.label}</button
-							>
-						{/each}
-					</div>
-					<p class="hint mt-2">{chosen.hint}</p>
-					<div class="grid3 mt-3">
-						{#if what === 'bead'}
+					{#if automation}
+						<p class="fixed">
+							{launchSummary(automation.launch)}
+							{#if saved_loop?.model || saved_loop?.effort}
+								<span class="faint"
+									>· {[saved_loop.model, saved_loop.effort].filter(Boolean).join(' · ')}</span
+								>
+							{/if}
+						</p>
+						<p class="hint mt-2">
+							To run something else, on another project or runner, or with another model, save a new
+							automation.
+						</p>
+					{:else}
+						<div class="presets" role="radiogroup" aria-label="What the loop works on">
+							{#each WHAT as entry (entry.id)}
+								<button
+									class="preset"
+									class:is-on={what === entry.id}
+									type="button"
+									role="radio"
+									aria-checked={what === entry.id}
+									onclick={() => pick(entry.id)}>{entry.label}</button
+								>
+							{/each}
+						</div>
+						<p class="hint mt-2">{chosen.hint}</p>
+					{/if}
+					{#if has_loop}
+						<div class="grid3 mt-3">
+							{#if what === 'bead' && !editing}
+								<label class="field">
+									<span class="lbl">Bead</span>
+									<input
+										class="input mono-num"
+										class:is-invalid={tried && bead_error !== undefined}
+										type="text"
+										autocomplete="off"
+										spellcheck="false"
+										placeholder="proj-abc"
+										bind:value={bead}
+										aria-invalid={tried && bead_error !== undefined}
+										aria-describedby={tried && bead_error ? 'au-bead-err' : undefined}
+									/>
+									{#if tried && bead_error}<span class="err" id="au-bead-err">{bead_error}</span
+										>{/if}
+								</label>
+							{/if}
 							<label class="field">
-								<span class="lbl">Bead</span>
+								<span class="lbl">Agent CLI</span>
+								<SelectField bind:value={harness} items={HARNESS_ITEMS} aria-label="Agent CLI" />
+							</label>
+							<label class="field">
+								<span class="lbl">Iterations, at most</span>
 								<input
 									class="input mono-num"
-									class:is-invalid={tried && bead_error !== undefined}
+									class:is-invalid={limit_error !== undefined}
 									type="text"
+									inputmode="numeric"
 									autocomplete="off"
-									spellcheck="false"
-									placeholder="proj-abc"
-									bind:value={bead}
-									aria-invalid={tried && bead_error !== undefined}
-									aria-describedby={tried && bead_error ? 'au-bead-err' : undefined}
+									bind:value={iterations}
+									aria-invalid={limit_error !== undefined}
+									aria-describedby={limit_error ? 'au-limit-err' : undefined}
 								/>
-								{#if tried && bead_error}<span class="err" id="au-bead-err">{bead_error}</span>{/if}
+								{#if limit_error}<span class="err" id="au-limit-err">{limit_error}</span>{/if}
 							</label>
-						{/if}
-						<label class="field">
-							<span class="lbl">Agent CLI</span>
-							<SelectField bind:value={harness} items={HARNESS_ITEMS} aria-label="Agent CLI" />
-						</label>
-						<label class="field">
-							<span class="lbl">Iterations, at most</span>
-							<input
-								class="input mono-num"
-								class:is-invalid={limit_error !== undefined}
-								type="text"
-								inputmode="numeric"
-								autocomplete="off"
-								bind:value={iterations}
-								aria-invalid={limit_error !== undefined}
-								aria-describedby={limit_error ? 'au-limit-err' : undefined}
-							/>
-							{#if limit_error}<span class="err" id="au-limit-err">{limit_error}</span>{/if}
-						</label>
-					</div>
+						</div>
+					{/if}
 					{#if choice_takes}
 						<div class="mt-3">
 							<AgentChoiceSelect takes={choice_takes} disabled={submitting} />
@@ -405,11 +484,16 @@
 			</div>
 
 			<div class="modal-ft">
-				<span class="why faint">Runs as you, while you are an admin.</span>
-				<span class="spacer"></span>
-				<RunnerSelect />
+				{#if automation}
+					<span class="why faint">Runs on {automation.provider ?? 'the default runner'}.</span>
+					<span class="spacer"></span>
+				{:else}
+					<span class="why faint">Runs as you, while you are an admin.</span>
+					<span class="spacer"></span>
+					<RunnerSelect />
+				{/if}
 				<button class="btn btn-sm btn-primary" type="submit" disabled={submitting}>
-					{submitting ? 'Saving…' : 'Save automation'}
+					{submitting ? 'Saving…' : editing ? 'Save changes' : 'Save automation'}
 				</button>
 			</div>
 		</form>
@@ -510,6 +594,16 @@
 	}
 	.preview {
 		min-height: 1.4em;
+	}
+	.fixed {
+		margin: 0;
+		min-height: 32px;
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: var(--s-1);
+		color: var(--tx-hi);
+		font-size: var(--t-sm);
 	}
 	.slots {
 		color: var(--tx-mid);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	automationEdit,
 	automationLaunch,
 	automationOutcomeKey,
 	describeSchedule,
@@ -100,5 +101,34 @@ describe('automationLaunch', () => {
 		expect(
 			automationLaunch('plan', { bead: 'bw-1', max_iterations: 5 }, { effort: 'low' })
 		).toEqual({ operation: 'loop', mode: 'plan', max_iterations: 5, effort: 'low' });
+	});
+});
+
+describe('automationEdit', () => {
+	const fields = {
+		name: ' Nightly ',
+		cron: ' 0 2 * * * ',
+		time_zone: 'UTC ',
+		overlap: 'skip' as const,
+		max_iterations: 5
+	};
+
+	it('sends loop settings for a loop, with the harness only when one is picked', () => {
+		const loop = { operation: 'loop' as const, loop: { mode: 'build' as const } };
+		expect(automationEdit(loop, fields)).toEqual({
+			name: 'Nightly',
+			cron: '0 2 * * *',
+			time_zone: 'UTC',
+			overlap: 'skip',
+			loop: { max_iterations: 5 }
+		});
+		expect(automationEdit(loop, { ...fields, harness: 'codex' }).loop).toEqual({
+			max_iterations: 5,
+			harness: 'codex'
+		});
+	});
+
+	it('leaves loop settings out for any other launch', () => {
+		expect(automationEdit({ operation: 'tackle', issue_id: 'bw-1' }, fields).loop).toBeUndefined();
 	});
 });

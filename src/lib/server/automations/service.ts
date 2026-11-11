@@ -11,6 +11,7 @@ import {
 	type AutomationView
 } from '#lib/automations.js';
 import type { DispatchProviderId, IssueDetail, Project } from '#lib/types.js';
+import type { DispatchPayload } from '../dispatch/types.js';
 import {
 	agentChoiceProblem,
 	configuredAgentChoices,
@@ -18,7 +19,7 @@ import {
 } from '../dispatch/agent-choice.js';
 import { launchPayload, payloadIssueId } from '../dispatch/payload.js';
 import { publicLoop } from '../dispatch/service.js';
-import type { LaunchBody } from '../validation.js';
+import type { AutomationEditBody, LaunchBody } from '../validation.js';
 import { CronError, isTimeZone, nextSlot, parseCron, upcomingSlots } from './cron.js';
 import type { Automation, AutomationRun, AutomationStore } from './store.js';
 
@@ -171,4 +172,55 @@ export async function createAutomation(
 		created_by: creator.id
 	});
 	return { ok: true, automation, project };
+}
+
+export const NOT_A_LOOP_MESSAGE = 'Only a loop automation has an agent CLI and an iteration limit.';
+
+export type EditAutomationResult =
+	| { ok: true; automation: Automation }
+	| { ok: false; code: 'bad_request' | 'not_found'; message: string };
+
+/**
+ * Edit a saved automation in place, so its history stays. The schedule is
+ * checked as when it was created; the bead and the model and effort are
+ * unchanged and checked again at each fire. The store moves the cursor to
+ * now, so the edit itself never fires a slot.
+ */
+export async function editAutomation(
+	id: string,
+	input: AutomationEditBody,
+	deps: { store: Pick<AutomationStore, 'get' | 'update'>; now(): Date }
+): Promise<EditAutomationResult> {
+	const automation = await deps.store.get(id);
+	if (automation === undefined) {
+		return { ok: false, code: 'not_found', message: 'automation not found' };
+	}
+	const schedule = checkSchedule(input.cron, input.time_zone, deps.now());
+	if (!schedule.ok) return { ok: false, code: 'bad_request', message: schedule.message };
+
+	let payload: DispatchPayload = automation.payload;
+	if (input.loop !== undefined) {
+		if (payload.operation !== 'loop') {
+			return { ok: false, code: 'bad_request', message: NOT_A_LOOP_MESSAGE };
+		}
+		// An absent harness means ralph's default, so the edit clears it.
+		const { harness: _previous, ...rest } = payload;
+		payload = {
+			...rest,
+			max_iterations: input.loop.max_iterations,
+			...(input.loop.harness === undefined ? {} : { harness: input.loop.harness })
+		};
+	}
+
+	const updated = await deps.store.update(id, {
+		name: input.name,
+		cron: input.cron,
+		time_zone: input.time_zone,
+		overlap: input.overlap,
+		payload
+	});
+	if (updated === undefined) {
+		return { ok: false, code: 'not_found', message: 'automation not found' };
+	}
+	return { ok: true, automation: updated };
 }

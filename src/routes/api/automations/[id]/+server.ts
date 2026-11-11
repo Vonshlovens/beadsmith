@@ -5,7 +5,8 @@ import { missionProjectNames } from '#lib/server/mission-names.js';
 import {
 	automationRunView,
 	automationUpcoming,
-	automationView
+	automationView,
+	editAutomation
 } from '#lib/server/automations/service.js';
 import { getAutomationStore } from '#lib/server/state/db.js';
 import { errorFromException, errorResponse, jsonResponse } from '#lib/server/security.js';
@@ -40,7 +41,11 @@ export const GET: RequestHandler = async ({ params }) => {
 	}
 };
 
-/** Pause or resume. Resuming never fires the slots missed while paused. */
+/**
+ * Pause or resume (`{enabled}`), or edit its name, schedule, overlap and loop
+ * settings. Resuming never fires the slots missed while paused, and an edit
+ * never fires a slot from before it.
+ */
 export const PATCH: RequestHandler = async ({ params, request }) => {
 	const id = parseValue(automation_id_schema, params.id);
 	if (!id.ok) return id.response;
@@ -48,8 +53,18 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 	if (!body.ok) return body.response;
 	try {
 		const store = await getAutomationStore();
-		const automation = await store.setEnabled(id.data, body.data.enabled);
-		if (automation === undefined) return errorResponse('not_found', 'automation not found');
+		let automation;
+		if ('enabled' in body.data) {
+			automation = await store.setEnabled(id.data, body.data.enabled);
+			if (automation === undefined) return errorResponse('not_found', 'automation not found');
+		} else {
+			const result = await editAutomation(id.data, body.data, {
+				store,
+				now: () => new Date()
+			});
+			if (!result.ok) return errorResponse(result.code, result.message);
+			automation = result.automation;
+		}
 		const [last_run] = await store.listRuns(automation.id, 1);
 		const names = await missionProjectNames();
 		return jsonResponse({

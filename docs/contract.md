@@ -315,7 +315,12 @@ time_zone, overlap?, provider?, launch}` validates `launch` with the same
 schema as a dispatch body (without its idempotency key and runner) and
 refuses an unknown project or bead and a schedule with no fire time in five
 years; `PATCH /api/automations/:id` `{enabled}` pauses or resumes (resuming
-never fires the slots missed while paused); `DELETE` removes the automation
+never fires the slots missed while paused), and `{name, cron, time_zone,
+overlap, loop?: {max_iterations, harness?}}` edits it in place, keeping its
+history: the schedule is checked as at creation, `loop` is refused for an
+automation that is not a loop, the project, launch text, runner and model
+and effort stay as saved, and the edit never fires a slot from before it;
+`DELETE` removes the automation
 and its history but not its missions; `POST /api/automations/:id/run`
 fires it once now through the scheduler's path.
 

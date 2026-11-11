@@ -87,6 +87,40 @@ describe('automation store', () => {
 		expect(runs.at(-1)?.slot).toBe(new Date(base + 60_000).toISOString());
 	});
 
+	it('edits in place, keeping its history and moving the cursor to now', async () => {
+		const automation = await create();
+		await store.claimSlot(automation.id, '2026-11-12T02:00:00.000Z', 'schedule');
+		clock = new Date('2026-11-12T09:00:00Z');
+		const edited = await store.update(automation.id, {
+			name: 'Morning',
+			cron: '0 6 * * *',
+			time_zone: 'UTC',
+			overlap: 'skip',
+			payload: { operation: 'loop', mode: 'plan', max_iterations: 7 }
+		});
+		expect(edited).toMatchObject({
+			name: 'Morning',
+			cron: '0 6 * * *',
+			time_zone: 'UTC',
+			overlap: 'skip',
+			provider: 'e2b',
+			created_by: 'acct_admin',
+			payload: { operation: 'loop', mode: 'plan', max_iterations: 7 },
+			last_slot: '2026-11-12T09:00:00.000Z',
+			updated_at: '2026-11-12T09:00:00.000Z'
+		});
+		expect(await store.listRuns(automation.id, 10)).toHaveLength(1);
+		expect(
+			await store.update('au_missing', {
+				name: 'x',
+				cron: '* * * * *',
+				time_zone: 'UTC',
+				overlap: 'skip',
+				payload: { operation: 'loop', mode: 'plan', max_iterations: 1 }
+			})
+		).toBeUndefined();
+	});
+
 	it('removes an automation with its history', async () => {
 		const automation = await create();
 		await store.claimSlot(automation.id, '2026-11-12T02:00:00.000Z', 'schedule');

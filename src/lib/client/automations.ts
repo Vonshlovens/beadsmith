@@ -6,6 +6,7 @@
  */
 import type {
 	AutomationLaunchView,
+	AutomationOverlap,
 	AutomationRunOutcome,
 	AutomationTrigger
 } from '#lib/automations.js';
@@ -240,5 +241,46 @@ export function automationLaunch(
 		...(settings.harness === undefined ? {} : { harness: settings.harness }),
 		...(choice.model === undefined ? {} : { model: choice.model }),
 		...(choice.effort === undefined ? {} : { effort: choice.effort })
+	};
+}
+
+/** What `PATCH /api/automations/:id` takes for an edit. */
+export interface AutomationEdit {
+	name: string;
+	cron: string;
+	time_zone: string;
+	overlap: AutomationOverlap;
+	loop?: { max_iterations: number; harness?: RalphHarness };
+}
+
+/**
+ * The edit for a saved automation from the dialog's fields. Loop settings
+ * go only with a loop automation (the server refuses them otherwise), and a
+ * missing harness asks for ralph's default.
+ */
+export function automationEdit(
+	launch: AutomationLaunchView,
+	fields: {
+		name: string;
+		cron: string;
+		time_zone: string;
+		overlap: AutomationOverlap;
+		max_iterations: number;
+		harness?: RalphHarness;
+	}
+): AutomationEdit {
+	return {
+		name: fields.name.trim(),
+		cron: fields.cron.trim(),
+		time_zone: fields.time_zone.trim(),
+		overlap: fields.overlap,
+		...(launch.loop === undefined
+			? {}
+			: {
+					loop: {
+						max_iterations: fields.max_iterations,
+						...(fields.harness === undefined ? {} : { harness: fields.harness })
+					}
+				})
 	};
 }

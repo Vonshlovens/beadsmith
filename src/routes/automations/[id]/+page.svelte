@@ -2,15 +2,18 @@
 	/**
 	 * One automation (ADR-0019 rule 7): what it launches and when, its next
 	 * fire times, and every run it fired, skipped or was refused, each linked
-	 * to its mission. Admins run it now, pause or resume it, and delete it
-	 * (its missions stay in Missions).
+	 * to its mission. Admins run it now, edit its schedule and loop settings
+	 * (its history stays), pause or resume it, and delete it (its missions
+	 * stay in Missions).
 	 */
 	import { goto, refreshAll } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
 	import RocketLaunchIcon from 'phosphor-svelte/lib/RocketLaunchIcon';
 	import PauseIcon from 'phosphor-svelte/lib/PauseIcon';
+	import PencilSimpleIcon from 'phosphor-svelte/lib/PencilSimpleIcon';
 	import PlayIcon from 'phosphor-svelte/lib/PlayIcon';
 	import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
+	import AutomationDialog from '#lib/components/automation-dialog.svelte';
 	import ConfirmDialog from '#lib/components/confirm-dialog.svelte';
 	import EmptyState from '#lib/components/empty-state.svelte';
 	import IssueId from '#lib/components/issue-id.svelte';
@@ -38,6 +41,7 @@
 	let refreshing = $state(false);
 	let busy = $state(false);
 	let confirming = $state(false);
+	let editing = $state(false);
 
 	const can_manage = $derived(currentViewer()?.role === 'admin');
 	const automation = $derived(data.detail?.automation);
@@ -118,6 +122,9 @@
 						onclick={() => act(() => runAutomationNow(automation))}
 					>
 						<RocketLaunchIcon size={13} aria-hidden="true" />Run now
+					</button>
+					<button class="btn btn-sm" type="button" disabled={busy} onclick={() => (editing = true)}>
+						<PencilSimpleIcon size={13} aria-hidden="true" />Edit
 					</button>
 					<button
 						class="btn btn-sm"
@@ -257,6 +264,9 @@
 			destructive
 			onconfirm={remove}
 		/>
+		{#if can_manage}
+			<AutomationDialog bind:open={editing} {automation} />
+		{/if}
 	{/if}
 </div>
 

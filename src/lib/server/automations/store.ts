@@ -94,6 +94,15 @@ export interface CreateAutomationInput {
 	created_by: string;
 }
 
+/** What an edit replaces; the project, runner and creator stay. */
+export interface UpdateAutomationInput {
+	name: string;
+	cron: string;
+	time_zone: string;
+	overlap: AutomationOverlap;
+	payload: DispatchPayload;
+}
+
 /** Runs kept per automation; an every-minute schedule would grow without bound. */
 export const AUTOMATION_RUNS_KEPT = 1000;
 
@@ -107,6 +116,12 @@ export interface AutomationStore {
 	 * cursor to now, so slots missed while it was off never fire.
 	 */
 	setEnabled(id: string, enabled: boolean, paused_reason?: string): Promise<Automation | undefined>;
+	/**
+	 * Replace its name, schedule, overlap and launch, keeping its history.
+	 * The cursor moves to now, so an edit never fires a slot from before it
+	 * (a schedule moved earlier in the day would otherwise fire at once).
+	 */
+	update(id: string, input: UpdateAutomationInput): Promise<Automation | undefined>;
 	remove(id: string): Promise<boolean>;
 	/**
 	 * Claim a slot: record it as `firing` and advance the cursor. False when
@@ -250,6 +265,25 @@ export function createAutomationStore(
 							args: [paused_reason ?? null, at, id]
 						}
 			);
+			return get(id);
+		},
+
+		async update(id, input) {
+			const at = now().toISOString();
+			await client.execute({
+				sql: `UPDATE automations SET name = ?, cron = ?, time_zone = ?, overlap = ?,
+					payload_json = ?, last_slot = MAX(last_slot, ?), updated_at = ? WHERE id = ?`,
+				args: [
+					input.name,
+					input.cron,
+					input.time_zone,
+					input.overlap,
+					JSON.stringify(input.payload),
+					at,
+					at,
+					id
+				]
+			});
 			return get(id);
 		},
 
