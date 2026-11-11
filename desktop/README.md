@@ -22,6 +22,9 @@ The decision record is
   and comments.
 - Refreshes on the Refresh button or Ctrl/Cmd-R. It follows the system's
   light or dark theme.
+- Keeps its connection: host, port and user in a settings file, the password
+  in the macOS Keychain, set from a connection screen that can test them
+  first.
 
 It reads only. Dispatch, accounts, the console, backups, the board, Ready,
 todos and the command palette are web-only.
@@ -64,15 +67,52 @@ Then, from this directory:
 cargo run --release -- --sample      # built-in sample data, no server
 ```
 
-Against a Dolt server, the client reads the web service's variables:
+Against a Dolt server, start it with no arguments:
+
+```sh
+cargo run --release
+```
+
+The first launch opens the connection screen. Enter the host, port, user and
+password, press **Test connection** to see whether the server answers and how
+many projects the account can see, then **Save**. Later launches reconnect
+without asking. The screen reopens from the server name at the bottom of the
+sidebar.
+
+![The connection screen after a successful test](docs/connection-dark.png)
+
+## Where the connection is kept
+
+| What                | Where                                                                                                                                                             |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Host, port and user | `prefs.json` in the OS config folder: `~/Library/Application Support/Beadsmith` on macOS, `$XDG_CONFIG_HOME/Beadsmith` on Linux, `%APPDATA%\Beadsmith` on Windows |
+| Password, on macOS  | The login Keychain, as a generic password named `Beadsmith Dolt` with the account `user@host:port`                                                                |
+| Password, elsewhere | Not stored: this build has no keychain binding off macOS, so set `BEADS_DOLT_PASSWORD_FILE`                                                                       |
+
+The password is never written to the settings file, a log or a command line.
+It is saved for one `user@host:port`, so changing the host and leaving the
+password blank fails with "no password is available" instead of sending the
+saved password to a different server. A blank password on Save keeps the one
+already saved. The app reads the Keychain only when it connects, on a worker
+thread, never to fill in the form.
+
+To forget a connection, delete `prefs.json` and remove the `Beadsmith Dolt`
+item in Keychain Access.
+
+The web service's variables still work and win over the settings file, one
+field at a time, so a shell can point a single run somewhere else:
 
 | Variable                   | Default |                                                |
 | -------------------------- | ------- | ---------------------------------------------- |
-| `BEADS_DOLT_SERVER_HOST`   | —       | Required; without it the window says so        |
+| `BEADS_DOLT_SERVER_HOST`   | saved   | With neither, the connection screen opens      |
 | `BEADS_DOLT_SERVER_PORT`   | `3306`  |                                                |
 | `BEADS_DOLT_SERVER_USER`   | `root`  | Use a SELECT-only account                      |
 | `BEADS_DOLT_PASSWORD_FILE` | —       | Preferred; one trailing line ending is dropped |
 | `BEADS_DOLT_PASSWORD`      | —       | Used only when no password file is set         |
+
+The password is looked for in that order, then in the Keychain. The
+connection screen shows a field the environment sets as read-only and names
+the variable.
 
 ```sh
 BEADS_DOLT_SERVER_HOST=127.0.0.1 BEADS_DOLT_SERVER_USER=beadsmith \
@@ -95,10 +135,13 @@ cargo run -- --snap sample.png --scene sample [--theme light]
 cargo run -- --tree tree.json --scene filtered     # the element tree as JSON
 ```
 
-Scenes (`sample`, `filtered`, `unconfigured`, `unreachable`) fill state
-directly, so they need no server. The screenshots above are
-`--snap docs/sample-dark.png --scene sample` and the same with
-`--theme light`.
+Scenes fill state directly, so they need no server: `sample`, `filtered`,
+`unconfigured`, `unreachable`, and the connection screen as `connection`
+(first launch), `connection-testing`, `connection-failed`, `connection-ok`
+and `connection-invalid`. A headless run reads no environment, settings file
+or keychain, so an image depends on its scene alone. The screenshots above
+are `--snap docs/sample-dark.png --scene sample`, the same with
+`--theme light`, and `--scene connection-ok`.
 
 To render every scene in both themes at once, as CI does:
 
@@ -115,10 +158,15 @@ software Vulkan driver (`mesa-vulkan-drivers` on Debian/Ubuntu, with
 ```sh
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test                       # unit tests, no server
+cargo test                       # unit tests: no server, no keychain
 BEADS_DOLT_SERVER_HOST=127.0.0.1 BEADS_DOLT_SERVER_USER=beadsmith \
-BEADS_DOLT_PASSWORD=… cargo test -- --ignored   # against a live server
+BEADS_DOLT_PASSWORD=… cargo test -- --ignored --skip keychain   # a live server
+cargo test -- --ignored keychain # macOS: the real Keychain
 ```
+
+The live-server tests read, and save a connection to a scratch settings file
+and relaunch from it. The Keychain test writes one item under a test-only
+service name and deletes it.
 
 CI runs the first three and `scripts/snap-scenes.sh` on macOS and Linux for
 every pull request and push to `main` that touches `desktop/`
@@ -128,21 +176,24 @@ web app's, so neither waits on the other.
 
 ## Layout
 
-| File                             | Role                                              |
-| -------------------------------- | ------------------------------------------------- |
-| [`src/main.rs`](src/main.rs)     | Entry point: picks the data source, scenes, keys  |
-| [`src/app.rs`](src/app.rs)       | State, requests on workers, filtering and sorting |
-| [`src/view.rs`](src/view.rs)     | The window: projects, issue table, issue detail   |
-| [`src/dolt.rs`](src/dolt.rs)     | The Dolt read plane and configuration             |
-| [`src/model.rs`](src/model.rs)   | Read-model types and the failure classes          |
-| [`src/sample.rs`](src/sample.rs) | Built-in sample data                              |
+| File                                 | Role                                              |
+| ------------------------------------ | ------------------------------------------------- |
+| [`src/main.rs`](src/main.rs)         | Entry point: picks the data source, scenes, keys  |
+| [`src/app.rs`](src/app.rs)           | State, requests on workers, filtering and sorting |
+| [`src/view.rs`](src/view.rs)         | The window: projects, issue table, issue detail   |
+| [`src/dolt.rs`](src/dolt.rs)         | The Dolt read plane                               |
+| [`src/settings.rs`](src/settings.rs) | Environment, settings file and keychain           |
+| [`src/model.rs`](src/model.rs)       | Read-model types and the failure classes          |
+| [`src/sample.rs`](src/sample.rs)     | Built-in sample data                              |
 
 Rune is pre-release and asks apps to pin a revision of its `dev` branch; the
 pin is in [`Cargo.toml`](Cargo.toml).
 
 ## Not done yet
 
-- TLS to the Dolt server, and storing credentials in the OS keychain.
+- TLS to the Dolt server.
+- Storing the password off macOS (Secret Service, Windows Credential
+  Manager).
 - Talking to a Beadsmith server's API instead of Dolt, which would bring
   accounts and the project gate (see the ADR's alternatives).
 - Packaging (app bundles, installers).

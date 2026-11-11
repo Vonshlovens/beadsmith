@@ -4,13 +4,14 @@
 
 use std::borrow::Cow;
 
+use rune::TextEdit;
 use rune::{Align, Color, Cx, El, ScrollSpec, Tx, col, el, row, text};
 use rune_kit::{
-    Badge, BadgeVariant, Button, ButtonVariant, Cell, Divider, Kit, Markdown, SegmentedControl, Spinner, Table,
-    TableColumn, TextInput,
+    Badge, BadgeVariant, Button, ButtonVariant, Cell, Dialog, Divider, Field, Kit, Markdown, SegmentedControl, Spinner,
+    Table, TableColumn, TextInput,
 };
 
-use crate::app::{Load, STATUS_FILTERS, State};
+use crate::app::{Check, Connection, Load, STATUS_FILTERS, State};
 use crate::model::{IssueDetail, IssueRef, Project};
 
 const SIDEBAR_W: f32 = 232.0;
@@ -28,7 +29,11 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .child(main_pane(s, &k))
         .child(Divider::vertical().build(&k))
         .child(detail_pane(s, &k));
-    rune_kit::root(body, Vec::new())
+    let mut layer = Vec::new();
+    if let Some(form) = &s.connection {
+        connection_dialog(s, form, &k, &mut layer);
+    }
+    rune_kit::root(body, layer)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -62,15 +67,25 @@ fn sidebar(s: &State, k: &Kit) -> El {
         .on_press(|s: &mut State| s.refresh())
         .build(k)
         .key("refresh");
-    let footer = row()
+    // The server's name is the way into its settings: the one place the
+    // window says what it is connected to.
+    let server = row()
         .key("connection")
-        .px(16.0)
-        .py(12.0)
+        .role("button")
+        .label(format!("Connection settings: {}", s.source.label()))
+        .focusable(true)
+        .grow(1.0)
+        .min_w(0.0)
+        .px(8.0)
+        .py(6.0)
         .gap(8.0)
         .center_y()
+        .radius(k.radius.sm)
+        .hover(k.c.hover)
+        .on_press(|s: &mut State| s.open_connection())
         .child(el().size(7.0, 7.0).radius(3.5).fill(connection_color(s, k)))
-        .child(text(s.source.label()).font(k.ty.text_xsmall).color(k.c.text_muted).truncate().grow(1.0).min_w(0.0))
-        .child(refresh);
+        .child(text(s.source.label()).font(k.ty.text_xsmall).color(k.c.text_muted).truncate().grow(1.0).min_w(0.0));
+    let footer = row().key("footer").px(8.0).py(8.0).gap(4.0).center_y().child(server).child(refresh);
 
     col()
         .key("sidebar")
@@ -127,6 +142,164 @@ fn connection_color(s: &State, k: &Kit) -> Color {
         Load::Ready(_) => k.c.success.icon,
         Load::Failed(_) => k.c.danger.icon,
         _ => k.c.icon_faint,
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Connection settings
+
+/// The connection screen: a modal over the window, so a first launch sees it
+/// before anything else and Escape returns to whatever was there.
+fn connection_dialog(s: &State, form: &Connection, k: &Kit, layer: &mut Vec<El>) {
+    let busy = form.saving;
+    let input = |edit: &TextEdit, name: &str, pick: fn(&mut Connection) -> &mut TextEdit, owned: bool| {
+        TextInput::new(edit)
+            .label(name)
+            .width(None)
+            .disabled(owned || busy)
+            .on_edit(move |s: &mut State| s.connection_field(pick))
+            .on_change(|s: &mut State, _: &mut Tx| s.connection_edited())
+            .on_submit(|s: &mut State, _: &mut Tx| s.save_connection())
+    };
+    let owned_by = |variable: &str, owned: bool| owned.then(|| format!("Set by {variable}."));
+    let field = |label: &str, control: El, hint: Option<String>| {
+        let f = Field::new().label(label).control(control);
+        match hint {
+            Some(hint) => f.suffix(hint).build(k),
+            None => f.build(k),
+        }
+    };
+
+    let host = input(&form.host, "Host", |f| &mut f.host, s.env.host.is_some())
+        .placeholder("dolt.example or 127.0.0.1")
+        .invalid(form.error == Some(crate::settings::FormError::Host))
+        .build(k)
+        .key("host");
+    let port = input(&form.port, "Port", |f| &mut f.port, s.env.port.is_some())
+        .placeholder("3306")
+        .invalid(form.error == Some(crate::settings::FormError::Port))
+        .build(k)
+        .key("port");
+    let user =
+        input(&form.user, "User", |f| &mut f.user, s.env.user.is_some()).placeholder("root").build(k).key("user");
+    let password = input(&form.password, "Password", |f| &mut f.password, s.env.password)
+        .secure()
+        .placeholder(if s.env.password {
+            "Supplied by the environment"
+        } else if form.saved {
+            "Leave blank to keep the saved password"
+        } else {
+            ""
+        })
+        .build(k)
+        .key("password");
+    let password_hint = if s.env.password {
+        "Set by BEADS_DOLT_PASSWORD_FILE or BEADS_DOLT_PASSWORD."
+    } else if cfg!(target_os = "macos") {
+        "Kept in the macOS Keychain, never in the settings file."
+    } else {
+        "This build cannot store a password. Set BEADS_DOLT_PASSWORD_FILE instead."
+    };
+
+    let fields = col()
+        .key("fields")
+        .w_full()
+        .px(16.0)
+        .gap(16.0)
+        .child(
+            row()
+                .w_full()
+                .gap(12.0)
+                .items_start()
+                .child(el().grow(1.0).min_w(0.0).child(field(
+                    "Host",
+                    host,
+                    owned_by("BEADS_DOLT_SERVER_HOST", s.env.host.is_some()),
+                )))
+                .child(el().w(96.0).child(field(
+                    "Port",
+                    port,
+                    owned_by("BEADS_DOLT_SERVER_PORT", s.env.port.is_some()),
+                ))),
+        )
+        .child(field("User", user, owned_by("BEADS_DOLT_SERVER_USER", s.env.user.is_some())))
+        .child(field("Password", password, Some(password_hint.into())));
+
+    // In the body, not the dialog's description: the kit's header does not wrap.
+    let about = text("Beadsmith reads one Dolt SQL server and never writes to it. Use a SELECT-only account.")
+        .key("about")
+        .font(k.ty.text_small)
+        .color(k.c.text_muted)
+        .wrap()
+        .w_full()
+        .px(16.0)
+        .pb(16.0);
+
+    let testing = form.check == Check::Testing;
+    let test = Button::new(if testing { "Testing" } else { "Test connection" })
+        .variant(if testing { ButtonVariant::Loading } else { ButtonVariant::Neutral })
+        .disabled(busy)
+        .on_press(|s: &mut State| s.test_connection())
+        .build(k)
+        .key("test");
+    let cancel = Button::new("Cancel")
+        .variant(ButtonVariant::Ghost)
+        .on_press(|s: &mut State| s.close_connection())
+        .build(k)
+        .key("cancel");
+    let save = Button::new(if busy { "Saving" } else { "Save" })
+        .variant(if busy { ButtonVariant::Loading } else { ButtonVariant::Contrast })
+        .on_press(|s: &mut State| s.save_connection())
+        .build(k)
+        .key("save");
+    let actions = row()
+        .key("actions")
+        .w_full()
+        .padding(16.0)
+        .gap(8.0)
+        .center_y()
+        .child(test)
+        .child(el().grow(1.0))
+        .child(cancel)
+        .child(save);
+
+    Dialog::new("connection", "Connection")
+        .width(460.0)
+        .fit()
+        .click_outside(false)
+        .open(true)
+        .on_close(|s: &mut State| s.close_connection())
+        .child(about)
+        .child(fields)
+        .child(connection_status(form, k))
+        .child(actions)
+        .build(k, layer);
+}
+
+/// What the last test or save attempt found, in plain words. The line keeps
+/// its height when empty so the buttons do not move as results arrive.
+fn connection_status(form: &Connection, k: &Kit) -> El {
+    let line = row().key("status").w_full().min_h(20.0).px(16.0).mt(12.0).gap(8.0).center_y();
+    let dot = |color: Color| el().size(7.0, 7.0).radius(3.5).fill(color);
+    let words =
+        |message: String, color: Color| text(message).font(k.ty.text_small).color(color).wrap().grow(1.0).min_w(0.0);
+    if let Some(error) = form.error {
+        return line.child(dot(k.c.danger.icon)).child(words(error.message().into(), k.c.text_base));
+    }
+    match form.check {
+        Check::Idle => line,
+        Check::Testing => line.child(words("Connecting to the server".into(), k.c.text_muted)),
+        Check::Ok(projects) => {
+            let found = match projects {
+                0 => "Connected. This account sees no projects.".to_string(),
+                1 => "Connected. 1 project is visible.".to_string(),
+                n => format!("Connected. {n} projects are visible."),
+            };
+            line.child(dot(k.c.success.icon)).child(words(found, k.c.text_base))
+        }
+        Check::Failed(failure) => {
+            line.child(dot(k.c.danger.icon)).child(words(failure.message().into(), k.c.text_base))
+        }
     }
 }
 

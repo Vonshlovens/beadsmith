@@ -105,9 +105,9 @@ pub enum Failure {
 impl Failure {
     pub fn message(self) -> &'static str {
         match self {
-            Failure::NotConfigured => "Dolt is not configured. Set BEADS_DOLT_SERVER_HOST, or run with --sample.",
+            Failure::NotConfigured => "No Dolt server is configured. Open connection settings to add one.",
             Failure::CredentialUnavailable => {
-                "Dolt authentication is unavailable. Set BEADS_DOLT_PASSWORD_FILE or BEADS_DOLT_PASSWORD."
+                "No password is available for this server. Enter it in connection settings, or set BEADS_DOLT_PASSWORD_FILE."
             }
             Failure::AuthenticationRejected => "Dolt authentication was rejected. Check the configured credentials.",
             Failure::Unreachable => "The Dolt server is unreachable. Check the host and port.",

@@ -2,72 +2,38 @@
 //!
 //! The same contract as the web app (ADR-0003): one configured server,
 //! single parameterized `SELECT`/`SHOW` statements, a read-only session, and
-//! failures reduced to fixed classes that carry no driver text. Configuration
-//! comes from the same environment variables the web service reads.
+//! failures reduced to fixed classes that carry no driver text. Where the
+//! connection settings and the password come from is in `settings.rs`.
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use mysql::prelude::Queryable;
 use mysql::{Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts, Row, Value};
 
 use crate::model::{Comment, Counts, Failure, IssueDetail, IssueRef, IssueSummary, Project, Source};
+use crate::settings::{self, Lookup, SecretStore};
 
-const DEFAULT_PORT: u16 = 3306;
-const DEFAULT_USER: &str = "root";
 const SYSTEM_DATABASES: [&str; 4] = ["information_schema", "mysql", "performance_schema", "sys"];
 const ISSUE_LIMIT: usize = 1000;
 
-/// Connection settings, read from the process environment.
-#[derive(Clone, Debug)]
+/// The server to read and the account to read it as. Where these come from
+/// (environment, settings file) is `settings.rs`'s business.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     pub host: String,
     pub port: u16,
     pub user: String,
 }
 
-impl Config {
-    /// `BEADS_DOLT_SERVER_HOST` (required), `BEADS_DOLT_SERVER_PORT` and
-    /// `BEADS_DOLT_SERVER_USER`, with the web service's defaults.
-    pub fn from_env() -> Option<Config> {
-        Config::from_lookup(|k| std::env::var(k).ok())
-    }
-
-    pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Option<Config> {
-        let host = get("BEADS_DOLT_SERVER_HOST")?.trim().to_string();
-        if host.is_empty() {
-            return None;
-        }
-        let port = get("BEADS_DOLT_SERVER_PORT")
-            .and_then(|p| p.trim().parse::<u16>().ok())
-            .filter(|p| *p > 0)
-            .unwrap_or(DEFAULT_PORT);
-        let user = get("BEADS_DOLT_SERVER_USER").filter(|u| !u.is_empty()).unwrap_or_else(|| DEFAULT_USER.to_string());
-        Some(Config { host, port, user })
-    }
-}
-
-/// The password, as `resolveDoltPassword` in `src/lib/server/dolt-password.ts`
-/// finds it: `BEADS_DOLT_PASSWORD_FILE` first, so a protected file is never
-/// shadowed by a shell export, then `BEADS_DOLT_PASSWORD`. It goes only into
-/// the driver's options, never into a URL, argv or log line.
-pub fn resolve_password(
-    get: impl Fn(&str) -> Option<String>,
-    read_file: impl Fn(&str) -> std::io::Result<String>,
-) -> Result<String, Failure> {
-    if let Some(path) = get("BEADS_DOLT_PASSWORD_FILE") {
-        if path.is_empty() {
-            return Err(Failure::CredentialUnavailable);
-        }
-        let contents = read_file(&path).map_err(|_| Failure::CredentialUnavailable)?;
-        let value = contents.strip_suffix('\n').unwrap_or(&contents);
-        let value = value.strip_suffix('\r').unwrap_or(value);
-        return if value.is_empty() { Err(Failure::CredentialUnavailable) } else { Ok(value.to_string()) };
-    }
-    match get("BEADS_DOLT_PASSWORD") {
-        Some(v) if !v.is_empty() => Ok(v),
-        _ => Err(Failure::CredentialUnavailable),
-    }
+/// How a client gets its password. Deliberately not `Debug`.
+#[derive(Clone)]
+pub enum Credential {
+    /// Typed into the connection form, for a test before anything is saved.
+    Given(String),
+    /// Looked up when the pool first connects: the environment, then the
+    /// keychain (`settings::resolve_password`).
+    Stored { lookup: Lookup, store: Arc<dyn SecretStore> },
 }
 
 /// True for a valid user database name (`DB_NAME_PATTERN` in the web app).
@@ -106,19 +72,42 @@ pub fn classify(error: &mysql::Error) -> Failure {
 /// first read, so constructing it never blocks the UI thread.
 pub struct Dolt {
     config: Config,
+    credential: Credential,
     pool: OnceLock<Pool>,
 }
 
 impl Dolt {
-    pub fn new(config: Config) -> Dolt {
-        Dolt { config, pool: OnceLock::new() }
+    pub fn new(config: Config, credential: Credential) -> Dolt {
+        Dolt { config, credential, pool: OnceLock::new() }
+    }
+
+    /// Connect and count the projects this account can see: the connection
+    /// form's "Test connection".
+    pub fn probe(&self) -> Result<usize, Failure> {
+        Ok(self.project_names()?.len())
+    }
+
+    fn project_names(&self) -> Result<Vec<String>, Failure> {
+        let rows = self.select("SHOW DATABASES", vec![])?;
+        let mut names: Vec<String> = rows
+            .iter()
+            .filter_map(|r| r.as_ref(0).and_then(value_text))
+            .filter(|n| is_user_database(n) && valid_database(n))
+            .collect();
+        names.sort();
+        Ok(names)
     }
 
     fn pool(&self) -> Result<&Pool, Failure> {
         if let Some(pool) = self.pool.get() {
             return Ok(pool);
         }
-        let password = resolve_password(|k| std::env::var(k).ok(), |p| std::fs::read_to_string(p))?;
+        let password = match &self.credential {
+            Credential::Given(password) => password.clone(),
+            Credential::Stored { lookup, store } => {
+                settings::resolve_password(lookup, |p| std::fs::read_to_string(p), store.as_ref(), &self.config)?
+            }
+        };
         let constraints = PoolConstraints::new(0, 4).expect("0 <= 4");
         let opts = OptsBuilder::new()
             .ip_or_hostname(Some(self.config.host.clone()))
@@ -176,15 +165,9 @@ impl Dolt {
 
 impl Source for Dolt {
     fn projects(&self) -> Result<Vec<Project>, Failure> {
-        let rows = self.select("SHOW DATABASES", vec![])?;
-        let mut names: Vec<String> = rows
-            .iter()
-            .filter_map(|r| r.as_ref(0).and_then(value_text))
-            .filter(|n| is_user_database(n) && valid_database(n))
-            .collect();
-        names.sort();
         // One project's summary failing must not hide the others.
-        Ok(names
+        Ok(self
+            .project_names()?
             .into_iter()
             .map(|name| {
                 let db = quote(&name).ok();
@@ -341,37 +324,6 @@ fn minutes(t: &str) -> String {
 mod tests {
     use super::*;
 
-    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
-        move |k| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string())
-    }
-
-    #[test]
-    fn config_needs_a_host_and_keeps_the_web_defaults() {
-        assert!(Config::from_lookup(env(&[])).is_none());
-        assert!(Config::from_lookup(env(&[("BEADS_DOLT_SERVER_HOST", "  ")])).is_none());
-        let c = Config::from_lookup(env(&[("BEADS_DOLT_SERVER_HOST", " db.example ")])).unwrap();
-        assert_eq!((c.host.as_str(), c.port, c.user.as_str()), ("db.example", 3306, "root"));
-        let c = Config::from_lookup(env(&[
-            ("BEADS_DOLT_SERVER_HOST", "h"),
-            ("BEADS_DOLT_SERVER_PORT", "13306"),
-            ("BEADS_DOLT_SERVER_USER", "reader"),
-        ]))
-        .unwrap();
-        assert_eq!((c.port, c.user.as_str()), (13306, "reader"));
-    }
-
-    #[test]
-    fn the_password_file_wins_and_loses_one_line_ending() {
-        let read = |_: &str| Ok("from-file\r\n".to_string());
-        let got = resolve_password(env(&[("BEADS_DOLT_PASSWORD_FILE", "/p"), ("BEADS_DOLT_PASSWORD", "raw")]), read);
-        assert_eq!(got.unwrap(), "from-file");
-        let missing = |_: &str| Err(std::io::Error::other("no"));
-        let got = resolve_password(env(&[("BEADS_DOLT_PASSWORD_FILE", "/p"), ("BEADS_DOLT_PASSWORD", "raw")]), missing);
-        assert_eq!(got, Err(Failure::CredentialUnavailable), "an unreadable file never falls back");
-        assert_eq!(resolve_password(env(&[("BEADS_DOLT_PASSWORD", "raw")]), missing).unwrap(), "raw");
-        assert_eq!(resolve_password(env(&[]), missing), Err(Failure::CredentialUnavailable));
-    }
-
     #[test]
     fn database_names_are_validated_and_plumbing_is_hidden() {
         assert!(valid_database("lighthouse_2"));
@@ -402,19 +354,29 @@ mod tests {
     }
 }
 
-/// Against a real server: `BEADS_DOLT_SERVER_HOST=… cargo test -- --ignored`.
+/// Against a real server: `BEADS_DOLT_SERVER_HOST=… cargo test -- --ignored reads rejected`.
 /// The repository's quickstart (`quickstart/compose.yaml`) serves sample
 /// projects to read.
 #[cfg(test)]
 mod live {
     use super::*;
+    use crate::settings::{Backing, Env, NoStore};
+
+    /// The server and password the environment names; no keychain.
+    fn from_env(edit: impl FnOnce(&mut Config)) -> Dolt {
+        let lookup = Backing::system().lookup;
+        let mut config = Env::from_lookup(lookup).config(None).expect("BEADS_DOLT_SERVER_HOST");
+        edit(&mut config);
+        Dolt::new(config, Credential::Stored { lookup, store: Arc::new(NoStore) })
+    }
 
     #[test]
     #[ignore = "needs a Dolt server"]
     fn reads_projects_issues_and_one_issue() {
-        let dolt = Dolt::new(Config::from_env().expect("BEADS_DOLT_SERVER_HOST"));
+        let dolt = from_env(|_| {});
         let projects = dolt.projects().expect("projects");
         assert!(!projects.is_empty(), "the server has projects");
+        assert_eq!(dolt.probe(), Ok(projects.len()));
         let p = &projects[0];
         assert!(p.counts.as_ref().is_some_and(|c| c.total > 0), "{p:?}");
         let issues = dolt.issues(&p.name).expect("issues");
@@ -431,8 +393,7 @@ mod live {
     #[test]
     #[ignore = "needs a Dolt server"]
     fn a_wrong_password_is_rejected_without_detail() {
-        let mut config = Config::from_env().expect("BEADS_DOLT_SERVER_HOST");
-        config.user = "no_such_user_for_beadsmith".into();
-        assert_eq!(Dolt::new(config).projects(), Err(Failure::AuthenticationRejected));
+        let dolt = from_env(|c| c.user = "no_such_user_for_beadsmith".into());
+        assert_eq!(dolt.probe(), Err(Failure::AuthenticationRejected));
     }
 }

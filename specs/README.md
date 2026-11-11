@@ -90,7 +90,9 @@ reality**. Search `src/` before treating a spec as implemented.
   `desktop/` reads the same Dolt server directly with the web app's read
   contract and a SELECT-only account. It bypasses accounts and the project
   gate, so it is for the server's owner; it never scans workspaces or runs
-  `bd` ([ADR-0018](decisions/0017-native-desktop-prototype.md)).
+  `bd`. It keeps its own connection settings, with the Dolt password in the
+  macOS Keychain and never in a file
+  ([ADR-0017](decisions/0017-native-desktop-prototype.md)).
 - **One Google IdP** when Cloudflare Access is used. Per-project
   catalog/membership is still the gate before projects are shared selectively;
   today every account sees every SQL-visible project

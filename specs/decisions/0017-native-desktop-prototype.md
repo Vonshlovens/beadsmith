@@ -35,9 +35,15 @@ crate on a pinned Rune revision, that reads Beads projects directly from one
 configured Dolt server with the web app's read contract
 ([0003](./0003-dolt-read-plane.md)): single parameterized `SELECT`/`SHOW`
 statements, validated database names, a read-only session, and the same
-fixed failure classes with no driver text. It reads the web service's
-`BEADS_DOLT_*` variables, with the password file preferred over the raw
-value, and holds the password only in the driver's options.
+fixed failure classes with no driver text.
+
+It keeps its own connection settings, because a program started from the
+Finder has no shell environment: host, port and user in a settings file under
+the OS config folder, and the password in the macOS Keychain, both written
+from a connection screen. The web service's `BEADS_DOLT_*` variables still
+override the file field by field, with the password file preferred over the
+raw value and the Keychain last. The password is held only in the Keychain
+and the driver's options.
 
 The prototype covers the project list, one project's issue table with
 status and text filters, and the issue detail.
@@ -54,6 +60,14 @@ status and text filters, and the issue detail.
   every SQL-visible project. That matches what the credential already allows,
   but it means the desktop client is for the server's owner, not for shared
   readers.
+- It stores a Dolt password in the user's login Keychain. ADR-0001 rejected
+  _desktop credential helpers_ for a client over local workspaces; this is
+  narrower. The client stores one password for the one server its user typed
+  in, keyed by `user@host:port` so it is never offered to another server, and
+  it reads no other program's credentials (not `bd`'s credential file, not
+  other keychain items). The password is never written to the settings file,
+  a log or a command line, and the form never reads it back. Off macOS there
+  is no keychain binding yet, so the password comes from the environment.
 - It does not scan workspaces, run `bd`, or touch the web service's
   `state.db`. ADR-0001's rejected desktop shape stays rejected.
 - The read queries now exist in TypeScript and in Rust. A Beads schema change
@@ -84,9 +98,13 @@ window: it still needs a running server and gains nothing native.
 - Code: [`desktop/`](../../desktop/README.md); the read plane is
   [`desktop/src/dolt.rs`](../../desktop/src/dolt.rs), ported from
   [`src/lib/server/dolt/client.ts`](../../src/lib/server/dolt/client.ts).
-- Tests: `cargo test` in `desktop/` (unit, no server); `cargo test --
-  --ignored` against a live server. Headless scenes:
-  `cargo run -- --snap out.png --scene sample`.
+- Connection settings: [`desktop/src/settings.rs`](../../desktop/src/settings.rs)
+  (precedence, the settings file through Rune's `prefs`, the Keychain through
+  the `security-framework` crate); the form's state is in
+  [`desktop/src/app.rs`](../../desktop/src/app.rs).
+- Tests: `cargo test` in `desktop/` (unit: no server, no keychain);
+  `cargo test -- --ignored` against a live server and the real Keychain.
+  Headless scenes: `cargo run -- --snap out.png --scene sample`.
 - The Rune revision is pinned in `desktop/Cargo.toml`; its toolchain in
   `desktop/rust-toolchain.toml`.
 - Row in [`specs/README.md`](../README.md).
