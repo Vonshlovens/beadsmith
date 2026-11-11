@@ -199,7 +199,15 @@ Nothing ships with this record. Planned, each in its own change:
 - the ralph pin file and ralph in the Sand template and forge guest, beside
   hc's pin (`sandbox/e2b/build-template.ts`, `nix/overlay.nix`);
 - the ralph `/v1` client and event mapping, under
-  `src/lib/server/dispatch/`, tested against a fake `ralph serve`;
+  `src/lib/server/dispatch/`, tested against a fake `ralph serve`.
+  Shipped as `src/lib/server/dispatch/ralph.ts` (fake in
+  `src/lib/test/fake-ralph.ts`): the runner supplies the channel as a
+  `RalphFetch`, and `ralphRouteAllowed` is the allowlist a relay checks.
+  Rule 4's mapping reads ralph's stop reason before its exit code, because
+  ralph exits 0 after a graceful operator stop; the code decides only when
+  no reason was recorded. ralph's tool events carry no call id, so a result
+  answers the oldest open call of its iteration. Iteration boundaries are
+  not thread events; iterations reach the mission as records;
 - the `loop` operation (`src/lib/types.ts` `DispatchOperation`,
   `src/lib/server/dispatch/types.ts`, `state/schema.ts`), loop capability
   per provider, iteration rows, and the Sand loop runner;
