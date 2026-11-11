@@ -213,6 +213,20 @@ a runner on this service runs ralph loops (admins only).
 | `Enter`     | Start, from the iteration field                            |
 | `⌘Enter`    | Start the loop                                             |
 
+## Agent terminal
+
+Admins open an agent's terminal from a Sand mission's thread or a Sand chat
+(the **Terminal** strip). Watching takes no keys: the page's shortcuts work
+as usual. While you have taken over, every key goes to the agent, including
+Esc (Claude Code's interrupt), Tab, `/` and the page's other shortcuts.
+
+| Keys        | Does                                              |
+| ----------- | ------------------------------------------------- |
+| `Shift+Esc` | Leave the terminal (focus moves to **Hand back**) |
+
+Take over is offered only with a mouse or trackpad on a screen at least
+640px wide; on touch and narrow screens the terminal is watch-only.
+
 ## First Mate
 
 `/first-mate` is a chat: a rail of chats (and agent threads, when an agent

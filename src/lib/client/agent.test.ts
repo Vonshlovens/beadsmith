@@ -19,7 +19,13 @@ function health(patch: Partial<DispatchHealth> = {}): { dispatch: DispatchHealth
 			key_configured: true,
 			armed: true,
 			provider: 'webhook',
-			capabilities: { live_events: false, follow_up: true, cancel: true, loop: false },
+			capabilities: {
+				live_events: false,
+				follow_up: true,
+				cancel: true,
+				loop: false,
+				terminal: false
+			},
 			...patch
 		}
 	};
@@ -91,8 +97,20 @@ describe('isFollowedMission', () => {
 });
 
 describe('missions across several runners', () => {
-	const webhook_caps = { live_events: false, follow_up: false, cancel: true, loop: false };
-	const sand_caps = { live_events: true, follow_up: true, cancel: true, loop: false };
+	const webhook_caps = {
+		live_events: false,
+		follow_up: false,
+		cancel: true,
+		loop: false,
+		terminal: false
+	};
+	const sand_caps = {
+		live_events: true,
+		follow_up: true,
+		cancel: true,
+		loop: false,
+		terminal: false
+	};
 	const dispatch = {
 		armed: true,
 		provider: 'webhook' as const,
@@ -149,7 +167,13 @@ describe('composerState', () => {
 			composerState(
 				done,
 				health({
-					capabilities: { live_events: false, follow_up: false, cancel: false, loop: false }
+					capabilities: {
+						live_events: false,
+						follow_up: false,
+						cancel: false,
+						loop: false,
+						terminal: false
+					}
 				}).dispatch
 			).reason
 		).toContain('follow-up');
@@ -197,7 +221,13 @@ describe('formatElapsed', () => {
 });
 
 describe('missionCardState', () => {
-	const caps = (cancel: boolean) => ({ live_events: true, follow_up: true, cancel, loop: false });
+	const caps = (cancel: boolean) => ({
+		live_events: true,
+		follow_up: true,
+		cancel,
+		loop: false,
+		terminal: false
+	});
 	const dispatch = {
 		armed: true,
 		provider: 'e2b' as const,

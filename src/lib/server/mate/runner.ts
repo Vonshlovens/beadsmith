@@ -437,9 +437,20 @@ let override: MateRunner | null | undefined;
 /** The in-process Sand runner holds live sessions, so there is one per process. */
 let sand: { key: string; runner: MateRunner } | undefined;
 
+/**
+ * Which runners implement `attachTerminal`. Sand's runner relays its hc
+ * terminal; the remote runner's contract has no relay yet, so its chats
+ * would only ever answer 409 and the browser offers no terminal for them.
+ */
+export const MATE_RUNNER_TERMINAL: Record<MateRunnerId, boolean> = { remote: false, e2b: true };
+
 /** Configured chat runners with their labels, default first. */
 export function configuredMateRunners(env: ServerEnv = getEnv()): MateRunnerInfo[] {
-	return env.mate_runners.map((id) => ({ id, label: env.mate_labels[id] }));
+	return env.mate_runners.map((id) => ({
+		id,
+		label: env.mate_labels[id],
+		terminal: MATE_RUNNER_TERMINAL[id]
+	}));
 }
 
 /**

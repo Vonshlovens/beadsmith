@@ -337,9 +337,18 @@ watching. Nothing in the sandbox changes for it. Watching never resumes a
 paused sandbox; taking over does. Every attach is a row in
 `terminal_relay_sessions` in `state.db`; the bytes are not kept anywhere.
 
+In the app, admins open it from the **Terminal** strip in a Sand mission's
+thread or a Sand chat
+([`terminal-view.svelte`](../src/lib/components/terminal-view.svelte); keys
+in [keyboard.md](keyboard.md#agent-terminal)). The strip appears only where
+the runner relays a terminal (the `terminal` capability on dispatch
+providers and chat runners).
+
 Operator check (not yet run against E2B; the routes are unit-tested against
 a fake hc core in
-[`server.test.ts`](../src/routes/api/console/terminals/server.test.ts)):
+[`server.test.ts`](../src/routes/api/console/terminals/server.test.ts), and
+the browser side's states and reconnects against a fake server in
+[`terminal-relay.test.ts`](../src/lib/client/terminal-relay.test.ts)):
 
 1. With a Sand mission running, as an admin in the browser's devtools
    console on Beadsmith, `fetch('/api/console/terminals', { method: 'POST',
@@ -356,6 +365,13 @@ rows: 40 }) })` and read the body: an `open` frame, then `output` frames
 4. `SELECT * FROM terminal_relay_sessions ORDER BY started_at DESC` in
    `state.db` lists both attaches with your email, their mode, and an end
    time once each stream closed.
+5. In the app, open the mission's thread: **Watch** shows Claude Code's
+   screen and follows its size; **Take over…** asks first, then resizes it
+   to the box and takes keys (Esc interrupts the agent, Shift+Esc leaves the
+   terminal); **Hand back** returns to watching. Switch themes and narrow
+   the window below 640px: the screen stays dark and Take over disappears.
+   Stop the network for a few seconds: the strip says Reconnecting… and
+   comes back.
 
 ## How a mission runs
 

@@ -184,6 +184,11 @@ export interface DispatchCapabilities {
 	 * A loop launch on a provider without it is refused before anything starts.
 	 */
 	loop: boolean;
+	/**
+	 * Admins can open its missions' agent terminals (ADR-0021 rule 4): the
+	 * provider implements `attachTerminal`.
+	 */
+	terminal: boolean;
 }
 
 /** Public GitHub checkout shown on the operator console. Not a secret. */

@@ -17,6 +17,8 @@
 	 * Crew notices (Beadsmith telling the agent a mission it started has
 	 * finished) are quiet system rows, labelled, so they never read as yours.
 	 * Stop interrupts the agent's current turn; the session keeps running.
+	 * On a runner that relays its terminal (Sand), the agent's live terminal
+	 * sits under the header (ADR-0021); First Mate is admin-only already.
 	 */
 	import { tip } from '#lib/client/tooltip.js';
 	import { tick, untrack } from 'svelte';
@@ -36,6 +38,7 @@
 	import MarkdownBody from '#lib/components/markdown-body.svelte';
 	import MateContextSelect from '#lib/components/mate-context-select.svelte';
 	import MateMissionCard from '#lib/components/mate-mission-card.svelte';
+	import TerminalView from '#lib/components/terminal-view.svelte';
 	import { absoluteStamp } from '#lib/client/format.js';
 	import {
 		clockTime,
@@ -70,6 +73,10 @@
 		run_place.runners.length > 1
 			? (run_place.runners.find((runner) => runner.id === chat.runner)?.label ?? 'removed runner')
 			: undefined
+	);
+
+	const has_terminal = $derived(
+		run_place.runners.find((runner) => runner.id === chat.runner)?.terminal === true
 	);
 
 	let confirming_delete = $state(false);
@@ -320,6 +327,12 @@
 					onclick={cancelDelete}>Keep chat</button
 				>
 			</div>
+		</div>
+	{/if}
+
+	{#if has_terminal}
+		<div class="chat-term">
+			<TerminalView target={{ chat: chat.id }} subject="this chat's agent's" />
 		</div>
 	{/if}
 
@@ -742,6 +755,10 @@
 	}
 	.delete-confirm p {
 		margin: 0;
+	}
+	.chat-term {
+		padding: var(--s-2) 0;
+		border-bottom: 1px solid var(--line);
 	}
 	.confirm-actions {
 		display: flex;

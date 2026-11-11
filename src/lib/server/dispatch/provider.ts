@@ -154,11 +154,13 @@ export const WEBHOOK_PROVIDER_LABEL = 'Webhook agent runner';
  * not support them answers 404 and the console shows that refusal. E2B
  * streams the agent's own event log. `loop` is true exactly when the provider
  * implements `launchLoop`: the webhook contract has no loop, and Sand gains
- * one when its template carries ralph. A new provider adds its row here.
+ * one when its template carries ralph. `terminal` is true exactly when the
+ * provider implements `attachTerminal` (Sand's hc relay; the webhook contract
+ * has none). A new provider adds its row here.
  */
 export const PROVIDER_CAPABILITIES: Record<DispatchProviderId, DispatchCapabilities> = {
-	webhook: { live_events: false, follow_up: true, cancel: true, loop: false },
-	e2b: { live_events: true, follow_up: true, cancel: true, loop: true }
+	webhook: { live_events: false, follow_up: true, cancel: true, loop: false, terminal: false },
+	e2b: { live_events: true, follow_up: true, cancel: true, loop: true, terminal: true }
 };
 
 /** Label for a provider id, for status and messages. */

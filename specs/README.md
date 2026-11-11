@@ -73,8 +73,8 @@ reality**. Search `src/` before treating a spec as implemented.
   that stores no bytes. hc is pinned by version and SHA-256 in one file
   ([ADR-0021](decisions/0021-hc-terminal-runtime.md)). Sand missions and
   First Mate chats (on both runners) run this way today, and the relay
-  serves Sand missions and chats; the forge guest's hc, the forge relay and
-  the terminal view follow.
+  serves Sand missions and chats, where admins open it from the thread's or
+  chat's terminal view; the forge guest's hc and the forge relay follow.
 - **ralph loops are missions**. A `loop`
   dispatch runs [ralph](https://github.com/Vonshlovens/von-ralph) in the
   mission's hc terminal on Sand or forge (pinned by commit, never in the app

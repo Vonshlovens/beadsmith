@@ -5,7 +5,9 @@
 	 * provider. With live events the current run streams in; without them the
 	 * thread polls status and the reply lands when the run finishes. A runner
 	 * that cannot take follow-ups gets a disabled composer that says so. A
-	 * loop mission adds its iteration table above the conversation.
+	 * loop mission adds its iteration table above the conversation. Admins get
+	 * the agent's live terminal above it too, on runners that relay one
+	 * (ADR-0021).
 	 */
 	import { tip } from '#lib/client/tooltip.js';
 	import { untrack } from 'svelte';
@@ -18,6 +20,7 @@
 	import MarkdownBody from '#lib/components/markdown-body.svelte';
 	import MissionLiveStream from '#lib/components/mission-live-stream.svelte';
 	import MissionStatus from '#lib/components/mission-status.svelte';
+	import TerminalView from '#lib/components/terminal-view.svelte';
 	import { api, errorMessage } from '#lib/client/api.js';
 	import {
 		composerState,
@@ -30,7 +33,7 @@
 		THREAD_POLL_MS
 	} from '#lib/client/agent.js';
 	import { absoluteStamp, relativeShort } from '#lib/client/format.js';
-	import { statusSnapshot } from '#lib/client/projects.svelte.js';
+	import { currentViewer, statusSnapshot } from '#lib/client/projects.svelte.js';
 	import type { DispatchRequest, DispatchTurn, LoopIteration } from '#lib/types.js';
 
 	interface Props {
@@ -96,6 +99,13 @@
 		return Date.parse(last_operator?.created_at ?? mission?.updated_at ?? '') || now;
 	});
 	const is_loop = $derived(mission?.operation === 'loop');
+	// The relay names the mission; the server finds its sandbox. A mission that
+	// never started an agent has no terminal to open.
+	const show_terminal = $derived(
+		currentViewer()?.role === 'admin' &&
+			capabilities?.terminal === true &&
+			mission?.agent_id !== undefined
+	);
 	const run_url = $derived(isSafeRunUrl(mission?.agent_url) ? mission?.agent_url : undefined);
 
 	async function refresh(signal?: AbortSignal) {
@@ -289,6 +299,13 @@
 			error={iterations_error}
 			{busy}
 			onretry={() => void refreshIterations()}
+		/>
+	{/if}
+
+	{#if show_terminal && mission}
+		<TerminalView
+			target={{ mission: mission.id }}
+			subject={is_loop ? "this loop's" : "this mission's agent's"}
 		/>
 	{/if}
 

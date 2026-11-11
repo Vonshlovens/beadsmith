@@ -325,8 +325,9 @@ terminal, driven by the session core
   turn ends. A CLI waiting for a decision (hc reports `blocked`) is never
   typed into: the message fails with an error saying so. Stop (interrupt)
   is one way out; on Sand an admin can also take over the chat's terminal
-  through the relay (`POST /api/console/terminals`, docs/contract.md) and
-  answer it by hand. Forge chats have no relay yet.
+  through the relay (the **Terminal** strip under the chat's header;
+  `POST /api/console/terminals`, docs/contract.md) and answer it by hand.
+  Forge chats have no relay yet, so they show no strip.
 - The chat holds no channel while it has no agent. After a runner
   restart, an idle chat being evicted (`MATE_RUNNER_MAX_SESSIONS`), the
   CLI exiting or the channel dropping, the next message connects again:

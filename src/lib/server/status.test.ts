@@ -256,7 +256,13 @@ describe('getStatus', () => {
 			armed: false
 		});
 
-		const capabilities = { live_events: false, follow_up: true, cancel: true, loop: false };
+		const capabilities = {
+			live_events: false,
+			follow_up: true,
+			cancel: true,
+			loop: false,
+			terminal: false
+		};
 		const providers = [{ id: 'webhook', label: 'Webhook agent runner', capabilities }];
 		expect(armed.dispatch).toEqual({
 			enabled: true,
@@ -295,7 +301,8 @@ describe('getStatus', () => {
 			live_events: false,
 			follow_up: true,
 			cancel: true,
-			loop: false
+			loop: false,
+			terminal: false
 		});
 		expect(JSON.stringify(status)).not.toContain('x'.repeat(40));
 	});

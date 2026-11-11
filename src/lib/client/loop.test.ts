@@ -152,7 +152,8 @@ const CAPS: DispatchCapabilities = {
 	live_events: true,
 	follow_up: true,
 	cancel: true,
-	loop: false
+	loop: false,
+	terminal: false
 };
 
 function runner(

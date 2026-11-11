@@ -288,14 +288,23 @@ Shipped:
   and stamped with its end; a relay whose row cannot be written is not
   opened. Output waits for the browser to read, so a slow viewer slows the hc
   stream instead of growing a buffer.
+- The terminal view (`src/lib/components/terminal-view.svelte`, xterm.js
+  loaded on first open) in mission threads and First Mate chats, for admins
+  on runners whose `terminal` capability is set (Sand; the provider and
+  chat-runner tables say which implement `attachTerminal`). Closed until
+  asked; Watch follows the agent's grid; Take over is behind a confirm and
+  hands back by re-attaching as a watcher. While taken over every key goes
+  to the agent, Esc included, and Shift+Esc leaves the terminal. Touch or
+  narrow screens get Watch only. A lost stream reconnects with backoff in
+  the same mode; a refusal or an exited program does not. State, SSE
+  parsing and ordered input are `src/lib/client/terminal-relay.ts`.
 
 Planned, each in its own change:
 
 - the forge guest's hc and the runner wired to it;
 - the relay on forge: the mate runner's signed contract gains an attach
   endpoint the host runner serves over its SSH `hc connect` (forge chats
-  answer 409 until then);
-- the terminal view in First Mate chats and mission threads.
+  answer 409 until then).
 
 The current architecture bullet is in [`specs/README.md`](../README.md); the
 contract's rules are in
