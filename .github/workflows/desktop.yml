@@ -1,0 +1,101 @@
+name: Desktop
+
+# The native desktop client in desktop/ (ADR-0017) is a standalone Cargo
+# crate, so its gates live here and not in ci.yml: the web app's jobs neither
+# wait for a Rust build nor fail on one, and nothing here is a dependency of
+# the image or deploy jobs.
+on:
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same ref makes the older run's answer irrelevant.
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS is the platform the app ships on; Linux keeps the crate
+        # building on Rune's other backend.
+        os: [macos-latest, ubuntu-latest]
+    defaults:
+      run:
+        working-directory: desktop
+    env:
+      CARGO_TERM_COLOR: always
+      # CI builds once from clean or from a cache of whole artifacts;
+      # incremental state only makes that cache larger.
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v4
+
+      # libxkbcommon and libwayland are Rune's link-time dependencies
+      # (desktop/README.md), and OpenSSL is native-tls's TLS library off
+      # macOS (macOS uses Security.framework). Hosted runners have no GPU, and Rune's headless
+      # snapshots render on the GPU path, so Linux also needs Mesa's software
+      # Vulkan driver (lavapipe) for the scenes step.
+      - name: Install Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libwayland-dev libssl-dev pkg-config mesa-vulkan-drivers
+          # The manifest's file name differs between Ubuntu releases.
+          icd=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -n 1)
+          echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
+
+      # rustup reads desktop/rust-toolchain.toml: the pinned channel with
+      # clippy and rustfmt, the same one a local build uses.
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            desktop/target
+          key: desktop-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/rust-toolchain.toml', 'desktop/Cargo.lock') }}
+          restore-keys: |
+            desktop-${{ runner.os }}-${{ runner.arch }}-
+
+      # The same four gates the README lists, in the same order. --locked:
+      # a build that would rewrite Cargo.lock is a failure, not a fix.
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+
+      # The notices are generated from Cargo.lock (desktop/README.md, Third-party
+      # licenses); a dependency change that did not regenerate them fails here.
+      - run: scripts/third-party-notices.py --check
+
+      # Every scene in both themes, on the renderer the window uses. The
+      # images are uploaded so a reviewer can look at a UI change without
+      # building it.
+      - name: Render every scene
+        run: scripts/snap-scenes.sh target/scenes
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-scenes-${{ matrix.os }}
+          path: desktop/target/scenes/*.png
+          if-no-files-found: error
+          retention-days: 14

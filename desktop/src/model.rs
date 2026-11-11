@@ -1,5 +1,5 @@
 //! Read-model types the desktop client shows. They mirror the web app's wire
-//! types in `src/lib/types.ts`, trimmed to what the prototype draws.
+//! types in `src/lib/types.ts`, trimmed to what the desktop app draws.
 
 /// Issue counts by lifecycle status, as `issueCounts` in
 /// `src/lib/server/dolt/client.ts` computes them.
@@ -55,6 +55,21 @@ pub struct IssueSummary {
     pub dependency_count: u64,
     pub dependent_count: u64,
     pub comment_count: u64,
+    /// How many issues still block this one: its `blocks` dependencies whose
+    /// target is not closed, or is missing. A missing blocker counts, as it
+    /// does in the web app's Ready query: nothing says that work is done.
+    pub blocker_count: u64,
+}
+
+impl IssueSummary {
+    /// Ready to be picked up: open, with nothing blocking it. The rule of
+    /// `listReadyIssues` in `src/lib/server/dolt/client.ts` (the web app's
+    /// Ready deck), applied to rows that already carry their blocker count.
+    /// An issue someone has started, or one marked blocked by hand, is not
+    /// ready whatever its dependencies say.
+    pub fn is_ready(&self) -> bool {
+        self.status == "open" && self.blocker_count == 0
+    }
 }
 
 /// A related issue: a dependency or a dependent.
@@ -89,6 +104,82 @@ pub struct IssueDetail {
     pub comments: Vec<Comment>,
 }
 
+/// One heading's worth of the issue pane's dependency lists.
+#[derive(Debug, PartialEq)]
+pub struct DepGroup<'a> {
+    /// What the linked issues are to this one, as a heading ("Blocked by").
+    pub heading: &'static str,
+    /// Key prefix for the group's rows, unique within the pane, so an issue
+    /// linked twice (blocker and child, say) keeps a row under each heading.
+    pub key: &'static str,
+    /// Whether each row still names its own link type: only the catch-all
+    /// groups, whose heading cannot say it.
+    pub labelled: bool,
+    pub refs: Vec<&'a IssueRef>,
+}
+
+/// The kinds of link the pane names, in Beads' vocabulary, as the web app's
+/// `depLabel` (`src/lib/client/format.ts`) reads them.
+#[derive(Clone, Copy, PartialEq)]
+enum DepKind {
+    Blocks,
+    ParentChild,
+    DiscoveredFrom,
+    Related,
+    Other,
+}
+
+fn dep_kind(dep_type: Option<&str>) -> DepKind {
+    let key = dep_type.unwrap_or("").trim().to_ascii_lowercase().replace('_', "-");
+    match key.as_str() {
+        "blocks" => DepKind::Blocks,
+        "parent-child" => DepKind::ParentChild,
+        "discovered-from" => DepKind::DiscoveredFrom,
+        "related" => DepKind::Related,
+        _ => DepKind::Other,
+    }
+}
+
+/// Group an issue's links by what they mean, so a `related` or `parent-child`
+/// dependent never sits under "Blocks". `dependencies` are read upward (this
+/// issue waits on, is a child of, was discovered from them) and `dependents`
+/// downward, each heading in the web app's words for that direction. Related
+/// links have no direction, so both ends share one heading. A type the pane
+/// does not know keeps the plain direction as its heading and names itself
+/// on each row. Empty groups are left out; the order puts what holds work
+/// back first.
+pub fn dep_groups(d: &IssueDetail) -> Vec<DepGroup<'_>> {
+    use DepKind::*;
+    let up = |kind: DepKind| d.dependencies.iter().filter(move |r| dep_kind(r.dep_type.as_deref()) == kind);
+    let down = |kind: DepKind| d.dependents.iter().filter(move |r| dep_kind(r.dep_type.as_deref()) == kind);
+    let groups = [
+        ("Blocked by", "blocked-by", false, up(Blocks).collect::<Vec<_>>()),
+        ("Blocks", "blocks", false, down(Blocks).collect()),
+        ("Parent", "parent", false, up(ParentChild).collect()),
+        ("Children", "child", false, down(ParentChild).collect()),
+        ("Discovered from", "discovered-from", false, up(DiscoveredFrom).collect()),
+        ("Discovered here", "discovered", false, down(DiscoveredFrom).collect()),
+        ("Related", "related", false, up(Related).chain(down(Related)).collect()),
+        ("Depends on", "depends-on", true, up(Other).collect()),
+        ("Dependents", "dependents", true, down(Other).collect()),
+    ];
+    groups
+        .into_iter()
+        .filter(|(.., refs)| !refs.is_empty())
+        .map(|(heading, key, labelled, refs)| DepGroup { heading, key, labelled, refs })
+        .collect()
+}
+
+/// An issue quick open found, in whichever project holds it: enough to list
+/// it and to go to it. The rest is read when it is opened.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Hit {
+    pub project: String,
+    pub id: String,
+    pub title: String,
+    pub status: String,
+}
+
 /// Why a read failed. The same four sanitized classes as the web app
 /// (ADR-0003, `DoltFailureKind`), plus "not configured". A failure never
 /// carries a driver message: those can include hosts, user names or other
@@ -99,18 +190,57 @@ pub enum Failure {
     CredentialUnavailable,
     AuthenticationRejected,
     Unreachable,
+    /// TLS is on and the handshake failed: the server's certificate is not
+    /// trusted by this system, or not issued for the host as typed.
+    TlsRejected,
+    /// TLS is on and the server does not offer it.
+    TlsUnsupported,
+    /// TLS is off and the server refuses plain connections
+    /// (`Dolt::refused` asks again over TLS to tell).
+    TlsRequired,
     Unknown,
 }
 
 impl Failure {
+    /// A heading for the failure where it takes over a pane.
+    pub fn title(self) -> &'static str {
+        match self {
+            Failure::NotConfigured => "No server configured",
+            Failure::CredentialUnavailable => "No password for this server",
+            Failure::AuthenticationRejected => "Sign-in rejected",
+            Failure::Unreachable => "Server unreachable",
+            Failure::TlsRejected => "Certificate not trusted",
+            Failure::TlsUnsupported => "Server has no TLS",
+            Failure::TlsRequired => "Server requires TLS",
+            Failure::Unknown => "Connection failed",
+        }
+    }
+
+    /// Whether asking again could succeed with nothing changed in the
+    /// settings. With no server configured it cannot, so that failure offers
+    /// only connection settings. A missing password can: the Keychain may
+    /// have been locked, or its prompt dismissed.
+    pub fn retryable(self) -> bool {
+        self != Failure::NotConfigured
+    }
+
     pub fn message(self) -> &'static str {
         match self {
-            Failure::NotConfigured => "Dolt is not configured. Set BEADS_DOLT_SERVER_HOST, or run with --sample.",
+            Failure::NotConfigured => "No Dolt server is configured. Open connection settings to add one.",
             Failure::CredentialUnavailable => {
-                "Dolt authentication is unavailable. Set BEADS_DOLT_PASSWORD_FILE or BEADS_DOLT_PASSWORD."
+                "No password is available for this server. Enter it in connection settings, or set BEADS_DOLT_PASSWORD_FILE."
             }
             Failure::AuthenticationRejected => "Dolt authentication was rejected. Check the configured credentials.",
             Failure::Unreachable => "The Dolt server is unreachable. Check the host and port.",
+            Failure::TlsRejected => {
+                "The secure connection failed. The server's certificate must be trusted by this computer and issued for the host as entered."
+            }
+            Failure::TlsUnsupported => {
+                "The Dolt server does not offer TLS. Turn on TLS on the server, or turn it off in connection settings."
+            }
+            Failure::TlsRequired => {
+                "The Dolt server accepts only encrypted connections. Turn on TLS in connection settings."
+            }
             Failure::Unknown => "The Dolt connection failed.",
         }
     }
@@ -122,8 +252,18 @@ pub trait Source: Send + Sync {
     fn projects(&self) -> Result<Vec<Project>, Failure>;
     fn issues(&self, database: &str) -> Result<Vec<IssueSummary>, Failure>;
     fn issue(&self, database: &str, id: &str) -> Result<Option<IssueDetail>, Failure>;
+    /// Quick open's candidates: the issues in `databases` whose id or title
+    /// holds the characters of `needle` (from `quick::needle`: lower-cased,
+    /// not empty) in order, at most `quick::MAX_RESULTS` per database. The
+    /// order is the source's; `quick::rank` decides what is shown first.
+    fn search(&self, databases: &[String], needle: &str) -> Result<Vec<Hit>, Failure>;
     /// A short label for the status bar, never a secret.
     fn label(&self) -> String;
+    /// True when reads cross a network without TLS (`dolt::Config::unencrypted`),
+    /// so the window can say so. Sources that open no connection never do.
+    fn unencrypted(&self) -> bool {
+        false
+    }
 }
 
 /// The source used when no Dolt server is configured: every read fails with
@@ -140,9 +280,60 @@ impl Source for Unconfigured {
     fn issue(&self, _: &str, _: &str) -> Result<Option<IssueDetail>, Failure> {
         Err(Failure::NotConfigured)
     }
+    fn search(&self, _: &[String], _: &str) -> Result<Vec<Hit>, Failure> {
+        Err(Failure::NotConfigured)
+    }
     fn label(&self) -> String {
         "Not configured".into()
     }
+}
+
+/// The web app's page for an issue, under `base` (a checked web address,
+/// `settings::parse_web`). The route is the web app's issue page,
+/// `src/routes/p/[id]/i/[issue_id]/+page.svelte`, whose project id is the
+/// database name behind `d_` (`serverProjectId` in
+/// `src/lib/server/discovery.ts`). None for a database the web app does not
+/// list (`DB_NAME_PATTERN` in `src/lib/server/dolt/names.ts`), whose link
+/// would only lead to a "not found" page.
+pub fn web_issue_url(base: &str, database: &str, id: &str) -> Option<String> {
+    let listed = (1..=64).contains(&database.len())
+        && database.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+    listed.then(|| format!("{base}/p/d_{database}/i/{}", percent_encode(id)))
+}
+
+/// `s` with everything but URL-unreserved characters percent-encoded, as
+/// `encodeURIComponent` would: Beads ids are letters, digits, `-`, `_` and
+/// `.`, so a real id passes through unchanged.
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// A Markdown link to an issue, `[lh-1: Title](url)` (`[lh-1](url)` while
+/// the title is unknown), for pasting into a note, a pull request or a chat.
+/// Characters that would end the link text early or start formatting are
+/// escaped, so any title reads as written.
+pub fn markdown_link(id: &str, title: Option<&str>, url: &str) -> String {
+    let words = match title {
+        Some(title) => format!("{id}: {title}"),
+        None => id.to_string(),
+    };
+    let mut text = String::with_capacity(words.len());
+    for c in words.chars() {
+        if matches!(c, '\\' | '[' | ']' | '*' | '_' | '`' | '<' | '>') {
+            text.push('\\');
+        }
+        // A line break would end the paragraph and so the link.
+        text.push(if c == '\n' || c == '\r' { ' ' } else { c });
+    }
+    format!("[{text}]({url})")
 }
 
 #[cfg(test)]
@@ -156,5 +347,91 @@ mod tests {
         c.add("closed", 2);
         c.add("deferred", 1);
         assert_eq!((c.open, c.closed, c.total, c.active()), (3, 2, 6, 4));
+    }
+
+    /// The web app's issue route: `/p/d_<database>/i/<issue id>`.
+    #[test]
+    fn web_links_follow_the_web_apps_issue_route() {
+        let base = "https://beads.example";
+        assert_eq!(
+            web_issue_url(base, "lighthouse", "lh-1").as_deref(),
+            Some("https://beads.example/p/d_lighthouse/i/lh-1")
+        );
+        assert_eq!(
+            web_issue_url("http://h.example/beads", "my_db2", "pa-2.1").as_deref(),
+            Some("http://h.example/beads/p/d_my_db2/i/pa-2.1")
+        );
+        assert_eq!(web_issue_url(base, "lh", "a b/c").as_deref(), Some("https://beads.example/p/d_lh/i/a%20b%2Fc"));
+        for unlisted in ["", "Upper", "with-dash", &"x".repeat(65)] {
+            assert_eq!(web_issue_url(base, unlisted, "lh-1"), None, "{unlisted}");
+        }
+    }
+
+    #[test]
+    fn markdown_links_escape_the_title() {
+        assert_eq!(
+            markdown_link("lh-1", Some("Ship it"), "https://b.example/x"),
+            "[lh-1: Ship it](https://b.example/x)"
+        );
+        assert_eq!(
+            markdown_link("lh-2", Some("Fix [the] *bold* `code` \\ path_name\nnext"), "u"),
+            "[lh-2: Fix \\[the\\] \\*bold\\* \\`code\\` \\\\ path\\_name next](u)"
+        );
+        assert_eq!(markdown_link("lh_3", None, "u"), "[lh\\_3](u)");
+    }
+
+    #[test]
+    fn dep_groups_split_links_by_type_and_direction() {
+        let link = |id: &str, kind: Option<&str>| IssueRef {
+            id: id.into(),
+            title: None,
+            status: None,
+            dep_type: kind.map(Into::into),
+        };
+        let d = IssueDetail {
+            summary: IssueSummary {
+                id: "x-1".into(),
+                title: String::new(),
+                status: "open".into(),
+                priority: 2,
+                issue_type: "task".into(),
+                assignee: None,
+                labels: Vec::new(),
+                updated_at: String::new(),
+                dependency_count: 4,
+                dependent_count: 3,
+                comment_count: 0,
+                blocker_count: 1,
+            },
+            description: None,
+            design: None,
+            acceptance_criteria: None,
+            notes: None,
+            created_by: None,
+            created_at: None,
+            dependencies: vec![
+                link("x-2", Some("blocks")),
+                link("x-3", Some("parent_child")),
+                link("x-4", Some("related")),
+                link("x-5", Some("waits-for")),
+            ],
+            dependents: vec![link("x-6", Some("Blocks")), link("x-7", Some("related")), link("x-8", None)],
+            comments: Vec::new(),
+        };
+        let got: Vec<_> = dep_groups(&d)
+            .into_iter()
+            .map(|g| (g.heading, g.labelled, g.refs.iter().map(|r| r.id.as_str()).collect::<Vec<_>>()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("Blocked by", false, vec!["x-2"]),
+                ("Blocks", false, vec!["x-6"]),
+                ("Parent", false, vec!["x-3"]),
+                ("Related", false, vec!["x-4", "x-7"]),
+                ("Depends on", true, vec!["x-5"]),
+                ("Dependents", true, vec!["x-8"]),
+            ]
+        );
     }
 }

@@ -1,0 +1,138 @@
+name: Desktop release
+
+# Builds the macOS download of the desktop client (ADR-0017) and attaches it
+# to a GitHub Release. Separate from desktop.yml, which gates every change:
+# this one runs only when a version is tagged, and is the only desktop job
+# that may write to the repository.
+#
+# To release: bump `version` in desktop/Cargo.toml, merge, then push the tag
+# desktop-v<version> on that commit. A manual run from a branch builds the
+# same archive and keeps it as a workflow artifact without releasing
+# anything, which is how to rehearse a release.
+on:
+  push:
+    tags:
+      - 'desktop-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Two runs for one tag would race to create the same release. Let the first
+# finish instead of cancelling it half way through an upload.
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: package (macOS universal)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: desktop
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: '0'
+      # One app for Apple silicon and Intel Macs: bundle-macos.sh builds each
+      # triple and joins them with lipo, so there is one download to pick.
+      BEADSMITH_TARGETS: aarch64-apple-darwin x86_64-apple-darwin
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The archive is named for, and the app reports, the version in
+      # Cargo.toml. A tag that says anything else would publish a release
+      # whose name disagrees with its contents, so fail before building.
+      - name: Check the tag against Cargo.toml
+        id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version=$(scripts/bundle-macos.sh version)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$REF_TYPE" = tag ] && [ "$REF_NAME" != "desktop-v$version" ]; then
+            echo "::error::tag $REF_NAME does not match desktop/Cargo.toml version $version (expected desktop-v$version)"
+            exit 1
+          fi
+
+      # rustup reads desktop/rust-toolchain.toml for the pinned channel; the
+      # second architecture's standard library is not part of it.
+      - name: Install the pinned Rust toolchain and both targets
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          # shellcheck disable=SC2086 # one argument per triple
+          rustup target add $BEADSMITH_TARGETS
+
+      # No cargo cache: a release is rare, and building it from clean means
+      # nothing a branch build left in a cache ends up in the download.
+
+      # Release what the gates passed: the same tests desktop.yml runs, on
+      # the commit being tagged.
+      - run: cargo test --locked
+
+      # Ad-hoc signed (the script's default): Developer ID signing and
+      # notarization need Apple credentials this repository does not have.
+      # The README says what that means for whoever downloads it.
+      - name: Build, sign and zip Beadsmith.app
+        run: scripts/bundle-macos.sh package
+
+      - name: Check the archive
+        run: |
+          cd target/bundle
+          shasum -a 256 -c ./*.zip.sha256
+          lipo -archs Beadsmith.app/Contents/MacOS/Beadsmith
+          test "$(lipo -archs Beadsmith.app/Contents/MacOS/Beadsmith | wc -w)" -eq 2
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beadsmith-desktop-macos
+          path: |
+            desktop/target/bundle/*.zip
+            desktop/target/bundle/*.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: publish the release
+    # Only a tag releases. A manual run from a branch stops at the artifact.
+    if: github.ref_type == 'tag'
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The one place with write access, and it runs no code from the build:
+    # it only uploads the two files the package job made.
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.package.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: beadsmith-desktop-macos
+          path: dist
+
+      - name: Create the release, or refresh its files on a re-run
+        run: |
+          cat > notes.md <<EOF
+          Beadsmith desktop $VERSION for macOS 13 or later, Apple silicon and Intel.
+
+          This build is not notarized, so macOS will not open it until you
+          clear the download's quarantine attribute. See
+          [Install a downloaded build](https://github.com/$GH_REPO/blob/$TAG/desktop/README.md#install-a-downloaded-build),
+          which also says how to check the download against the \`.sha256\` file.
+          EOF
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            # --latest=false: the repository is first the web app, so a
+            # desktop build should not become its "latest release".
+            gh release create "$TAG" dist/* --verify-tag --latest=false \
+              --title "Beadsmith desktop $VERSION" --notes-file notes.md
+          fi
