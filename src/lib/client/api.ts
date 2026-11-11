@@ -24,6 +24,7 @@ import type {
 	DiscussIntent,
 	DispatchRequest,
 	DispatchTurnsResponse,
+	LoopIterationsResponse,
 	DoltFailureKind,
 	IssueDetailResponse,
 	IssueListResponse,
@@ -465,6 +466,15 @@ export const api = {
 		return request<DispatchTurnsResponse>(
 			'GET',
 			`/projects/${encodeURIComponent(project_id)}/dispatch/${encodeURIComponent(request_id)}/turns`,
+			init
+		);
+	},
+
+	/** A loop mission's finished iterations, oldest first; empty for other missions. */
+	dispatchIterations(project_id: string, request_id: string, init?: RequestInitLike) {
+		return request<LoopIterationsResponse>(
+			'GET',
+			`/projects/${encodeURIComponent(project_id)}/dispatch/${encodeURIComponent(request_id)}/iterations`,
 			init
 		);
 	},

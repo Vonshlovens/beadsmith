@@ -290,7 +290,11 @@ iteration, outcome, started_at, finished_at, duration_ms, head_before,
 head_after, input_tokens, output_tokens, cost_usd, validate_ok,
 plan_open}]}`, copied from ralph as each iteration ends (ADR-0019 rule 5).
 Any other mission returns an empty list. Numbers and a commit range only:
-the agent's words and errors stay in the sandbox.
+the agent's words and errors stay in the sandbox. A loop's mission thread
+shows these rows above its conversation, grouped by run once it has been
+restarted, with its stop reason and a needs-person badge after it ends.
+Live events carry no iteration boundaries, so the thread re-reads this list
+every few seconds while the loop runs. A loop thread takes no replies.
 
 `GET /api/status` reports `dispatch.capabilities` for the default provider
 and `dispatch.providers` (`id`, `label`, `capabilities`) for every configured

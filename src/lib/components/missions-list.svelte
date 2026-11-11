@@ -8,9 +8,10 @@
 	import { tip } from '#lib/client/tooltip.js';
 	import ArrowSquareOutIcon from 'phosphor-svelte/lib/ArrowSquareOutIcon';
 	import GitPullRequestIcon from 'phosphor-svelte/lib/GitPullRequestIcon';
+	import RepeatIcon from 'phosphor-svelte/lib/RepeatIcon';
 	import IssueId from '#lib/components/issue-id.svelte';
 	import MissionStatus from '#lib/components/mission-status.svelte';
-	import { formatElapsed, isSafeRunUrl, missionVerb } from '#lib/client/agent.js';
+	import { formatElapsed, isBusyStatus, isSafeRunUrl, missionVerb } from '#lib/client/agent.js';
 	import { threadHref } from '#lib/client/first-mate.js';
 	import { relativeShort } from '#lib/client/format.js';
 	import { app_state } from '#lib/client/stores.svelte.js';
@@ -42,7 +43,11 @@
 		{#each missions as mission (mission.id)}
 			<li>
 				<button class="c-row" type="button" onclick={() => openInDialog(mission)}>
-					<span class="verb">{missionVerb(mission)}</span>
+					<span class="verb"
+						>{#if mission.loop}<RepeatIcon size={12} aria-hidden="true" />{/if}{missionVerb(
+							mission
+						)}</span
+					>
 					<MissionStatus status={mission.status} />
 					<span class="spacer"></span>
 					<span class="faint">{mission.actor}</span>
@@ -59,11 +64,20 @@
 		{#each missions as mission (mission.id)}
 			<li class="f-row">
 				<a class="f-main" href={threadHref(mission)}>
-					<span class="verb">{missionVerb(mission)}</span>
+					<span class="verb">
+						{#if mission.loop}<RepeatIcon size={12} aria-hidden="true" />{/if}{missionVerb(mission)}
+					</span>
 					<span class="f-st"><MissionStatus status={mission.status} /></span>
 					<span class="f-ti">
 						{#if mission.issue_id}<IssueId id={mission.issue_id} abbreviate />{/if}
 						<span class="f-title">{mission.title ?? ''}</span>
+						{#if mission.loop?.needs_person && !isBusyStatus(mission.status)}
+							<span
+								class="badge badge-blocked f-needs"
+								{@attach tip('ralph asks a person to look before this loop runs again')}
+								><i class="dot dot-blocked" aria-hidden="true"></i>Needs a person</span
+							>
+						{/if}
 					</span>
 				</a>
 				{#if show_project}
@@ -135,9 +149,16 @@
 		border-color: var(--line);
 	}
 	.verb {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
 		color: var(--tx-hi);
 		font-weight: 600;
 		font-size: var(--t-xs);
+	}
+	.f-needs {
+		flex: none;
+		align-self: center;
 	}
 	.spacer {
 		flex: 1;

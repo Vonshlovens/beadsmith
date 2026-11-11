@@ -201,7 +201,8 @@ export interface ComposerState {
  * @param dispatch - Current dispatch health.
  */
 export function composerState(
-	mission: Pick<DispatchRequest, 'status' | 'agent_id' | 'provider'>,
+	mission: Pick<DispatchRequest, 'status' | 'agent_id' | 'provider'> &
+		Partial<Pick<DispatchRequest, 'operation'>>,
 	dispatch: DispatchView | null
 ): ComposerState {
 	if (dispatch === null || dispatch.provider === undefined || dispatch.provider === 'none') {
@@ -217,6 +218,15 @@ export function composerState(
 	const runner = missionProvider(mission, dispatch);
 	if (runner === undefined) {
 		return { can_send: false, reason: 'Started on a runner that is no longer configured.' };
+	}
+	// A loop's agent works from the plan; the service refuses a follow-up on it.
+	if (mission.operation === 'loop') {
+		return {
+			can_send: false,
+			reason: isBusyStatus(mission.status)
+				? 'The loop is running. It works from its plan, not from replies.'
+				: 'A loop works from its plan and does not take replies.'
+		};
 	}
 	if (isBusyStatus(mission.status)) {
 		return { can_send: false, reason: 'The agent is working. Wait for its reply or stop the run.' };

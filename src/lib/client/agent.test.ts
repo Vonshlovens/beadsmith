@@ -156,6 +156,17 @@ describe('composerState', () => {
 		expect(composerState(done, health({ armed: false }).dispatch).reason).toContain('disarmed');
 		expect(composerState(done, null).can_send).toBe(false);
 	});
+
+	it('never offers a reply on a loop, running or ended', () => {
+		const loop = { ...done, operation: 'loop' as const };
+		expect(composerState(loop, health().dispatch)).toEqual({
+			can_send: false,
+			reason: 'A loop works from its plan and does not take replies.'
+		});
+		expect(composerState({ ...loop, status: 'running' }, health().dispatch).reason).toContain(
+			'The loop is running'
+		);
+	});
 });
 
 describe('missionVerb and isSafeRunUrl', () => {

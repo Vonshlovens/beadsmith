@@ -4,7 +4,8 @@
 	 * run in progress, and a composer for the next message. Works with any
 	 * provider. With live events the current run streams in; without them the
 	 * thread polls status and the reply lands when the run finishes. A runner
-	 * that cannot take follow-ups gets a disabled composer that says so.
+	 * that cannot take follow-ups gets a disabled composer that says so. A
+	 * loop mission adds its iteration table above the conversation.
 	 */
 	import { tip } from '#lib/client/tooltip.js';
 	import { untrack } from 'svelte';
@@ -13,6 +14,7 @@
 	import GitPullRequestIcon from 'phosphor-svelte/lib/GitPullRequestIcon';
 	import SquareIcon from 'phosphor-svelte/lib/SquareIcon';
 	import ChatComposer from '#lib/components/chat-composer.svelte';
+	import LoopIterations from '#lib/components/loop-iterations.svelte';
 	import MarkdownBody from '#lib/components/markdown-body.svelte';
 	import MissionLiveStream from '#lib/components/mission-live-stream.svelte';
 	import MissionStatus from '#lib/components/mission-status.svelte';
@@ -29,7 +31,7 @@
 	} from '#lib/client/agent.js';
 	import { absoluteStamp, relativeShort } from '#lib/client/format.js';
 	import { statusSnapshot } from '#lib/client/projects.svelte.js';
-	import type { DispatchRequest, DispatchTurn } from '#lib/types.js';
+	import type { DispatchRequest, DispatchTurn, LoopIteration } from '#lib/types.js';
 
 	interface Props {
 		project_id: string;
@@ -62,6 +64,9 @@
 	let now = $state(Date.now());
 	let composer_el = $state<HTMLTextAreaElement | null>(null);
 	let list_el = $state<HTMLDivElement | null>(null);
+	let iterations = $state<LoopIteration[]>([]);
+	let iterations_loaded = $state(false);
+	let iterations_error = $state<string | null>(null);
 	/** Bumps when a new run starts, so the live stream reconnects. */
 	let run_generation = $state(0);
 
@@ -90,6 +95,7 @@
 		const last_operator = [...turns].reverse().find((turn) => turn.role === 'operator');
 		return Date.parse(last_operator?.created_at ?? mission?.updated_at ?? '') || now;
 	});
+	const is_loop = $derived(mission?.operation === 'loop');
 	const run_url = $derived(isSafeRunUrl(mission?.agent_url) ? mission?.agent_url : undefined);
 
 	async function refresh(signal?: AbortSignal) {
@@ -105,6 +111,9 @@
 			turns = history.turns;
 			load_error = null;
 			onupdated?.(record.request);
+			if (record.request.operation === 'loop') {
+				await refreshIterations(signal);
+			}
 		} catch (error) {
 			if (!signal?.aborted) {
 				load_error = errorMessage(error);
@@ -116,12 +125,38 @@
 		}
 	}
 
+	/**
+	 * A loop's finished iterations. A failed read keeps the rows already
+	 * shown and says so beside them.
+	 */
+	async function refreshIterations(signal?: AbortSignal) {
+		try {
+			const result = await api.dispatchIterations(project_id, request_id, { signal });
+			if (signal?.aborted) {
+				return;
+			}
+			iterations = result.iterations;
+			iterations_error = null;
+		} catch (error) {
+			if (!signal?.aborted) {
+				iterations_error = errorMessage(error);
+			}
+		} finally {
+			if (!signal?.aborted) {
+				iterations_loaded = true;
+			}
+		}
+	}
+
 	// Load on mount and whenever the thread changes.
 	$effect(() => {
 		void request_id;
 		const ac = new AbortController();
 		loaded = false;
 		turns = [];
+		iterations = [];
+		iterations_loaded = false;
+		iterations_error = null;
 		void refresh(ac.signal);
 		return () => ac.abort();
 	});
@@ -139,6 +174,16 @@
 			clearInterval(poll);
 			clearInterval(tick);
 		};
+	});
+
+	// Live events carry no iteration boundaries, so a running loop's table
+	// polls at the thread's quick pace even when the status poll slows down.
+	$effect(() => {
+		if (!busy || !is_loop || !live) {
+			return;
+		}
+		const poll = setInterval(() => void refreshIterations(), THREAD_POLL_MS);
+		return () => clearInterval(poll);
 	});
 
 	// Keep the newest turn in view.
@@ -234,6 +279,17 @@
 
 	{#if load_error && !loaded}
 		<p class="err" role="alert">{load_error}</p>
+	{/if}
+
+	{#if is_loop && mission?.loop}
+		<LoopIterations
+			loop={mission.loop}
+			{iterations}
+			loaded={iterations_loaded}
+			error={iterations_error}
+			{busy}
+			onretry={() => void refreshIterations()}
+		/>
 	{/if}
 
 	<div class="turns" bind:this={list_el}>
