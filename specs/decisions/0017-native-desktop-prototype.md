@@ -148,10 +148,15 @@ window: it still needs a running server and gains nothing native.
   the web app. See
   [Links to the web app](../../desktop/README.md#links-to-the-web-app).
 - The view a relaunch restores (project, status tab, sort, theme choice,
-  window size) is kept in the same settings file (`settings::Session`); it
+  window size and, on macOS, position) is kept in the same settings file (`settings::Session`); it
   holds names and numbers only, and an unusable value falls back to its
   default. See
   [What a relaunch remembers](../../desktop/README.md#what-a-relaunch-remembers).
+  Rune cannot report a window's position, so `desktop/src/placement.rs`
+  reads the frame from AppKit through Rune's raw window handle (direct
+  `objc2`/`objc2-app-kit` dependencies at the versions Rune already uses)
+  and keeps it in points; this is a native read of our own window, not a
+  change to the data boundary.
 - TLS: `Config::tls` and `options` in `desktop/src/dolt.rs` (the pool's
   `SslOpts`, defaults only), `dolt.tls` in the settings file, the form's
   checkbox and the sidebar's mark in `desktop/src/view.rs`. The ignored

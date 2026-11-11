@@ -1490,11 +1490,14 @@ impl State {
         let _ = session.save(&mut self.prefs);
     }
 
-    /// `App::on_close`: keep the size the window closes at. Its position is
-    /// not kept: Rune can place a window but not say where one is.
-    pub fn remember_window(&mut self) {
-        if let Some(size) = self.window {
-            let _ = settings::save_window(&mut self.prefs, size);
+    /// `App::on_close`: keep the size the window closes at and, where the
+    /// platform can say (`placement::origin`), where it was. Neither is kept
+    /// in full screen, whose frame is the display's, not the window's.
+    pub fn remember_window(&mut self, origin: Option<(f64, f64)>) {
+        let Some(size) = self.window else { return };
+        let _ = settings::save_window(&mut self.prefs, size);
+        if let Some(origin) = origin {
+            let _ = settings::save_position(&mut self.prefs, origin);
         }
     }
 
@@ -1963,7 +1966,7 @@ mod tests {
         s.search.replace_text("jar");
         s.refilter();
         s.window = Some((1280.0, 800.0));
-        s.remember_window();
+        s.remember_window(Some((40.0, 64.0)));
         drop(s);
 
         let s = launch_from(&file);
@@ -1973,6 +1976,7 @@ mod tests {
         assert_eq!(s.appearance, Appearance::Light);
         assert_eq!(s.search.text, "", "the filter text is not kept");
         assert_eq!(settings::load_window(&s.prefs), (1280.0, 800.0));
+        assert_eq!(settings::load_position(&s.prefs), Some((40.0, 64.0)));
         let shown: Vec<i64> = (0..s.visible.len()).map(|row| s.visible_issue(row).unwrap().priority).collect();
         assert!(!shown.is_empty() && shown.is_sorted_by(|a, b| a >= b), "the rows land under the remembered sort");
         assert!((0..s.visible.len()).all(|row| s.visible_issue(row).unwrap().status == "open"));
@@ -2025,10 +2029,15 @@ mod tests {
         assert_eq!(s.project.as_deref(), Some("pantry"));
         // Full screen reports no size, so the last windowed one is kept.
         s.window = Some((1300.0, 700.0));
-        s.remember_window();
+        s.remember_window(Some((20.0, 40.0)));
         s.window = None;
-        s.remember_window();
+        s.remember_window(Some((0.0, 0.0)));
         assert_eq!(settings::load_window(&s.prefs), (1300.0, 700.0));
+        assert_eq!(settings::load_position(&s.prefs), Some((20.0, 40.0)));
+        // A platform that cannot say where the window is keeps the last place.
+        s.window = Some((1200.0, 700.0));
+        s.remember_window(None);
+        assert_eq!(settings::load_position(&s.prefs), Some((20.0, 40.0)));
     }
 
     #[test]

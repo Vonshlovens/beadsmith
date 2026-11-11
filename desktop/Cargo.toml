@@ -25,3 +25,9 @@ mysql = { version = "28", default-features = false, features = ["minimal-rust", 
 # The macOS Keychain, where the Dolt password is kept (src/settings.rs).
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = { version = "3", default-features = false }
+# The window's frame, read through Rune's raw window handle when it closes,
+# since Rune can place a window but not say where it is (src/placement.rs).
+# The versions Rune itself uses, so nothing new is compiled.
+objc2 = "0.5"
+objc2-foundation = { version = "0.2", default-features = false, features = ["std", "NSArray", "NSGeometry"] }
+objc2-app-kit = { version = "0.2", default-features = false, features = ["std", "NSResponder", "NSScreen", "NSView", "NSWindow"] }

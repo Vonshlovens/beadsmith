@@ -71,6 +71,8 @@ pub const MIN_WINDOW: (f32, f32) = (1100.0, 560.0);
 const MAX_WINDOW: f32 = 16384.0;
 
 const WINDOW_KEY: &str = "window.size";
+/// The window's top-left in points (`placement`), beside its size.
+const POSITION_KEY: &str = "window.position";
 const PROJECT_KEY: &str = "view.project";
 const STATUS_KEY: &str = "view.status";
 const SORT_KEY: &str = "view.sort";
@@ -97,6 +99,20 @@ pub fn save_window(prefs: &mut Prefs, size: (f32, f32)) -> Result<(), PrefsError
         return Ok(());
     }
     prefs.set(WINDOW_KEY, &size)
+}
+
+/// Where the window was closed, as `placement` keeps it: a top-left in
+/// points. Whether it is still on a display is `placement::restore`'s call;
+/// here only a value that is no point at all is dropped.
+pub fn load_position(prefs: &Prefs) -> Option<(f64, f64)> {
+    prefs.get::<(f64, f64)>(POSITION_KEY).filter(|(x, y)| x.is_finite() && y.is_finite())
+}
+
+pub fn save_position(prefs: &mut Prefs, origin: (f64, f64)) -> Result<(), PrefsError> {
+    if prefs.get::<(f64, f64)>(POSITION_KEY) == Some(origin) {
+        return Ok(());
+    }
+    prefs.set(POSITION_KEY, &origin)
 }
 
 /// What the window was showing, so the next launch opens on the same view:
@@ -666,6 +682,22 @@ mod tests {
         ] {
             std::fs::write(&path, format!(r#"{{"window.size":{saved}}}"#)).unwrap();
             assert_eq!(load_window(&Prefs::at(&path)), opened, "{saved}");
+        }
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn the_window_position_round_trips() {
+        let path = scratch("position");
+        assert_eq!(load_position(&Prefs::at(&path)), None, "a missing file opens at the default placement");
+        let mut prefs = Prefs::at(&path);
+        save_position(&mut prefs, (-1300.0, 60.5)).unwrap();
+        save_window(&mut prefs, (1280.0, 760.0)).unwrap();
+        let prefs = Prefs::at(&path);
+        assert_eq!((load_position(&prefs), load_window(&prefs)), (Some((-1300.0, 60.5)), (1280.0, 760.0)));
+        for saved in [r#"[12]"#, r#""left""#, r#"[1e999, 0]"#, r#"null"#] {
+            std::fs::write(&path, format!(r#"{{"window.position":{saved}}}"#)).unwrap();
+            assert_eq!(load_position(&Prefs::at(&path)), None, "{saved}");
         }
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }

@@ -10,6 +10,7 @@ mod app;
 mod dolt;
 mod keys;
 mod model;
+mod placement;
 mod quick;
 mod sample;
 mod settings;
@@ -18,7 +19,7 @@ mod view;
 
 use std::sync::Arc;
 
-use rune::{App, AppSpec, Chrome};
+use rune::{App, AppSpec, Chrome, WindowOptions};
 
 use app::{Check, Load, Pane, State};
 use dolt::{Config, Credential, Dolt};
@@ -48,6 +49,16 @@ fn window_size() -> (f32, f32) {
         return settings::DEFAULT_WINDOW;
     }
     settings::load_window(&rune::prefs::Prefs::open(settings::APP_ID))
+}
+
+/// Where to open: where the window was last closed, while that is still on
+/// an attached display (`placement`); else Rune's default placement. A
+/// headless run opens at the default, as for the size.
+fn window_position(size: (f32, f32)) -> Option<(i32, i32)> {
+    if rune::tooling::is_headless() {
+        return None;
+    }
+    placement::restore(settings::load_position(&rune::prefs::Prefs::open(settings::APP_ID)), size)
 }
 
 /// Scenes fill state synchronously, so a headless `--snap` shows content on
@@ -417,6 +428,7 @@ fn chrome() -> Chrome {
 fn main() {
     rune::prewarm_gpu();
     rune::tooling::set_app_id("beadsmith-desktop");
+    let size = window_size();
     let spec = AppSpec::<State> {
         min_size: Some(settings::MIN_WINDOW),
         scenes: &[
@@ -471,12 +483,14 @@ fn main() {
         poll: Some(|s, clock, tx| s.poll(clock, tx)),
         on_key: Some(keys::on_key),
         families: theme::FAMILIES,
-        ..AppSpec::new("Beadsmith", window_size(), init, view::view)
+        ..AppSpec::new("Beadsmith", size, init, view::view)
     };
     let mut app = App::new(spec)
         .chrome(chrome())
+        .window_options(WindowOptions { position: window_position(size), ..WindowOptions::default() })
+        .on_window(placement::track)
         .on_focus(|s, focused, tx| s.window_focus(focused, tx))
-        .on_close(|s, _| s.remember_window());
+        .on_close(|s, _| s.remember_window(placement::origin()));
     // Rune has native menus on macOS only; elsewhere the keys alone answer.
     if cfg!(target_os = "macos") || rune::tooling::is_headless() {
         // Edit and Window menus, so Cmd-W, Cmd-M and the editing keys are the system's.
