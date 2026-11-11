@@ -29,6 +29,8 @@ import type {
 	IssueDetailResponse,
 	IssueListResponse,
 	Mission,
+	ModelPoolAction,
+	ModelPoolActionResponse,
 	ModelPoolResponse,
 	Project,
 	ReadyListResponse,
@@ -247,6 +249,20 @@ export const api = {
 	/** The Underclass model pool, or `{configured: false}` when it is off (ADR-0022). */
 	modelPool(init?: RequestInitLike) {
 		return request<ModelPoolResponse>('GET', '/console/model-pool', init);
+	},
+
+	/** Refresh, enable, disable or reset one pooled account; a refusal resolves, not throws. */
+	modelPoolAction(
+		account_id: string,
+		action: ModelPoolAction,
+		force = false,
+		init?: RequestInitLike
+	) {
+		return request<ModelPoolActionResponse>(
+			'POST',
+			`/console/model-pool/accounts/${encodeURIComponent(account_id)}/${action}`,
+			{ ...init, body: force ? { force: true } : {} }
+		);
 	},
 
 	/** Backup settings (no secrets), recent runs, and run state. */

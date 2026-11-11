@@ -274,6 +274,21 @@ emails, shown to admins and never logged. An upstream failure is a 503
 `unavailable` with one of the Dolt reader's four `failure_kind` classes and a
 fixed message.
 
+`POST /api/console/model-pool/accounts/:id/:action`, with `action` one of
+`refresh`, `enable`, `disable` or `reset`, runs that Underclass account
+action. The id must match `UNDERCLASS_ACCOUNT_ID` in
+`src/lib/server/underclass/client.ts` (no `/`, `.`, `?` or `%`) and is the
+only browser input that reaches Underclass. The body is empty or
+`{force: true}`, and `force` is accepted only on a reset; any other key, an
+unknown action or an unsafe id is a 400 before Underclass is called. The
+answer is the typed `ModelPoolActionResponse`: `outcome: 'done'` with the
+account's resulting state when Underclass reports it, or `outcome: 'refused'`
+(still 200) with a fixed `refusal` code and `can_force`. Underclass's own
+refusal messages are dropped, since they can carry upstream error text. An
+unknown account is 404, an unconnected pool 409 and an upstream failure a
+503 as above. Every call writes one server log line with the acting user's
+id, the action, the account id and the result, never the account's label.
+
 `/api/mate/chats/*` (admin-only, reads included, each chat visible only to
 its owner) lists, creates, reads, renames or re-scopes, and deletes First
 Mate chats; `POST .../:id/messages` `{text, message_id?}` (text capped at

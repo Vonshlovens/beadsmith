@@ -199,7 +199,14 @@ Planned, each in its own change:
   `BDX_UNDERCLASS_URL` and `BDX_UNDERCLASS_UI_TOKEN_FILE` in
   `src/lib/server/env.ts` and `docs/configuration.md`;
 - the console's model pool page;
-- the console's account actions (refresh, enable, disable, reset);
+- the console's account actions (refresh, enable, disable, reset):
+  shipped as `POST /api/console/model-pool/accounts/:id/:action`
+  (contract in [`docs/contract.md`](../../docs/contract.md)). The account
+  id is the one browser value that reaches Underclass, behind a pattern
+  that admits no path characters, and the log line names the acting user's
+  id, not their email. Underclass's refusals become fixed codes, since its
+  messages can carry upstream text; a refused reset Underclass would accept
+  with `force` offers a second, forced confirmation;
 - forge's tailnet HTTPS route to Underclass for the Beadsmith host, the
   production secrets by name, and the operator check in
   `docs/operations/host-forge.md`.

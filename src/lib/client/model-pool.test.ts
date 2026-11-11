@@ -9,7 +9,11 @@ import {
 } from '#lib/server/underclass/fixtures.js';
 import type { ModelPoolAccount, ModelPoolSnapshot, ModelPoolWindow } from '#lib/types.js';
 import {
+	accountActions,
 	accountKind,
+	actionConfirm,
+	actionDone,
+	REFUSAL_COPY,
 	accountState,
 	compactCount,
 	CONFIG_ERROR_COPY,
@@ -250,5 +254,59 @@ describe('hourBars', () => {
 		const day = snapshot().day;
 		const quiet = { ...day, hours: day.hours.map((hour) => ({ ...hour, requests: 0 })) };
 		expect(hourBars(quiet).every((bar) => bar.share === 0)).toBe(true);
+	});
+});
+
+describe('account actions', () => {
+	const names = (patch: Partial<ModelPoolAccount>) =>
+		accountActions(account(patch)).map((item) => item.action);
+
+	it('offers what Underclass would accept for the account', () => {
+		expect(names({ backend: 'codex', status: 'healthy', banked_resets: 2 })).toEqual([
+			'refresh',
+			'reset',
+			'disable'
+		]);
+		expect(names({ backend: 'claude', status: 'auth_error', banked_resets: 0 })).toEqual([
+			'refresh',
+			'enable',
+			'disable'
+		]);
+		expect(names({ backend: 'copilot', status: 'disabled', banked_resets: null })).toEqual([
+			'enable'
+		]);
+		expect(names({ backend: 'codex', status: 'cooling', banked_resets: null })).toEqual([
+			'refresh',
+			'disable'
+		]);
+	});
+
+	it('confirms disable and reset in words that name the account and the cost', () => {
+		const a = account({ label: 'pool@example.com', in_flight: 2, banked_resets: 3 });
+		const disable = actionConfirm(a, 'disable', false)!;
+		expect(disable.destructive).toBe(true);
+		expect(disable.description).toContain('pool@example.com');
+		expect(disable.description).toContain('2 in-flight requests finish');
+		const reset = actionConfirm(a, 'reset', false)!;
+		expect(reset.description).toContain('one of the 3 rate-limit resets');
+		expect(reset.description).toContain('own subscription');
+		expect(reset.destructive).toBe(false);
+		const forced = actionConfirm(a, 'reset', true)!;
+		expect(forced.confirm_label).toBe('Spend it anyway');
+		expect(forced.destructive).toBe(true);
+		expect(actionConfirm(a, 'refresh', false)).toBeNull();
+		expect(actionConfirm(a, 'enable', false)).toBeNull();
+	});
+
+	it('says what happened', () => {
+		const done = { outcome: 'done' as const, account_id: 'a', banked_resets: null };
+		expect(actionDone({ ...done, action: 'refresh', status: 'healthy' })).toContain(
+			'back in rotation'
+		);
+		expect(actionDone({ ...done, action: 'enable', status: 'cooling' })).toContain('cooldown');
+		expect(actionDone({ ...done, action: 'reset', status: null, banked_resets: 1 })).toBe(
+			'Reset used; 1 left.'
+		);
+		for (const text of Object.values(REFUSAL_COPY)) expect(text.length).toBeGreaterThan(0);
 	});
 });

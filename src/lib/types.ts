@@ -358,6 +358,44 @@ export type ModelPoolResponse =
 	| { configured: false; config_error?: UnderclassConfigError }
 	| { configured: true; pool: ModelPoolSnapshot };
 
+/** An admin action on one pooled account (ADR-0022 rule 4). */
+export type ModelPoolAction = 'refresh' | 'enable' | 'disable' | 'reset';
+
+/**
+ * Why Underclass declined an action, as a fixed code (its own message never
+ * leaves the server). `unknown_account` answers 404 rather than a refusal body.
+ */
+export type ModelPoolRefusal =
+	| 'not_refreshable'
+	| 'refresh_failed'
+	| 'not_rate_limited'
+	| 'already_redeemed'
+	| 'no_credit'
+	| 'not_resettable'
+	| 'upstream_failed';
+
+/**
+ * `POST /api/console/model-pool/accounts/:id/:action`. A refusal is an
+ * answer, not a failure: it comes back 200 with `outcome: 'refused'`, and
+ * `can_force` says a forced reset may still go through. `status` is the
+ * account's state after the action when Underclass reports it.
+ */
+export type ModelPoolActionResponse =
+	| {
+			outcome: 'done';
+			action: ModelPoolAction;
+			account_id: string;
+			status: ModelPoolAccount['status'] | null;
+			banked_resets: number | null;
+	  }
+	| {
+			outcome: 'refused';
+			action: ModelPoolAction;
+			account_id: string;
+			refusal: ModelPoolRefusal;
+			can_force: boolean;
+	  };
+
 export type ApiErrorCode =
 	| 'bad_request'
 	| 'unauthorized'
