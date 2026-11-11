@@ -140,7 +140,7 @@ export const WEBHOOK_PROVIDER_LABEL = 'Webhook agent runner';
  */
 export const PROVIDER_CAPABILITIES: Record<DispatchProviderId, DispatchCapabilities> = {
 	webhook: { live_events: false, follow_up: true, cancel: true, loop: false },
-	e2b: { live_events: true, follow_up: true, cancel: true, loop: false }
+	e2b: { live_events: true, follow_up: true, cancel: true, loop: true }
 };
 
 /** Label for a provider id, for status and messages. */

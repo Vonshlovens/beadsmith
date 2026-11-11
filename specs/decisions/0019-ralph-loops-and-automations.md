@@ -218,7 +218,21 @@ Nothing ships with this record. Planned, each in its own change:
   requires an iteration limit (1 to 200), a `run` loop requires its prompt
   and the other modes refuse one, and bead scope is for `build` and `run`
   only, as ralph's `--bead` is. A loop refuses follow-up: a one-shot agent in
-  its checkout would run outside ralph;
+  its checkout would run outside ralph.
+  The Sand loop runner shipped in `src/lib/server/dispatch/e2b-provider.ts`
+  (`launchLoop`), with ralph's pin in `nix/ralph.json` (repository and
+  commit; ralph runs from source on the template's Node, its dependencies
+  from its own lockfile). The Nix hash joins the pin when `nix/overlay.nix`
+  first builds ralph, for the forge guest; the overlay does not read the
+  pin yet. Beadsmith starts two hc terminals in the checkout, `ralph serve
+  --no-web` and `ralph <mode> --name bdx-<mode>-<id> --no-observer …`, and
+  reaches `/v1` with curl to loopback over the E2B process channel
+  (`src/lib/server/e2b/ralph-transport.ts`). Its observer is off because
+  Beadsmith keeps none of its summaries. A loop sandbox is created to be
+  destroyed, not paused, on timeout; a loop that outlives
+  `BDX_E2B_MAX_RUN_MINUTES` is cut off with it. Pushing: the loop's checkout
+  gets a write-scoped GitHub token at the egress, as Tackle's does, and
+  ralph's prompts decide when to push;
 - loop controls and the loop UI on project, epic, issue and mission pages;
 - automations: tables, the ticker beside `src/lib/server/backup/runtime.ts`,
   and an automations page. ADR-0004's list of what `state.db` holds and

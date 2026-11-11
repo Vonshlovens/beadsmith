@@ -111,9 +111,11 @@ without tokens, credentials or full network configuration.
    It is named `beadsmith-agent` unless you pass a name (then set
    `BDX_E2B_TEMPLATE`). Rebuild after changing
    [`sandbox/e2b/`](../sandbox/e2b/),
-   [`src/lib/server/e2b/image.ts`](../src/lib/server/e2b/image.ts) or the hc
-   pin in [`nix/herdr-core.json`](../nix/herdr-core.json); running sandboxes
-   keep their build. **Rebuild now if your template predates hc** (see
+   [`src/lib/server/e2b/image.ts`](../src/lib/server/e2b/image.ts), the hc
+   pin in [`nix/herdr-core.json`](../nix/herdr-core.json) or the ralph pin
+   in [`nix/ralph.json`](../nix/ralph.json); running sandboxes keep their
+   build. A template without ralph fails loop missions with a message
+   saying to rebuild. **Rebuild now if your template predates hc** (see
    [Terminals](#terminals-hc)): the current `beadsmith-run` starts an hc core
    and stops with "could not start its terminal server" on an older build.
 
@@ -360,6 +362,70 @@ they have not been run against E2B yet.
    reported failed. A follow-up resumes the sandbox, ends that turn's CLI
    and continues in a resumed one.
 
+## How a loop runs
+
+A loop mission ([ADR-0019](../specs/decisions/0019-ralph-loops-and-automations.md),
+[dispatch API](file-tackle-dispatch.md)) runs
+[ralph](https://github.com/Vonshlovens/von-ralph) in a sandbox of its own.
+The template installs ralph from its public repository at the commit pinned
+in [`nix/ralph.json`](../nix/ralph.json), with its production dependencies
+from its own lockfile; the build fails if the commit does not report the
+pinned version. The checkout must already be a ralph project
+(`.ralph/ralph.toml`) for `build`, `plan` and `reverse`; `run` needs none.
+
+1. Beadsmith creates the sandbox as for a mission, with a write-scoped
+   GitHub token at the egress (every loop mode writes) and E2B told to
+   destroy it, not pause it, on timeout. It writes ralph's command line to
+   `~/.beadsmith/runs/r1/loop.json` and starts `beadsmith-run r1`, the same
+   setup as a mission's. The sandbox's `beadsmith_loop` metadata holds
+   ralph's run name.
+2. The first status read or stream that sees `ready` claims the start and
+   opens two hc terminals in the checkout: `ralph serve --no-web` (named
+   `ralph-serve`, on 127.0.0.1:7420 only) and `ralph <mode> --name … --max …`
+   (named `ralph-loop`), then writes `started`. Both take the hc core's
+   environment, so the loop has the project's Dolt account and the
+   placeholders and nothing else. ralph runs each iteration's agent in hc
+   terminals of its own.
+3. Status reads ask ralph for the run and its iterations with `curl` to
+   loopback over the E2B process channel
+   ([`ralph-transport.ts`](../src/lib/server/e2b/ralph-transport.ts));
+   finished iterations are copied into `state.db`. The live view follows
+   ralph's event stream the same way and maps it onto the thread. If
+   `ralph serve` stops answering, the next read starts it again.
+4. When ralph's run ends, its stop reason (or, without one, the loop
+   terminal's exit code) decides the mission's status, and the report's
+   iteration count, duration and notes for a person become the summary. The
+   result goes to `result.json`, and the sandbox's timeout drops to the idle
+   time, after which E2B destroys it.
+5. Cancel marks the run cancelled, asks ralph to stop now, and ends the loop
+   terminal. A loop takes no follow-up.
+
+A loop still running at `BDX_E2B_MAX_RUN_MINUTES` is destroyed with its
+sandbox and reported failed; anything it had not pushed is lost. Keep the
+iteration limit within the run limit until long loops can pause and resume.
+
+Live check after a rebuild (not yet run; the steps above are unit-tested
+against a fake sandbox, hc core and ralph in
+[`e2b-provider.test.ts`](../src/lib/server/dispatch/e2b-provider.test.ts)
+and [`ralph-transport.test.ts`](../src/lib/server/e2b/ralph-transport.test.ts)):
+
+1. In a fresh sandbox from the template, `ralph --version` prints the pinned
+   version and `/opt/ralph` has no `.git`.
+2. On a project whose Tackle checkout has `.ralph/ralph.toml`, start a
+   `build` loop with `max_iterations` 2 on Sand. In the sandbox, `hc ls`
+   lists `ralph-serve` and `ralph-loop`; `ss -ltnp` shows ralph's port bound
+   to 127.0.0.1 only; `ralph status` shows the run named in the sandbox's
+   `beadsmith_loop` metadata.
+3. The mission thread shows each iteration's text and tool calls live, and
+   the mission's iteration rows fill in as iterations finish.
+4. When the loop ends, the thread shows the stop reason, the mission's
+   status matches it, and the sandbox is gone from E2B after the idle time.
+5. Start another and cancel it mid-iteration: the thread says cancelled,
+   `ralph show <name>` in the sandbox (before it goes) shows an operator
+   stop, and `hc ls --all` shows `ralph-loop` finished.
+6. In the sandbox, `tr '\0' '\n' < /proc/<ralph's pid>/environ` lists the
+   placeholders and `BEADS_DOLT_*`, and no real model key or GitHub token.
+
 ## How a chat runs
 
 The chat runner is the mate runner's own core
@@ -401,7 +467,8 @@ for a CLI stopped at a first-run prompt, that the image must pre-accept it). Mis
   compute and E2B keeps them until they are deleted; whether it charges for
   their storage is not documented. Deleting a chat deletes its sandbox. A
   finished mission's sandbox stays paused (so follow-ups work) until you
-  delete it in E2B's dashboard.
+  delete it in E2B's dashboard. A finished loop's sandbox is destroyed after
+  the idle time.
 - E2B's free plan stops a sandbox after one hour of continuous running;
   pausing resets that. Raise `BDX_E2B_MAX_RUN_MINUTES` only on a plan that
   allows longer.

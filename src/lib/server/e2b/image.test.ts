@@ -10,7 +10,11 @@ import {
 	hcInstallCommands,
 	MATE_WORKDIR,
 	parseHcPin,
+	parseRalphPin,
+	ralphInstallCommands,
+	RALPH_DIR,
 	readHcPin,
+	readRalphPin,
 	SANDBOX_HOME,
 	WORK_DIR
 } from './image.js';
@@ -31,6 +35,48 @@ function pin(overrides: Record<string, unknown> = {}, entry: Record<string, unkn
 		...overrides
 	});
 }
+
+describe('ralph pin', () => {
+	const REV = 'b'.repeat(40);
+	const ralph = (overrides: Record<string, unknown> = {}) =>
+		JSON.stringify({
+			repository: 'https://github.com/Vonshlovens/von-ralph',
+			rev: REV,
+			version: '0.6.0',
+			pnpm: '10.34.8',
+			...overrides
+		});
+
+	it('reads the repository pin', () => {
+		const pin = readRalphPin();
+		expect(pin.repository).toBe('https://github.com/Vonshlovens/von-ralph');
+		expect(pin.rev).toMatch(/^[0-9a-f]{40}$/);
+	});
+
+	it('refuses a pin a build should not trust', () => {
+		expect(() => parseRalphPin(ralph({ repository: 'https://github.com/someone/ralph' }))).toThrow(
+			/repository/
+		);
+		expect(() => parseRalphPin(ralph({ rev: 'main' }))).toThrow(/40-character/);
+		expect(() => parseRalphPin(ralph({ rev: 'b'.repeat(7) }))).toThrow(/40-character/);
+		expect(() => parseRalphPin(ralph({ version: 'latest' }))).toThrow(/version/);
+		expect(() => parseRalphPin(ralph({ pnpm: '10' }))).toThrow(/pnpm/);
+	});
+
+	it('installs exactly the pinned commit, from its lockfile, and checks the version', () => {
+		const commands = ralphInstallCommands(parseRalphPin(ralph()));
+		const fetch = commands.findIndex((c) => c.includes(' fetch '));
+		const verify = commands.findIndex((c) => c.includes('rev-parse HEAD'));
+		const install = commands.findIndex((c) => c.includes(' install '));
+		expect(commands[fetch]).toContain(`'https://github.com/Vonshlovens/von-ralph.git' '${REV}'`);
+		expect(verify).toBeGreaterThan(fetch);
+		expect(install).toBeGreaterThan(verify);
+		expect(commands[install]).toContain('--frozen-lockfile');
+		expect(commands[install]).toContain("'pnpm@10.34.8'");
+		expect(commands).toContain(`ln -sf '${RALPH_DIR}/bin/ralph' /usr/local/bin/ralph`);
+		expect(commands.at(-1)).toBe("ralph --version | grep -qxF 'ralph v0.6.0'");
+	});
+});
 
 describe('hc pin', () => {
 	it('reads the repository pin', () => {

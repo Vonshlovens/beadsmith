@@ -101,6 +101,75 @@ export function hcInstallCommands(release: HcRelease): string[] {
 }
 
 /**
+ * ralph as pinned in `nix/ralph.json` (ADR-0019 rule 1): its public
+ * repository at one commit. ralph has no releases, so the commit is the
+ * integrity check: git verifies the fetched tree against it.
+ */
+export interface RalphPin {
+	repository: string;
+	rev: string;
+	/** ralph's own version at that commit, for `ralph --version` checks and logs. */
+	version: string;
+	/** The pnpm ralph's lockfile was written with (its `packageManager`). */
+	pnpm: string;
+}
+
+const RALPH_REPOSITORY = 'https://github.com/Vonshlovens/von-ralph';
+
+/** Where the template installs ralph; `/usr/local/bin/ralph` links its launcher. */
+export const RALPH_DIR = '/opt/ralph';
+
+/**
+ * Parse ralph's pin. The repository is fixed: the pin moves the commit, not
+ * where it comes from, so a typo cannot fetch someone else's code.
+ */
+export function parseRalphPin(text: string): RalphPin {
+	const pin: unknown = JSON.parse(text);
+	if (typeof pin !== 'object' || pin === null) throw new Error('ralph pin is not an object');
+	const { repository, rev, version, pnpm } = pin as Record<string, unknown>;
+	if (repository !== RALPH_REPOSITORY) {
+		throw new Error(`ralph pin: repository must be ${RALPH_REPOSITORY}`);
+	}
+	if (typeof rev !== 'string' || !/^[0-9a-f]{40}$/.test(rev)) {
+		throw new Error('ralph pin: rev must be a full 40-character commit hash');
+	}
+	if (typeof version !== 'string' || !VERSION_PATTERN.test(version)) {
+		throw new Error('ralph pin: version must be x.y.z');
+	}
+	if (typeof pnpm !== 'string' || !VERSION_PATTERN.test(pnpm)) {
+		throw new Error('ralph pin: pnpm must be x.y.z');
+	}
+	return { repository, rev, version, pnpm };
+}
+
+/** The pin, read from the repository (for the template build; not bundled into the app). */
+export function readRalphPin(): RalphPin {
+	const file = new URL('../../../../nix/ralph.json', import.meta.url);
+	return parseRalphPin(readFileSync(file, 'utf8'));
+}
+
+/**
+ * Shell commands (run as root) that fetch ralph at the pinned commit,
+ * install its production dependencies from its lockfile, and put `ralph` on
+ * the PATH. ralph runs from source on the image's Node (type stripping), so
+ * there is nothing to build; install scripts are off because none of its
+ * dependencies needs one. The last command fails the build if the commit
+ * does not report the pinned version.
+ */
+export function ralphInstallCommands(pin: RalphPin): string[] {
+	return [
+		`git init -q '${RALPH_DIR}'`,
+		`git -C '${RALPH_DIR}' fetch -q --depth 1 '${pin.repository}.git' '${pin.rev}'`,
+		`git -C '${RALPH_DIR}' checkout -q --detach '${pin.rev}'`,
+		`test "$(git -C '${RALPH_DIR}' rev-parse HEAD)" = '${pin.rev}'`,
+		`cd '${RALPH_DIR}' && npx -y 'pnpm@${pin.pnpm}' install --prod --frozen-lockfile --filter von-ralph --ignore-scripts`,
+		`rm -rf '${RALPH_DIR}/.git'`,
+		`ln -sf '${RALPH_DIR}/bin/ralph' /usr/local/bin/ralph`,
+		`ralph --version | grep -qxF 'ralph v${pin.version}'`
+	];
+}
+
+/**
  * Claude Code's first-run choices, answered in advance (ADR-0021 rule 2), as
  * file path → JSON contents. Key names are Claude Code's own, read from the
  * version the template pins:

@@ -3,10 +3,15 @@ import { parseE2bSettings } from '../env.js';
 import type { MissionEvent } from '#lib/mission-events.js';
 import { claudeCode } from '#lib/agent-session/claude-code.js';
 import { FakeHcCore, type FakeTerminal } from '#lib/test/fake-hc.js';
+import { FakeRalph } from '#lib/test/fake-ralph.js';
 import {
 	buildSandboxNetwork,
 	createE2bProvider,
+	LOOP_METADATA,
+	LOOP_TERMINAL,
 	parseRunFiles,
+	ralphArgv,
+	SERVE_TERMINAL,
 	settledUpdate,
 	SESSION_METADATA,
 	type SandboxCreateInput,
@@ -134,6 +139,7 @@ class FakeSandbox implements SandboxRef {
 				stdout:
 					`exit=${run.exit ?? ''}\ncancelled=${run.cancelled ? '1' : ''}\n` +
 					`ready=${run.ready ? '1' : ''}\nclaimed=${run.claimed_s ?? ''}\nnow=1000\n` +
+					`started=${this.file(id, 'started') === undefined ? '' : '1'}\n` +
 					`turn=${this.file(id, 'turn.json') ?? ''}\nresult=${this.file(id, 'result.json') ?? ''}\n`
 			};
 		}
@@ -220,7 +226,7 @@ afterEach(() => {
 	for (const { claude } of providers.splice(0)) claude.core.disconnectAll();
 });
 
-function setup(overrides: { create_fails?: boolean } = {}) {
+function setup(overrides: { create_fails?: boolean; ralph?: FakeRalph } = {}) {
 	const claude = new FakeClaude();
 	const sandboxes = new Map<string, FakeSandbox>();
 	const states = new Map<string, 'running' | 'paused'>();
@@ -234,11 +240,14 @@ function setup(overrides: { create_fails?: boolean } = {}) {
 			sandboxes.set(sandbox.id, sandbox);
 			states.set(sandbox.id, 'running');
 			metadata.set(sandbox.id, input.metadata);
-			claude.transcript = claudeCode.transcriptPath({
-				cwd: WORK_DIR,
-				config_dir: CLAUDE_CONFIG_DIR,
-				session_id: input.metadata[SESSION_METADATA]
-			});
+			// Loop sandboxes have no CLI session of Beadsmith's.
+			if (input.metadata[SESSION_METADATA] !== undefined) {
+				claude.transcript = claudeCode.transcriptPath({
+					cwd: WORK_DIR,
+					config_dir: CLAUDE_CONFIG_DIR,
+					session_id: input.metadata[SESSION_METADATA]
+				});
+			}
 			return sandbox;
 		},
 		async connect(id) {
@@ -270,6 +279,7 @@ function setup(overrides: { create_fails?: boolean } = {}) {
 			return { user: 'sbx_beads_web', password: DOLT_PASSWORD };
 		},
 		timing: { poll_ms: 5, startup_ms: 500, settle_ms: 50, wait_ms: 5 },
+		...(overrides.ralph === undefined ? {} : { ralph_fetch: () => overrides.ralph!.fetch }),
 		log: (message) => logs.push(message)
 	});
 	providers.push({ claude });
@@ -704,5 +714,248 @@ describe('run files', () => {
 			status: 'failed',
 			error_message: 'The agent did not start.'
 		});
+	});
+});
+
+const LOOP = {
+	name: 'Loop: build',
+	dolt_database: 'beads_web',
+	repository: { url: 'https://github.com/example-org/beads-web', starting_ref: 'main' },
+	loop: { mode: 'build' as const, max_iterations: 5, harness: 'claude' as const }
+};
+
+describe('ralphArgv', () => {
+	it('passes the loop flags and keeps a run prompt out of flag position', () => {
+		expect(
+			ralphArgv('bdx-run-0123abcd', {
+				mode: 'run',
+				prompt: '--max 999',
+				issue_id: 'bw-1',
+				harness: 'codex',
+				model: 'gpt-5',
+				effort: 'high',
+				max_iterations: 3,
+				iteration_timeout_minutes: 20
+			})
+		).toEqual([
+			'ralph',
+			'run',
+			'--name',
+			'bdx-run-0123abcd',
+			'--no-observer',
+			'--max',
+			'3',
+			'--harness',
+			'codex',
+			'--model',
+			'gpt-5',
+			'--effort',
+			'high',
+			'--timeout',
+			'20',
+			'--bead',
+			'bw-1',
+			'--',
+			'--max 999'
+		]);
+		expect(ralphArgv('bdx-plan-0123abcd', { mode: 'plan', max_iterations: 2 })).toEqual([
+			'ralph',
+			'plan',
+			'--name',
+			'bdx-plan-0123abcd',
+			'--no-observer',
+			'--max',
+			'2'
+		]);
+	});
+});
+
+describe('E2B provider loops', () => {
+	async function launched(options: { ralph?: FakeRalph } = {}) {
+		const ralph = options.ralph ?? new FakeRalph();
+		const env = setup({ ralph });
+		const launch = await env.provider.launchLoop!(LOOP);
+		const sandbox = env.sandboxes.get(launch.agent_id)!;
+		const name = env.metadata.get(launch.agent_id)![LOOP_METADATA];
+		return { ...env, ralph, launch, sandbox, name };
+	}
+
+	function terminals(claude: FakeClaude) {
+		return [...claude.core.terminals.values()];
+	}
+
+	it('launches a sandbox of its own that E2B destroys, with the loop command and no prompt', async () => {
+		const { launch, created, sandbox, name, mint_github_token } = await launched();
+		expect(launch).toEqual({ agent_id: 'sbx1', run_id: 'r1' });
+		const [input] = created;
+		expect(input.on_timeout).toBe('kill');
+		expect(name).toMatch(/^bdx-build-[0-9a-f]{8}$/);
+		expect(input.metadata).toMatchObject({ beadsmith_write: '1', beadsmith_database: 'beads_web' });
+		expect(input.metadata).not.toHaveProperty(SESSION_METADATA);
+		// The loop writes code, so its checkout gets a token that can push.
+		expect(mint_github_token).toHaveBeenCalledWith(
+			'https://github.com/example-org/beads-web',
+			true
+		);
+		expect(JSON.parse(sandbox.file('r1', 'loop.json')!)).toEqual([
+			'ralph',
+			'build',
+			'--name',
+			name,
+			'--no-observer',
+			'--max',
+			'5',
+			'--harness',
+			'claude'
+		]);
+		expect(sandbox.file('r1', 'prompt')).toBeUndefined();
+		expect(sandbox.started.map((s) => s.command)).toEqual(['beadsmith-run r1']);
+		// Keys stay at the egress; the sandbox holds only the project's Dolt account.
+		expect(JSON.stringify(input.envs)).not.toContain(ANTHROPIC_KEY);
+		expect(JSON.stringify(input.envs)).not.toContain(GITHUB_TOKEN);
+	});
+
+	it('starts ralph serve and the loop as hc terminals once, then reports iterations', async () => {
+		const { provider, claude, ralph, sandbox, name } = await launched();
+		// ralph has not recorded the run yet: still starting.
+		expect(await provider.getRun('sbx1', 'r1')).toEqual({ status: 'running' });
+		const started = terminals(claude);
+		expect(started.map((t) => [t.name, t.cwd])).toEqual([
+			[SERVE_TERMINAL, WORK_DIR],
+			[LOOP_TERMINAL, WORK_DIR]
+		]);
+		expect(started[0].argv).toEqual(['ralph', 'serve', '--no-web', '--port', '7420']);
+		expect(started[1].argv).toEqual(JSON.parse(sandbox.file('r1', 'loop.json')!));
+		expect(sandbox.file('r1', 'started')).toBe('');
+
+		ralph.addRun({ name });
+		ralph.iterations.set(name, [
+			{
+				iteration: 1,
+				outcome: 'completed',
+				startedAt: '2026-11-11T10:00:00.000Z',
+				finishedAt: '2026-11-11T10:04:00.000Z',
+				durationMs: 240_000,
+				headBefore: 'aaaaaaa',
+				headAfter: 'bbbbbbb',
+				inputTokens: 100,
+				outputTokens: 50,
+				costUsd: 0.25,
+				validateOk: true,
+				planOpen: 4,
+				lastMessage: 'secret agent words'
+			}
+		]);
+		const update = await provider.getRun('sbx1', 'r1');
+		expect(update.status).toBe('running');
+		expect(update.iterations).toEqual([
+			expect.objectContaining({ iteration: 1, outcome: 'completed', plan_open: 4 })
+		]);
+		expect(JSON.stringify(update)).not.toContain('secret agent words');
+		// Nothing started twice.
+		expect(terminals(claude)).toHaveLength(2);
+		// Only allowlisted ralph routes.
+		expect(ralph.requests.every((r) => r.method === 'GET')).toBe(true);
+	});
+
+	it('maps a finished loop onto the mission and lets the sandbox go', async () => {
+		const { provider, claude, ralph, sandbox, name } = await launched();
+		await provider.getRun('sbx1', 'r1');
+		ralph.addRun({ name, status: 'finished', alive: false, stopReason: 'plan_exhausted' });
+		ralph.reports.set(name, {
+			stopReason: 'plan_exhausted',
+			iterations: 3,
+			durationMs: 900_000,
+			needsHuman: [`bw-9 needs a decision; password ${DOLT_PASSWORD}`]
+		});
+		claude.core.exit(terminals(claude)[1].address, 3);
+		const update = await provider.getRun('sbx1', 'r1');
+		expect(update).toMatchObject({ status: 'succeeded', duration_ms: 900_000 });
+		expect(update.result_summary).toContain('The loop ended after 3 iterations');
+		expect(update.result_summary).toContain('A person should look.');
+		expect(update.result_summary).toContain('bw-9 needs a decision');
+		expect(update.result_summary).not.toContain(DOLT_PASSWORD);
+		expect(JSON.parse(sandbox.file('r1', 'result.json')!)).toMatchObject({ status: 'succeeded' });
+		expect(sandbox.timeouts.at(-1)).toBe(SETTINGS.idle_minutes * 60_000);
+		expect(sandbox.killed).toBe(false);
+	});
+
+	it('fails with a clear message when the template has no ralph', async () => {
+		const { provider, claude } = await launched();
+		await provider.getRun('sbx1', 'r1');
+		claude.core.exit(terminals(claude)[1].address, 127);
+		expect(await provider.getRun('sbx1', 'r1')).toEqual({
+			status: 'failed',
+			error_message: 'This sandbox has no ralph. Rebuild the Sand template (docs/sand-e2b.md).'
+		});
+	});
+
+	it('cancels by stopping ralph now and ending its terminal', async () => {
+		const { provider, claude, ralph, name } = await launched();
+		await provider.getRun('sbx1', 'r1');
+		ralph.addRun({ name });
+		await provider.cancelRun!('sbx1', 'r1');
+		expect(ralph.stops).toEqual([{ name, graceful: false }]);
+		expect(terminals(claude).find((t) => t.name === LOOP_TERMINAL)?.state).toBe('finished');
+		expect(await provider.getRun('sbx1', 'r1')).toEqual({ status: 'cancelled' });
+		await expect(provider.cancelRun!('sbx1', 'r1')).rejects.toThrow(RUN_NOT_CANCELLABLE_MESSAGE);
+	});
+
+	it('refuses a follow-up', async () => {
+		const { provider } = await launched();
+		await expect(provider.createRun!('sbx1', 'more')).rejects.toThrow('A loop takes no follow-up.');
+	});
+
+	it('streams ralph events as mission events and records the result once', async () => {
+		const { provider, ralph, sandbox, name } = await launched();
+		await provider.getRun('sbx1', 'r1');
+		ralph.addRun({ name });
+		ralph.emit(name, { type: 'iteration_started' });
+		ralph.emit(name, { type: 'assistant', text: `working with ${DOLT_PASSWORD}` });
+		ralph.emit(name, { type: 'tool_call', name: 'Bash', input: { command: 'cat secrets' } });
+		ralph.emit(name, { type: 'tool_result', isError: false, output: 'secret output' });
+		const finished = ralph.emit(name, {
+			type: 'run_finished',
+			reason: 'plan_complete',
+			iterations: 1
+		});
+		const run = ralph.runs.get(name)!;
+		run.status = 'finished';
+		run.alive = false;
+		run.stopReason = 'plan_complete';
+		const events: MissionEvent[] = [];
+		const outcome = await provider.streamMissionEvents!('sbx1', 'r1', async (e) => {
+			events.push(e);
+		});
+		expect(outcome).toBe('terminal');
+		expect(events.map((e) => e.type)).toEqual(['assistant', 'tool_call', 'tool_call', 'result']);
+		expect(JSON.stringify(events)).not.toContain(DOLT_PASSWORD);
+		expect(JSON.stringify(events)).not.toContain('secret output');
+		expect(events.at(-1)).toMatchObject({
+			id: String(finished),
+			status: 'succeeded',
+			text: 'The loop ended after 1 iteration: no open plan items are left.'
+		});
+		expect(JSON.parse(sandbox.file('r1', 'result.json')!)).toMatchObject({
+			status: 'succeeded',
+			event_id: String(finished)
+		});
+
+		// A browser that already saw the result is not sent it again.
+		const again: MissionEvent[] = [];
+		await provider.streamMissionEvents!(
+			'sbx1',
+			'r1',
+			async (e) => {
+				again.push(e);
+			},
+			{ last_event_id: String(finished) }
+		);
+		expect(again).toEqual([]);
+		// One that did not, is.
+		await provider.streamMissionEvents!('sbx1', 'r1', async (e) => {
+			again.push(e);
+		});
+		expect(again).toEqual([expect.objectContaining({ type: 'result', id: String(finished) })]);
 	});
 });

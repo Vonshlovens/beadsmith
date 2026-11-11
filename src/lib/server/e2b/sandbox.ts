@@ -122,6 +122,12 @@ export interface SandboxCreateInput {
 	metadata: Record<string, string>;
 	envs: Record<string, string>;
 	network: SandboxNetwork;
+	/**
+	 * What E2B does when the timeout passes: `pause` (the default) keeps a
+	 * mission's CLI for its next follow-up; `kill` destroys a sandbox nothing
+	 * will resume, such as a finished loop's (ADR-0019).
+	 */
+	on_timeout?: 'pause' | 'kill';
 }
 
 /** A process with stdin open, for a long-lived agent. */
@@ -293,8 +299,8 @@ export function createSdkDriver(api_key: () => Promise<string>): SandboxDriver {
 					// of the project default. SDK command/file access stays authenticated.
 					allowPublicTraffic: false
 				},
-				// Pause, not kill, so the next message or follow-up resumes the session.
-				lifecycle: { onTimeout: 'pause' }
+				// Pause by default, so the next message or follow-up resumes the session.
+				lifecycle: { onTimeout: input.on_timeout ?? 'pause' }
 			});
 			return wrap(sandbox);
 		},

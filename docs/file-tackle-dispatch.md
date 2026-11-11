@@ -235,8 +235,9 @@ checkout's own `.ralph/` prompts). `issue_id` narrows a `build` (or labels a
 `run`) to one bead, which must exist; without it the loop works on the
 project's whole plan. `max_iterations` is required (1 to 200), so no loop
 spends without a bound; `iteration_timeout_minutes` is 1 to 240. Only a
-runner whose `capabilities.loop` is true takes a loop; any other refuses it
-with `403` before a record is written. A loop takes no follow-up (`409`):
+runner whose `capabilities.loop` is true takes a loop (Sand; see
+[How a loop runs](sand-e2b.md#how-a-loop-runs)); any other, such as a
+webhook runner, refuses it with `403` before a record is written. A loop takes no follow-up (`409`):
 steer, stop and restart are its controls. Each finished iteration (number,
 outcome, duration, tokens, cost, commit range, validation, open plan items)
 is copied into `state.db` as the runner reports it, because a Sand sandbox

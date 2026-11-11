@@ -17,6 +17,8 @@
  * reports its status to hc through OSC 7501 (ADR-0021: the session core
  * waits on it). hc comes from `nix/herdr-core.json`, the pin the Nix overlay
  * reads too (ADR-0021 rule 5); bump it there, never with `hc update`.
+ * ralph, which runs loop missions (ADR-0019), comes from `nix/ralph.json`:
+ * its public repository at one commit, with its own lockfile.
  */
 import { Template, defaultBuildLogger } from 'e2b';
 import {
@@ -24,7 +26,9 @@ import {
 	HC_CONFIG_PATH,
 	HC_CONFIG_TOML,
 	hcInstallCommands,
-	readHcPin
+	ralphInstallCommands,
+	readHcPin,
+	readRalphPin
 } from '../../src/lib/server/e2b/image.ts';
 
 const BD_VERSION = '1.1.0';
@@ -33,6 +37,7 @@ const CLAUDE_CODE_VERSION = '2.1.311';
 
 const name = process.argv[2] ?? 'beadsmith-agent';
 const hc = readHcPin('linux-x86_64');
+const ralph = readRalphPin();
 
 /** Write a file as the default user, without quoting its contents into a shell line. */
 function writeAsUser(path: string, text: string): string {
@@ -70,7 +75,9 @@ const template = Template({ fileContextPath: import.meta.dirname })
 			'mkdir -p /tmp/bd && tar -xzf /tmp/bd.tgz -C /tmp/bd && install -m 0755 "$(find /tmp/bd -type f -name bd | head -1)" /usr/local/bin/bd && rm -rf /tmp/bd /tmp/bd.tgz',
 			`npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}`,
 			// hc (herdr-core), checksum-verified against the repository's pin.
-			...hcInstallCommands(hc)
+			...hcInstallCommands(hc),
+			// ralph (loop missions), at the repository's pinned commit.
+			...ralphInstallCommands(ralph)
 		],
 		{ user: 'root' }
 	)
@@ -102,7 +109,8 @@ const template = Template({ fileContextPath: import.meta.dirname })
 		...Object.entries(claudeFirstRunFiles()).map(([path, text]) => writeAsUser(path, text)),
 		writeAsUser(HC_CONFIG_PATH, HC_CONFIG_TOML),
 		'chmod 700 /home/user/.claude /home/user/.config/herdr-core',
-		'hc --version'
+		'hc --version',
+		'ralph --version'
 	]);
 
 await Template.build(template, name, {

@@ -32,13 +32,23 @@
  * hc is reached only through `beadsmith-hc connect` on the E2B process
  * channel (`../e2b/hc-transport.ts`), never a port (ADR-0021 rule 1).
  *
+ * A loop (ADR-0019) has a sandbox of its own, set up by the same
+ * `beadsmith-run r1`. Once it is ready, the first reader to claim it starts
+ * two hc terminals in the checkout: `ralph serve --no-web` (loopback only)
+ * and `ralph <mode>` with the loop's flags, then writes `started`. Status,
+ * iterations, events and stop go to ralph's `/v1` as curl commands over the
+ * process channel (`../e2b/ralph-transport.ts`). When the loop ends, its
+ * result is written to `result.json` and the sandbox gets a short timeout
+ * after which E2B destroys it: a loop takes no follow-up, so nothing would
+ * resume it.
+ *
  * Keys stay outside the sandbox (ADR-0015, rule 6): the Anthropic key and the
  * GitHub token are added to outbound requests by E2B's egress proxy; inside,
  * the agent sees placeholders. The project's scoped Dolt account and a
  * single-use Tailscale key are the only credentials it holds.
  */
 import { randomUUID } from 'node:crypto';
-import type { HcClient } from '#lib/hc/client.js';
+import { HcError, type HcClient, type HcTerminal } from '#lib/hc/client.js';
 import type { MissionEvent, MissionResultEvent, MissionResultStatus } from '#lib/mission-events.js';
 import { claudeCode } from '#lib/agent-session/claude-code.js';
 import {
@@ -56,12 +66,23 @@ import {
 	type AgentFollowUpRun,
 	type AgentLaunch,
 	type AgentLaunchInput,
+	type AgentLoopLaunchInput,
 	type AgentProvider,
 	type AgentRunUpdate,
 	type AgentStreamOptions,
 	type AgentStreamOutcome
 } from './provider.js';
 import { DISPATCH_SKILLS } from './agent-skills.js';
+import {
+	describeRalphStop,
+	RalphClient,
+	RalphError,
+	RalphEventMapper,
+	ralphOutcome,
+	type RalphFetch,
+	type RalphIteration
+} from './ralph.js';
+import { sandboxRalphFetch, RALPH_SERVE_PORT } from '../e2b/ralph-transport.js';
 import { CLAUDE_CONFIG_DIR, RUNS_DIR, SKILLS_DIR, WORK_DIR } from '../e2b/image.js';
 import { connectSandboxHc } from '../e2b/hc-transport.js';
 import {
@@ -99,6 +120,12 @@ const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
 const DEFAULT_DOLT_LOCAL_PORT = '3306';
 /** Sandbox metadata key holding the CLI's session id. */
 export const SESSION_METADATA = 'beadsmith_session';
+/** Sandbox metadata key holding a loop's ralph run name; only loop sandboxes have it. */
+export const LOOP_METADATA = 'beadsmith_loop';
+/** hc terminal names in a loop sandbox. */
+export const LOOP_TERMINAL = 'ralph-loop';
+export const SERVE_TERMINAL = 'ralph-serve';
+const LOOP_NAME_PATTERN = /^bdx-(run|plan|build|reverse)-[0-9a-f]{8}$/;
 
 /**
  * A start claimed this long ago with no turn written means the Beadsmith
@@ -121,6 +148,8 @@ export interface E2bProviderDeps {
 	read_dolt_account?: (database: string) => Promise<{ user: string; password: string }>;
 	/** Open an hc client on a sandbox's core; tests use a fake core. */
 	connect_hc?: (sandbox: SandboxRef) => Promise<HcClient>;
+	/** Reach `ralph serve` in a loop sandbox; tests use a fake ralph. */
+	ralph_fetch?: (sandbox: SandboxRef) => RalphFetch;
 	/** Session core timing, and `wait_ms`: how often a stream rechecks a run that has not started. */
 	timing?: SessionTiming & { wait_ms?: number };
 	/**
@@ -155,6 +184,8 @@ export interface RunFiles {
 	/** Seconds since a Beadsmith process claimed the start. */
 	claim_age_s?: number;
 	turn?: TurnMark;
+	/** A loop's ralph terminals are running (loops write this instead of a turn). */
+	started?: boolean;
 	result?: StoredResult;
 }
 
@@ -173,6 +204,7 @@ function statusCommand(run_id: string): string {
 		`printf 'cancelled=%s\\n' "$([ -f "$d/cancelled" ] && echo 1)"`,
 		`printf 'ready=%s\\n' "$([ -f "$d/ready" ] && echo 1)"`,
 		`printf 'claimed=%s\\n' "$(stat -c %Y "$d/claim" 2>/dev/null)"`,
+		`printf 'started=%s\\n' "$([ -f "$d/started" ] && echo 1)"`,
 		`printf 'now=%s\\n' "$(date +%s)"`,
 		`printf 'turn=%s\\n' "$(head -c 4096 "$d/turn.json" 2>/dev/null)"`,
 		`printf 'result=%s\\n' "$(head -c 16384 "$d/result.json" 2>/dev/null)"`
@@ -256,6 +288,7 @@ export function parseRunFiles(stdout: string): RunFiles {
 		ready: fields.get('ready') === '1'
 	};
 	if (claimed !== undefined && now !== undefined) files.claim_age_s = Math.max(0, now - claimed);
+	if (fields.get('started') === '1') files.started = true;
 	const turn = parseTurn(parseJson(fields.get('turn')));
 	if (turn !== undefined) files.turn = turn;
 	const result = parseResult(parseJson(fields.get('result')));
@@ -290,10 +323,47 @@ export function settledUpdate(files: RunFiles): StoredResult | undefined {
 				`The sandbox setup exited with code ${files.exit_code} before the agent started.`
 		};
 	}
-	if (files.turn === undefined && (files.claim_age_s ?? 0) > START_STALE_S) {
+	if (files.turn === undefined && !files.started && (files.claim_age_s ?? 0) > START_STALE_S) {
 		return { status: 'failed', error_message: 'The agent did not start.' };
 	}
 	return undefined;
+}
+
+/**
+ * The loop's command line (ADR-0019 rule 2): `ralph <mode>` in the
+ * foreground with the mission's flags. `--name` is how Beadsmith addresses
+ * the run in `/v1`. `--no-observer`: ralph's observer spends model calls on
+ * summaries Beadsmith drops (ralph.ts keeps none of its events), so a Sand
+ * loop does not start it. A `run` loop's prompt goes last, after `--`, so
+ * it is never read as a flag.
+ */
+export function ralphArgv(name: string, loop: AgentLoopLaunchInput['loop']): string[] {
+	const argv = ['ralph', loop.mode, '--name', name, '--no-observer'];
+	if (loop.max_iterations !== undefined) argv.push('--max', String(loop.max_iterations));
+	if (loop.harness !== undefined) argv.push('--harness', loop.harness);
+	if (loop.model !== undefined) argv.push('--model', loop.model);
+	if (loop.effort !== undefined) argv.push('--effort', loop.effort);
+	if (loop.iteration_timeout_minutes !== undefined) {
+		argv.push('--timeout', String(loop.iteration_timeout_minutes));
+	}
+	if (loop.issue_id !== undefined) argv.push('--bead', loop.issue_id);
+	if (loop.mode === 'run' && loop.prompt !== undefined) argv.push('--', loop.prompt);
+	return argv;
+}
+
+function parseArgv(text: string): string[] | undefined {
+	const value = parseJson(text);
+	return Array.isArray(value) && value.length > 0 && value.every((a) => typeof a === 'string')
+		? (value as string[])
+		: undefined;
+}
+
+/** Why a loop's terminal ended before ralph recorded the run. */
+function loopExitMessage(exit_code: number | null | undefined): string {
+	if (exit_code === 127) {
+		return 'This sandbox has no ralph. Rebuild the Sand template (docs/sand-e2b.md).';
+	}
+	return `ralph exited${exit_code === null || exit_code === undefined ? '' : ` with code ${exit_code}`} before it recorded the loop.`;
 }
 
 /** The session core's result for a turn → what Beadsmith stores. */
@@ -337,6 +407,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 	const driver =
 		deps.driver ?? createSdkDriver(() => read_secret(settings.api_key_file, 'E2B API key'));
 	const connectHc = deps.connect_hc ?? connectSandboxHc;
+	const ralphFetch = deps.ralph_fetch ?? sandboxRalphFetch;
 	const max_run_ms = settings.max_run_minutes * 60_000;
 	const idle_ms = settings.idle_minutes * 60_000;
 	const wait_ms = deps.timing?.wait_ms ?? 2_000;
@@ -428,6 +499,76 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			// The sandbox's own time limit is the run limit; the core's matches it.
 			timing: { turn_ms: max_run_ms, ...deps.timing }
 		});
+	}
+
+	/**
+	 * Create a mission's sandbox: the project's Dolt account inside, keys at
+	 * the egress, and metadata saying what it is for.
+	 */
+	async function createSandbox(input: {
+		name: string;
+		dolt_database: string;
+		repository?: { url: string; starting_ref: string };
+		write: boolean;
+		metadata: Record<string, string>;
+		on_timeout: 'pause' | 'kill';
+	}): Promise<SandboxRef> {
+		if (
+			input.repository !== undefined &&
+			parseGithubRepository(input.repository.url) === undefined
+		) {
+			throw new DispatchError(
+				'unavailable',
+				'Sandbox checkouts must be https://github.com repositories.'
+			);
+		}
+		const account = await doltAccount(input.dolt_database);
+		const metadata: Record<string, string> = {
+			beadsmith: '1',
+			beadsmith_database: input.dolt_database,
+			beadsmith_repository: input.repository?.url ?? '',
+			beadsmith_write: input.write ? '1' : '0',
+			...input.metadata
+		};
+		const network = await networkFor(metadata);
+		let sandbox: SandboxRef;
+		try {
+			sandbox = await driver.create({
+				template: settings.template,
+				timeout_ms: max_run_ms,
+				metadata,
+				network,
+				on_timeout: input.on_timeout,
+				envs: {
+					BEADSMITH_AGENT_NAME: input.name,
+					BEADSMITH_REPO_URL: input.repository?.url ?? '',
+					BEADSMITH_REPO_REF: input.repository?.starting_ref ?? '',
+					BEADSMITH_AUTO_CREATE_PR: input.write ? '1' : '0',
+					BEADSMITH_TS_TAGS: settings.tailscale_tags.join(','),
+					BEADSMITH_DOLT_TAILNET_HOST: settings.dolt_tailnet_host,
+					BEADSMITH_DOLT_TAILNET_PORT: String(settings.dolt_tailnet_port),
+					BEADS_DOLT_SERVER_HOST: '127.0.0.1',
+					BEADS_DOLT_SERVER_PORT: DEFAULT_DOLT_LOCAL_PORT,
+					BEADS_DOLT_SERVER_USER: account.user,
+					BEADS_DOLT_PASSWORD: account.password,
+					BEADS_DOLT_SERVER_DATABASE: input.dolt_database,
+					BEADS_DOLT_AUTO_START: '0',
+					...modelPlaceholderEnvs(
+						settings.anthropic_api_key_file === undefined ? 'oauth_token' : 'api_key'
+					),
+					// Only when the egress will replace it: a placeholder that reaches
+					// GitHub unreplaced reads as "bad credentials", which misleads.
+					...(network.headers['api.github.com'] === undefined
+						? {}
+						: { GH_TOKEN: GITHUB_PLACEHOLDER })
+				}
+			});
+		} catch (error) {
+			if (error instanceof DispatchError) throw error;
+			log(`Sand mission: E2B could not create a sandbox: ${String(error)}`);
+			throw new DispatchError('unavailable', `${deps.label} could not create a sandbox.`);
+		}
+		return sandbox;
 	}
 
 	async function startRun(sandbox: SandboxRef, run_id: string, prompt: string) {
@@ -623,65 +764,310 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		return { turn: files.turn };
 	}
 
+	// ---------------------------------------------------------------- loops
+
+	/** The loop's ralph run name; undefined for a one-shot mission's sandbox. */
+	function loopNameOf(info: SandboxInfo): string | undefined {
+		const name = info.metadata[LOOP_METADATA];
+		return name !== undefined && LOOP_NAME_PATTERN.test(name) ? name : undefined;
+	}
+
+	/**
+	 * Start `ralph serve` unless its terminal is live. hc refuses a second
+	 * live terminal of the same name, which is how two starts settle.
+	 */
+	async function ensureServe(client: HcClient): Promise<void> {
+		try {
+			await client.run({
+				argv: ['ralph', 'serve', '--no-web', '--port', String(RALPH_SERVE_PORT)],
+				cwd: WORK_DIR,
+				name: SERVE_TERMINAL,
+				labels: { beadsmith: 'ralph-serve' }
+			});
+		} catch (error) {
+			if (!(error instanceof HcError && error.kind === 'name_taken')) throw error;
+		}
+	}
+
+	/**
+	 * Start a ready loop, unless another request already claimed it: ralph
+	 * serve, then the loop itself, both as hc terminals in the checkout. They
+	 * take the core's environment, which `beadsmith-run` gave the project's
+	 * Dolt account and the egress placeholders.
+	 */
+	async function startLoop(sandbox: SandboxRef, run_id: string): Promise<void> {
+		const dir = `${RUNS_DIR}/${run_id}`;
+		const claim = await sandbox.exec(`mkdir '${dir}/claim' 2>/dev/null`);
+		if (claim.exit_code !== 0) return;
+		let client: HcClient | undefined;
+		try {
+			const { stdout } = await sandbox.exec(`cat '${dir}/loop.json'`);
+			const argv = parseArgv(stdout);
+			if (argv === undefined) throw new Error('loop.json is not a command line');
+			client = await connectHc(sandbox);
+			await ensureServe(client);
+			await client.run({
+				argv,
+				cwd: WORK_DIR,
+				name: LOOP_TERMINAL,
+				labels: { beadsmith: 'loop' }
+			});
+			await sandbox.writeFile(`${dir}/started`, '');
+		} catch (error) {
+			log(`Sand loop ${sandbox.id}/${run_id}: ralph could not start: ${String(error)}`);
+			await writeResult(sandbox, run_id, {
+				status: 'failed',
+				error_message: `${deps.label} could not start ralph.`
+			}).catch(() => undefined);
+		} finally {
+			client?.close();
+		}
+	}
+
+	/** The loop terminal's record, or undefined when hc cannot say. */
+	async function loopTerminal(sandbox: SandboxRef): Promise<HcTerminal | undefined> {
+		let client: HcClient | undefined;
+		try {
+			client = await connectHc(sandbox);
+			return await client.get(LOOP_TERMINAL);
+		} catch {
+			return undefined;
+		} finally {
+			client?.close();
+		}
+	}
+
+	/** Restart `ralph serve` after its terminal ended; a failure waits for the next read. */
+	async function reviveServe(sandbox: SandboxRef): Promise<void> {
+		let client: HcClient | undefined;
+		try {
+			client = await connectHc(sandbox);
+			await ensureServe(client);
+		} catch (error) {
+			log(`Sand loop ${sandbox.id}: ralph serve could not restart: ${String(error)}`);
+		} finally {
+			client?.close();
+		}
+	}
+
+	type LoopStep =
+		| { done: StoredResult; iterations?: RalphIteration[] }
+		| { running: true; iterations?: RalphIteration[] };
+
+	/** Advance a loop through setup and its start; `started` once ralph runs. */
+	async function advanceLoop(
+		sandbox: SandboxRef,
+		run_id: string,
+		redact: string
+	): Promise<{ done?: StoredResult; started: boolean }> {
+		let files = await readRun(sandbox, run_id);
+		if (files.ready && !files.started && files.claim_age_s === undefined) {
+			if (!files.cancelled && files.result === undefined) {
+				await startLoop(sandbox, run_id);
+				files = await readRun(sandbox, run_id);
+			}
+		}
+		const done = settledUpdate(files);
+		if (done !== undefined) {
+			if (done.status === 'failed' && files.exit_code !== undefined && files.result === undefined) {
+				await logSetupFailure(sandbox, run_id, files.exit_code, redact);
+			}
+			return { done, started: files.started === true };
+		}
+		return { started: files.started === true };
+	}
+
+	/**
+	 * Ask ralph how a started loop is going. While it runs: its finished
+	 * iterations. Once it has ended: the mission's result, written to
+	 * `result.json` so later reads need not ask ralph again.
+	 */
+	async function observeLoop(
+		sandbox: SandboxRef,
+		run_id: string,
+		name: string,
+		redact: string,
+		event_id?: string
+	): Promise<LoopStep> {
+		const ralph = new RalphClient(ralphFetch(sandbox), redact);
+		let detail;
+		try {
+			detail = await ralph.getRun(name);
+		} catch (error) {
+			if (!(error instanceof RalphError)) throw error;
+			const terminal = await loopTerminal(sandbox);
+			if (error.status === 404 && terminal?.state === 'finished') {
+				// ralph ended without recording the loop (not installed, bad flags).
+				const done: StoredResult = {
+					status: 'failed',
+					error_message: loopExitMessage(terminal.exit_code)
+				};
+				await writeResult(sandbox, run_id, done);
+				return { done };
+			}
+			// Not recorded yet, or serve is not answering.
+			if (error.status === 0) await reviveServe(sandbox);
+			return { running: true };
+		}
+		const { run, iterations } = detail;
+		if (run.status === 'running' && run.alive) return { running: true, iterations };
+		const terminal = await loopTerminal(sandbox);
+		const report = await ralph.getReport(name).catch(() => undefined);
+		const outcome = ralphOutcome({ stop_reason: run.stop_reason, exit_code: terminal?.exit_code });
+		const summary = [
+			describeRalphStop(run.stop_reason, report?.iterations ?? iterations.length),
+			...(report?.needs_person ?? []).map((line) => `- ${line}`)
+		].join('\n');
+		const done: StoredResult = { status: outcome.status, result_summary: summary };
+		if (report !== undefined) done.duration_ms = report.duration_ms;
+		if (outcome.status === 'failed') done.error_message = summary;
+		if (event_id !== undefined) done.event_id = event_id;
+		await writeResult(sandbox, run_id, done);
+		return { done, iterations };
+	}
+
+	/** A loop has ended: E2B destroys its sandbox after the idle window. */
+	async function retireLoop(sandbox: SandboxRef): Promise<void> {
+		await sandbox.setTimeout(idle_ms).catch(() => undefined);
+	}
+
+	/** Stop a loop now: ralph records the operator stop, then its terminal goes. */
+	async function stopLoop(
+		sandbox: SandboxRef,
+		run_id: string,
+		name: string,
+		files: RunFiles
+	): Promise<boolean> {
+		const { exit_code } = await sandbox.exec(cancelCommand(run_id));
+		if (exit_code === 3) return false;
+		if (files.started === true || files.claim_age_s !== undefined) {
+			await new RalphClient(ralphFetch(sandbox), '')
+				.stop(name, { graceful: false })
+				.catch(() => undefined);
+			let client: HcClient | undefined;
+			try {
+				client = await connectHc(sandbox);
+				await client.kill(LOOP_TERMINAL);
+			} catch {
+				// Already finished, or never started: the cancelled mark decides.
+			} finally {
+				client?.close();
+			}
+		}
+		await retireLoop(sandbox);
+		return true;
+	}
+
+	/** getRun for a loop sandbox. */
+	async function getLoopRun(
+		sandbox: SandboxRef,
+		info: SandboxInfo,
+		run_id: string,
+		name: string
+	): Promise<AgentRunUpdate> {
+		const redact = await redactionFor(info);
+		const step = await advanceLoop(sandbox, run_id, redact);
+		if (step.done !== undefined) {
+			await retireLoop(sandbox);
+			return publicUpdate(step.done);
+		}
+		if (!step.started) return { status: 'running' };
+		const observed = await observeLoop(sandbox, run_id, name, redact);
+		const iterations =
+			observed.iterations === undefined || observed.iterations.length === 0
+				? {}
+				: { iterations: observed.iterations };
+		if ('running' in observed) return { status: 'running', ...iterations };
+		await retireLoop(sandbox);
+		return { ...publicUpdate(observed.done), ...iterations };
+	}
+
+	/** streamMissionEvents for a loop sandbox: ralph's events, mapped. */
+	async function streamLoop(
+		sandbox: SandboxRef,
+		info: SandboxInfo,
+		run_id: string,
+		name: string,
+		on_event: (event: MissionEvent) => Promise<void>,
+		options: AgentStreamOptions
+	): Promise<AgentStreamOutcome> {
+		const redact = await redactionFor(info);
+		const signal = options.signal;
+		const last =
+			options.last_event_id !== undefined && /^[0-9]{1,15}$/.test(options.last_event_id)
+				? options.last_event_id
+				: undefined;
+
+		/** A loop that ended before this stream saw it end: its stored result, once. */
+		const finish = async (done: StoredResult): Promise<AgentStreamOutcome> => {
+			const seen = last === undefined ? 0 : Number(last);
+			const stored =
+				done.event_id !== undefined && /^[0-9]{1,15}$/.test(done.event_id)
+					? Number(done.event_id)
+					: undefined;
+			if (stored !== undefined && seen >= stored) return 'terminal';
+			await on_event({
+				type: 'result',
+				id: String(stored ?? seen + 1),
+				status: done.status,
+				...(done.result_summary === undefined ? {} : { text: done.result_summary }),
+				...(done.duration_ms === undefined ? {} : { duration_ms: done.duration_ms })
+			});
+			return 'terminal';
+		};
+
+		const deadline = Date.now() + STREAM_START_WAIT_MS;
+		for (;;) {
+			if (signal?.aborted === true) return 'disconnected';
+			const step = await advanceLoop(sandbox, run_id, redact);
+			if (step.done !== undefined) return finish(step.done);
+			if (step.started) break;
+			if (Date.now() > deadline) return 'disconnected';
+			await delay(wait_ms, signal);
+		}
+
+		const ralph = new RalphClient(ralphFetch(sandbox), redact);
+		const mapper = new RalphEventMapper(redact);
+		let result_id: string | undefined;
+		let outcome: AgentStreamOutcome;
+		try {
+			outcome = await ralph.streamEvents(
+				name,
+				async (entry) => {
+					const event = mapper.map(entry);
+					if (event === undefined) return;
+					if (event.type === 'result') result_id = event.id;
+					await on_event(event);
+				},
+				{ last_event_id: last, signal }
+			);
+		} catch {
+			return 'disconnected';
+		}
+		if (outcome !== 'terminal') return outcome;
+		// ralph ended the stream: record the result (with the id the browser saw).
+		const observed = await observeLoop(sandbox, run_id, name, redact, result_id).catch(
+			() => undefined
+		);
+		if (observed === undefined || 'running' in observed) return 'disconnected';
+		if (result_id === undefined) await finish(observed.done);
+		await retireLoop(sandbox);
+		return 'terminal';
+	}
+
 	return {
 		id: 'e2b',
 		label: deps.label,
 
 		async launch(input: AgentLaunchInput): Promise<AgentLaunch> {
-			if (
-				input.repository !== undefined &&
-				parseGithubRepository(input.repository.url) === undefined
-			) {
-				throw new DispatchError(
-					'unavailable',
-					'Sandbox checkouts must be https://github.com repositories.'
-				);
-			}
-			const account = await doltAccount(input.dolt_database);
-			const metadata: Record<string, string> = {
-				beadsmith: '1',
-				beadsmith_database: input.dolt_database,
-				beadsmith_repository: input.repository?.url ?? '',
-				beadsmith_write: input.auto_create_pr ? '1' : '0',
-				[SESSION_METADATA]: randomUUID()
-			};
-			const network = await networkFor(metadata);
-			let sandbox: SandboxRef;
-			try {
-				sandbox = await driver.create({
-					template: settings.template,
-					timeout_ms: max_run_ms,
-					metadata,
-					network,
-					envs: {
-						BEADSMITH_AGENT_NAME: input.name,
-						BEADSMITH_REPO_URL: input.repository?.url ?? '',
-						BEADSMITH_REPO_REF: input.repository?.starting_ref ?? '',
-						BEADSMITH_AUTO_CREATE_PR: input.auto_create_pr ? '1' : '0',
-						BEADSMITH_TS_TAGS: settings.tailscale_tags.join(','),
-						BEADSMITH_DOLT_TAILNET_HOST: settings.dolt_tailnet_host,
-						BEADSMITH_DOLT_TAILNET_PORT: String(settings.dolt_tailnet_port),
-						BEADS_DOLT_SERVER_HOST: '127.0.0.1',
-						BEADS_DOLT_SERVER_PORT: DEFAULT_DOLT_LOCAL_PORT,
-						BEADS_DOLT_SERVER_USER: account.user,
-						BEADS_DOLT_PASSWORD: account.password,
-						BEADS_DOLT_SERVER_DATABASE: input.dolt_database,
-						BEADS_DOLT_AUTO_START: '0',
-						...modelPlaceholderEnvs(
-							settings.anthropic_api_key_file === undefined ? 'oauth_token' : 'api_key'
-						),
-						// Only when the egress will replace it: a placeholder that reaches
-						// GitHub unreplaced reads as "bad credentials", which misleads.
-						...(network.headers['api.github.com'] === undefined
-							? {}
-							: { GH_TOKEN: GITHUB_PLACEHOLDER })
-					}
-				});
-			} catch (error) {
-				if (error instanceof DispatchError) throw error;
-				log(`Sand mission: E2B could not create a sandbox: ${String(error)}`);
-				throw new DispatchError('unavailable', `${deps.label} could not create a sandbox.`);
-			}
+			const sandbox = await createSandbox({
+				name: input.name,
+				dolt_database: input.dolt_database,
+				repository: input.repository,
+				write: input.auto_create_pr,
+				metadata: { [SESSION_METADATA]: randomUUID() },
+				on_timeout: 'pause'
+			});
 			try {
 				await startRun(sandbox, 'r1', input.prompt);
 			} catch (error) {
@@ -690,6 +1076,32 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 				if (error instanceof DispatchError) throw error;
 				log(`Sand mission ${sandbox.id}: the agent could not start: ${String(error)}`);
 				throw new DispatchError('unavailable', `${deps.label} could not start the agent.`);
+			}
+			return { agent_id: sandbox.id, run_id: 'r1' };
+		},
+
+		async launchLoop(input: AgentLoopLaunchInput): Promise<AgentLaunch> {
+			const name = `bdx-${input.loop.mode}-${randomUUID().slice(0, 8)}`;
+			// Every loop mode writes Beads or code, so its checkout can push.
+			const sandbox = await createSandbox({
+				name: input.name,
+				dolt_database: input.dolt_database,
+				repository: input.repository,
+				write: true,
+				metadata: { [LOOP_METADATA]: name },
+				// Nothing resumes a loop's sandbox, so its timeout destroys it.
+				on_timeout: 'kill'
+			});
+			try {
+				const dir = `${RUNS_DIR}/r1`;
+				await sandbox.exec(`mkdir -p '${dir}'`);
+				await sandbox.writeFile(`${dir}/loop.json`, JSON.stringify(ralphArgv(name, input.loop)));
+				await sandbox.start('beadsmith-run r1', { BEADSMITH_TS_AUTHKEY: await mintTailscale() });
+			} catch (error) {
+				await sandbox.kill().catch(() => undefined);
+				if (error instanceof DispatchError) throw error;
+				log(`Sand loop ${sandbox.id}: setup could not start: ${String(error)}`);
+				throw new DispatchError('unavailable', `${deps.label} could not start the loop.`);
 			}
 			return { agent_id: sandbox.id, run_id: 'r1' };
 		},
@@ -727,6 +1139,12 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 					error_message: 'The sandbox ended before the run reported a result.'
 				};
 			}
+			const loop = loopNameOf(info);
+			if (loop !== undefined) {
+				const update = await getLoopRun(sandbox, info, run_id, loop);
+				if (update.status !== 'running') finished.set(key, update);
+				return update;
+			}
 			const redact = await redactionFor(info);
 			const step = await advance(sandbox, info, run_id, redact);
 			const done =
@@ -746,6 +1164,10 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			const info = await driver.info(requireSandboxId(agent_id));
 			if (info === undefined) {
 				throw new DispatchError('conflict', "This agent's sandbox is gone. Start a new thread.");
+			}
+			if (loopNameOf(info) !== undefined) {
+				// A one-shot agent in the loop's checkout would run outside ralph.
+				throw new DispatchError('conflict', 'A loop takes no follow-up.');
 			}
 			if (sessionIdOf(info) === undefined) {
 				throw new DispatchError(
@@ -778,6 +1200,13 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			if (info === undefined) throw new DispatchError('conflict', RUN_NOT_CANCELLABLE_MESSAGE);
 			const sandbox = await connectOrGone(agent_id, idle_ms);
 			const files = await readRun(sandbox, run_id);
+			const loop = loopNameOf(info);
+			if (loop !== undefined) {
+				if (settledUpdate(files) !== undefined || !(await stopLoop(sandbox, run_id, loop, files))) {
+					throw new DispatchError('conflict', RUN_NOT_CANCELLABLE_MESSAGE);
+				}
+				return;
+			}
 			if (settledUpdate(files) !== undefined || !(await stopRun(sandbox, info, run_id, files))) {
 				throw new DispatchError('conflict', RUN_NOT_CANCELLABLE_MESSAGE);
 			}
@@ -794,6 +1223,8 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			const info = await driver.info(requireSandboxId(agent_id));
 			if (info === undefined || info.state === 'paused') return 'stream_expired';
 			const sandbox = await connectOrGone(agent_id, idle_ms);
+			const loop = loopNameOf(info);
+			if (loop !== undefined) return streamLoop(sandbox, info, run_id, loop, on_event, options);
 			const redact = await redactionFor(info);
 			const signal = options.signal;
 			const seen = parseSessionEventId(options.last_event_id);
