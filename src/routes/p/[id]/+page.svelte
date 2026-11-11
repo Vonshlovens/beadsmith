@@ -19,6 +19,7 @@
 	import ListBulletsIcon from 'phosphor-svelte/lib/ListBulletsIcon';
 	import SidebarSimpleIcon from 'phosphor-svelte/lib/SidebarSimpleIcon';
 	import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
+	import ArrowsClockwiseIcon from 'phosphor-svelte/lib/ArrowsClockwiseIcon';
 	import MagnifyingGlassIcon from 'phosphor-svelte/lib/MagnifyingGlassIcon';
 	import ShapesIcon from 'phosphor-svelte/lib/ShapesIcon';
 	import CellSignalHighIcon from 'phosphor-svelte/lib/CellSignalHighIcon';
@@ -73,6 +74,9 @@
 	} from '#lib/client/issue-view.js';
 	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
 	import { currentProject, statusSnapshot } from '#lib/client/projects.svelte.js';
+	import { app_state } from '#lib/client/stores.svelte.js';
+	import { run_place } from '#lib/client/agent-runner.svelte.js';
+	import { loopAvailability } from '#lib/client/loop.js';
 	import { UNSORTED } from '#lib/client/sort.js';
 	import type { SortColumn, SortState } from '#lib/client/sort.js';
 	import { PRODUCT_NAME } from '#lib/product.js';
@@ -233,6 +237,14 @@
 
 	const project = $derived(currentProject());
 	const file_enabled = $derived(dispatch_enabled && project?.allow?.file !== false);
+	/** Shown whenever a runner has ralph; the dialog explains a refusal. */
+	const loop_visible = $derived(
+		loopAvailability(statusSnapshot(), project?.allow, run_place.launchField().provider).visible
+	);
+
+	function runLoop() {
+		app_state.openLoop({ project_id: data.project_id });
+	}
 	const board_can_create = $derived(boardColumnCreateEnabled(file_enabled));
 
 	/**
@@ -279,6 +291,13 @@
 			group: 'Agent' as const,
 			when: () => file_enabled,
 			run: () => openFile()
+		},
+		{
+			keys: ['L'],
+			label: 'Run a loop on this project',
+			group: 'Agent' as const,
+			when: () => loop_visible,
+			run: () => runLoop()
 		},
 		{
 			keys: ['x'],
@@ -855,6 +874,18 @@
 				{sort.direction === 'asc' ? '↑' : '↓'}
 				{SORT_LABELS[sort.column]}
 				<XIcon size={12} aria-hidden="true" />
+			</button>
+		{/if}
+		{#if loop_visible}
+			<button
+				class="btn btn-sm"
+				type="button"
+				onclick={runLoop}
+				aria-label="Run a loop"
+				aria-keyshortcuts="L"
+				{@attach tip('Run a loop: build or plan this project, iteration after iteration (L)')}
+			>
+				<ArrowsClockwiseIcon size={14} aria-hidden="true" /><span class="file-tx">Loop</span>
 			</button>
 		{/if}
 		{#if file_enabled}

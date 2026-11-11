@@ -37,7 +37,7 @@ sqlite-core). The runtime does not run drizzle-kit push or migrate.
 `src/lib/server/state/db.ts` opens `file:${stateDir}/state.db` and applies
 `CREATE TABLE IF NOT EXISTS` for the known tables.
 
-Today the database has twelve application tables plus four account tables:
+Today the database has seventeen application tables plus four account tables:
 
 - `settings` — key/value application preferences. The shipped key is
   `ui.theme` (`system` | `light` | `dark`); `dispatch.armed` is the global
@@ -45,13 +45,19 @@ Today the database has twelve application tables plus four account tables:
 - `dispatch_requests` — File/Tackle control-plane metadata: opaque request
   id, idempotency key (unique), project id, Dolt database name of the
   targeted request, operation, actor, payload JSON, status, provider, optional
-  agent id/url/run id, sanitized error, timestamps. (Startup renamed the
+  agent id/url/run id, sanitized error, a loop run's stop reason and
+  needs-person flag (ADR-0019), timestamps. (Startup renamed the
   first provider's `cursor_`-prefixed columns from 2026-10-28; that step was
   removed on 2026-10-30 once every install had run it.)
 - `dispatch_turns` — per-mission conversation turns:
   request id, role (`operator` | `agent`), sanitized display text, optional
   run id and terminal status, timestamp. Never the launch prompt or worker
   logs ([0006](./0006-durable-agent-dispatch.md)).
+- `dispatch_loop_iterations` — a loop mission's finished ralph iterations,
+  keyed by request id, run id and iteration number: outcome, start and end,
+  duration, token counts, cost, commit range (head before and after),
+  validation result and open plan items. Never the agent's words or errors
+  ([0019](./0019-ralph-loops-and-automations.md) rule 5).
 - `tackle_repository_maps` — operator-edited project-to-GitHub checkout
   mapping (`url`, optional ref normalized to an empty string, and automatic-PR
   preference). Environment/file maps remain the higher-precedence override.
@@ -82,6 +88,20 @@ Today the database has twelve application tables plus four account tables:
   runner. Application-owned rows, not Beads issues; the runner is the
   durable log of the session ([`docs/first-mate.md`](../../docs/first-mate.md)).
   No separate ADR: two more tables in the same file.
+- `terminal_relay_sessions` — the admin terminal relay's audit trail
+  ([0021](./0021-hc-terminal-runtime.md) rule 4): one row per attach, with
+  the actor, the mission or chat it named, the mode (`watch` or
+  `take_over`), start and end time and why it ended. Never terminal bytes.
+- `automations`, `automation_runs` — Beadsmith-owned schedules
+  ([0019](./0019-ralph-loops-and-automations.md) rule 7): project, name, a
+  five-field cron and IANA time zone, optional provider, the validated
+  dispatch payload it fires (the same JSON a mission stores), overlap policy
+  (`skip` | `queue`), enabled flag and why the scheduler paused it, the
+  creator's account id, and the cursor (`last_slot`, the latest slot
+  handled). One run row per claimed slot, keyed by automation and slot:
+  trigger (`schedule` | `manual`), outcome (`firing`, `queued`, `fired`,
+  `skipped`, `refused`, `failed`), the mission it launched and a short
+  message; the newest 1000 per automation are kept. No credentials.
 - `auth_user`, `auth_session`, `auth_account`, `auth_verification` —
   Better Auth accounts, sessions, sign-in methods (password as a scrypt hash),
   and short-lived verification values ([0011](./0011-accounts-and-roles.md)).

@@ -52,6 +52,25 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 			return jsonResponse({ request: result.request }, result.created ? 201 : 200);
 		}
 
+		if (body.data.operation === 'loop') {
+			const { operation, idempotency_key, provider, issue_id, ...settings } = body.data;
+			// A loop on one bead must name a real one; a plan loop names none.
+			const issue =
+				issue_id === undefined ? undefined : (await getProjectIssue(project, issue_id))?.issue;
+			if (issue_id !== undefined && issue === undefined) {
+				return errorResponse('not_found', 'issue not found');
+			}
+			const result = await enqueueDispatch({
+				idempotency_key,
+				project,
+				provider,
+				actor: actorFromLocals(locals),
+				payload: { operation, ...settings, ...(issue_id === undefined ? {} : { issue_id }) },
+				issue
+			});
+			return jsonResponse({ request: result.request }, result.created ? 201 : 200);
+		}
+
 		const issue_result = await getProjectIssue(project, body.data.issue_id);
 		if (issue_result === undefined) {
 			return errorResponse('not_found', 'issue not found');

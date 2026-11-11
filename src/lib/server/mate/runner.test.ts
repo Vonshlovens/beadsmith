@@ -8,7 +8,9 @@ import {
 	FAKE_RUNNER_URL
 } from '#lib/test/fake-mate-runner.js';
 import {
+	configuredMateRunners,
 	createMateRunner,
+	MATE_RUNNER_TERMINAL,
 	MateRunnerError,
 	readSseStream,
 	resolveMateRunnerSecret,
@@ -341,5 +343,16 @@ describe('streamEvents', () => {
 		await expect(
 			runner.streamEvents('mc_1', undefined, () => {}, new AbortController().signal)
 		).rejects.toMatchObject({ code: 'not_found' });
+	});
+});
+
+describe('MATE_RUNNER_TERMINAL', () => {
+	it('offers a terminal only for runners that implement attachTerminal', () => {
+		// The Sand runner's attach is covered in e2b-runner.test.ts.
+		expect(runnerWith(fetch).attachTerminal).toBeUndefined();
+		expect(MATE_RUNNER_TERMINAL).toEqual({ remote: false, e2b: true });
+		expect(configuredMateRunners(env)).toEqual([
+			{ id: 'remote', label: expect.any(String), terminal: false }
+		]);
 	});
 });

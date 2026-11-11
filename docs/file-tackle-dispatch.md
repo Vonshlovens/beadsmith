@@ -213,6 +213,8 @@ record is written. It is not part of the idempotent payload.
 - `{ operation: "comment", idempotency_key, issue_id, text }`
 - `{ operation: "discuss", idempotency_key, issue_id, intent, message? }` with
   `intent` one of `discuss`, `elaborate`, `close`
+- `{ operation: "loop", idempotency_key, mode, max_iterations, prompt?, issue_id?, harness?, model?, effort?, iteration_timeout_minutes? }`
+  with `mode` one of `build`, `plan`, `run`, `reverse`
 
 Discuss is the issue page's agent button (key `a`): the worker follows
 `.agents/skills/discuss/SKILL.md` and either talks the issue through, rewrites
@@ -222,6 +224,24 @@ checkout, never opens a PR,
 and continues as a conversation through follow-up. A plain discussion is
 allowed when File or Tackle is allowed; `elaborate` and `close` need Tackle.
 The public record carries `intent` but never the message.
+
+Loop runs a [ralph](https://github.com/Vonshlovens/von-ralph) loop as one
+mission ([ADR-0019](../specs/decisions/0019-ralph-loops-and-automations.md)):
+`ralph <mode>` with those flags, in the project's Tackle checkout, one fresh
+agent session per iteration. Every mode writes Beads or code, so a loop needs
+Tackle allowed and a Tackle map, and fails closed without one, as Tackle does.
+`run` needs a `prompt` and the other modes refuse one (they use the
+checkout's own `.ralph/` prompts). `issue_id` narrows a `build` (or labels a
+`run`) to one bead, which must exist; without it the loop works on the
+project's whole plan. `max_iterations` is required (1 to 200), so no loop
+spends without a bound; `iteration_timeout_minutes` is 1 to 240. Only a
+runner whose `capabilities.loop` is true takes a loop (Sand; see
+[How a loop runs](sand-e2b.md#how-a-loop-runs)); any other, such as a
+webhook runner, refuses it with `403` before a record is written. A loop takes no follow-up (`409`):
+steer, stop and restart are its controls. Each finished iteration (number,
+outcome, duration, tokens, cost, commit range, validation, open plan items)
+is copied into `state.db` as the runner reports it, because a Sand sandbox
+and ralph's own database go when the loop ends.
 
 Comment launches the File checkout (beads-web, no PR) and is allowed when File
 or Tackle is allowed for the project. The browser cannot set `author`; the
@@ -247,6 +267,13 @@ these terminal result fields when the provider supplies them:
 - `duration_ms` — the runner's terminal run duration; and
 - `git_pr_url` — a validated `https://github.com/.../pull/:number` URL.
 
+A loop mission also carries `loop`: its `mode`, optional `issue_id`,
+`harness`, `model`, `effort`, `max_iterations` and
+`iteration_timeout_minutes`, and, once its current run has ended,
+`needs_person` and (when ralph recorded one) `stop_reason`. The loop UI reads
+these instead of parsing `result_summary`; a restart clears them with the new
+run. The `run` prompt is not included, as a Tackle description is not.
+
 Failed records may also include a sanitized `error_message`. The response never
 contains provider credentials, the launch prompt/payload, actor, idempotency
 key, or run id.
@@ -256,6 +283,18 @@ console renders: `{turns: [{seq, role, text, run_id?, status?, created_at}]}`,
 where `role` is `operator` (the request and each follow-up) or `agent` (each
 finished run's sanitized summary or error, once per run). It is display state
 in `dispatch_turns`, never the launch prompt or worker logs.
+
+`GET /api/projects/:id/dispatch/:requestId/iterations` is a loop mission's
+finished iterations across its runs, oldest first: `{iterations: [{run_id,
+iteration, outcome, started_at, finished_at, duration_ms, head_before,
+head_after, input_tokens, output_tokens, cost_usd, validate_ok,
+plan_open}]}`, copied from ralph as each iteration ends (ADR-0019 rule 5).
+Any other mission returns an empty list. Numbers and a commit range only:
+the agent's words and errors stay in the sandbox. A loop's mission thread
+shows these rows above its conversation, grouped by run once it has been
+restarted, with its stop reason and a needs-person badge after it ends.
+Live events carry no iteration boundaries, so the thread re-reads this list
+every few seconds while the loop runs. A loop thread takes no replies.
 
 `GET /api/status` reports `dispatch.capabilities` for the default provider
 and `dispatch.providers` (`id`, `label`, `capabilities`) for every configured

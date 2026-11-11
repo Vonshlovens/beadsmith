@@ -1,7 +1,8 @@
 /**
  * The First Mate runner: a host-side service that keeps each First Mate chat
- * as a long-lived Claude Code session in the First Mate sandbox and serves
- * mate runner contract v1 (docs/first-mate.md) to Beadsmith.
+ * as interactive Claude Code in an hc terminal in the First Mate guest
+ * (ADR-0021) and serves mate runner contract v1 (docs/first-mate.md) to
+ * Beadsmith.
  *
  *   node --import ./scripts/ts-resolve.mjs scripts/mate-runner.ts
  *
@@ -11,24 +12,29 @@
  *                             at least 32 characters; Beadsmith's
  *                             BDX_MATE_RUNNER_SECRET)
  *   MATE_RUNNER_STATE_DIR     where chat logs live (default ./mate-runner-state)
- *   MATE_RUNNER_MAX_SESSIONS  live agent processes at once (default 3)
- * Agent, over SSH (production):
- *   MATE_AGENT_SSH            user@host of the sandbox
+ *   MATE_RUNNER_MAX_SESSIONS  live agent CLIs at once (default 3)
+ * Where the agent runs (absolute paths on the agent's machine):
+ *   MATE_AGENT_WORKDIR        its working directory (required with SSH; default: cwd)
+ *   MATE_AGENT_CLAUDE_CONFIG  Claude Code's config directory, where its
+ *                             transcripts live (required with SSH; default ~/.claude)
+ *   MATE_AGENT_CLAUDE         Claude Code executable the terminal runs (default: claude)
+ *   MATE_AGENT_HC             hc executable (default: hc)
+ * The runner reaches that machine's hc core with `hc connect`, over SSH
+ * (production):
+ *   MATE_AGENT_SSH            user@host of the guest
  *   MATE_AGENT_SSH_KEY        private key file
- *   MATE_AGENT_KNOWN_HOSTS    known_hosts file pinning the sandbox
- *   MATE_AGENT_WORKDIR        directory in the sandbox (default: the login directory)
- *   MATE_AGENT_CLAUDE         Claude Code executable (default: claude)
- * Or locally (development):
- *   MATE_AGENT_COMMAND        command to run instead of SSH, e.g. claude
- *   MATE_AGENT_LOCAL_WORKDIR  its working directory (default: cwd)
+ *   MATE_AGENT_KNOWN_HOSTS    known_hosts file pinning the guest
+ * or, with MATE_AGENT_LOCAL=1, on this machine (development).
  */
 
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { homedir } from 'node:os';
+import { isAbsolute, join } from 'node:path';
 import { ChatStore } from '../src/lib/mate-runner/event-log.js';
 import { createRunnerHandler } from '../src/lib/mate-runner/server.js';
-import { localSpawner, sshSpawner } from '../src/lib/mate-runner/spawn.js';
-import type { SpawnAgent } from '../src/lib/mate-runner/session.js';
+import { localConnector, sshConnector, type AgentPlace } from '../src/lib/mate-runner/spawn.js';
+import type { ConnectAgent } from '../src/lib/mate-runner/session.js';
 
 function required(name: string): string {
 	const value = process.env[name]?.trim();
@@ -45,26 +51,39 @@ if (secret.length < 32) {
 	process.exit(2);
 }
 
-let spawnAgent: SpawnAgent;
-const local = process.env.MATE_AGENT_COMMAND?.trim();
-if (local !== undefined && local.length > 0) {
-	spawnAgent = localSpawner(local, process.env.MATE_AGENT_LOCAL_WORKDIR ?? process.cwd());
-} else {
-	spawnAgent = sshSpawner({
-		target: required('MATE_AGENT_SSH'),
-		identity_file: required('MATE_AGENT_SSH_KEY'),
-		known_hosts_file: required('MATE_AGENT_KNOWN_HOSTS'),
-		workdir: process.env.MATE_AGENT_WORKDIR ?? '.',
-		claude: process.env.MATE_AGENT_CLAUDE ?? 'claude'
-	});
+function absolute(name: string, fallback?: string): string {
+	const value = process.env[name]?.trim() || fallback;
+	if (value === undefined) return required(name);
+	if (!isAbsolute(value)) {
+		console.error(`mate-runner: ${name} must be an absolute path`);
+		process.exit(2);
+	}
+	return value;
 }
+
+const local = process.env.MATE_AGENT_LOCAL === '1';
+const place: AgentPlace = {
+	workdir: absolute('MATE_AGENT_WORKDIR', local ? process.cwd() : undefined),
+	config_dir: absolute('MATE_AGENT_CLAUDE_CONFIG', local ? join(homedir(), '.claude') : undefined),
+	claude: process.env.MATE_AGENT_CLAUDE?.trim() || 'claude',
+	hc: process.env.MATE_AGENT_HC?.trim() || 'hc'
+};
+const connect: ConnectAgent = local
+	? localConnector(place)
+	: sshConnector({
+			...place,
+			target: required('MATE_AGENT_SSH'),
+			identity_file: required('MATE_AGENT_SSH_KEY'),
+			known_hosts_file: required('MATE_AGENT_KNOWN_HOSTS')
+		});
 
 const [host, port] = (process.env.MATE_RUNNER_LISTEN ?? '127.0.0.1:8787').split(/:(?=\d+$)/);
 const handler = createRunnerHandler({
 	secret,
 	store: new ChatStore(process.env.MATE_RUNNER_STATE_DIR ?? './mate-runner-state'),
-	spawn: spawnAgent,
-	max_live_sessions: Number(process.env.MATE_RUNNER_MAX_SESSIONS ?? 3)
+	connect,
+	max_live_sessions: Number(process.env.MATE_RUNNER_MAX_SESSIONS ?? 3),
+	agent: { log: (message) => console.warn(`mate-runner: ${message}`) }
 });
 
 const server = createServer((req, res) => {

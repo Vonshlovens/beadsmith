@@ -16,7 +16,10 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { isMissionEvent, type MissionEvent } from '../mission-events.js';
-import type { MissionEventDraft } from './claude-stream.js';
+
+type Draft<T> = T extends MissionEvent ? Omit<T, 'id'> : never;
+/** A mission event before the log gives it an id. */
+export type MissionEventDraft = Draft<MissionEvent>;
 
 export const CHAT_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const EVENT_ID = /^e(\d{9})$/;
@@ -24,8 +27,7 @@ const EVENT_ID = /^e(\d{9})$/;
 export interface ChatMeta {
 	session_id: string;
 	scope: string | null;
-	/** Claude Code has created the session, so later processes `--resume` it. */
-	started: boolean;
+	/** Messages accepted whose turn has not ended (queued or running). */
 	pending?: number;
 	created_at: string;
 }

@@ -18,6 +18,7 @@ import { parseMissionEventJson, type MissionEvent } from '#lib/mission-events.js
 import { getEnv, type ServerEnv } from '../env.js';
 import { readGithubPullUrl, stripTerminalNoise } from '../dispatch/sanitize.js';
 import { signWebhookRequest } from '../dispatch/webhook-provider.js';
+import type { TerminalAttachRequest, TerminalRelay } from '../terminal-relay/relay.js';
 import type { MateRunnerId, MateRunnerInfo } from '#lib/mate.js';
 import { createE2bMateRunner } from './e2b-runner.js';
 
@@ -69,6 +70,11 @@ export interface MateRunner {
 	/** Stop and forget the session. A chat the runner never knew is fine. */
 	deleteChat(chat_id: string): Promise<void>;
 	health(): Promise<boolean>;
+	/**
+	 * Attach the admin relay to the chat's agent terminal (ADR-0021 rule 4).
+	 * Present only on runners Beadsmith can relay; throws `TerminalRelayError`.
+	 */
+	attachTerminal?(chat_id: string, request: TerminalAttachRequest): Promise<TerminalRelay>;
 }
 
 export interface MateRunnerDeps {
@@ -431,9 +437,20 @@ let override: MateRunner | null | undefined;
 /** The in-process Sand runner holds live sessions, so there is one per process. */
 let sand: { key: string; runner: MateRunner } | undefined;
 
+/**
+ * Which runners implement `attachTerminal`. Sand's runner relays its hc
+ * terminal; the remote runner's contract has no relay yet, so its chats
+ * would only ever answer 409 and the browser offers no terminal for them.
+ */
+export const MATE_RUNNER_TERMINAL: Record<MateRunnerId, boolean> = { remote: false, e2b: true };
+
 /** Configured chat runners with their labels, default first. */
 export function configuredMateRunners(env: ServerEnv = getEnv()): MateRunnerInfo[] {
-	return env.mate_runners.map((id) => ({ id, label: env.mate_labels[id] }));
+	return env.mate_runners.map((id) => ({
+		id,
+		label: env.mate_labels[id],
+		terminal: MATE_RUNNER_TERMINAL[id]
+	}));
 }
 
 /**

@@ -73,6 +73,10 @@ export const dispatchRequests = sqliteTable('dispatch_requests', {
 	gitPrUrl: text('git_pr_url'),
 	/** First Mate chat that launched it through a crew tool; null otherwise. */
 	chatId: text('chat_id'),
+	/** Why a loop's current run ended; null while it runs or when ralph recorded none. */
+	loopStopReason: text('loop_stop_reason'),
+	/** 1/0 once a loop's current run has ended; null otherwise. */
+	loopNeedsPerson: integer('loop_needs_person'),
 	createdAt: text('created_at').notNull(),
 	updatedAt: text('updated_at').notNull()
 });
@@ -91,6 +95,69 @@ export const dispatchTurns = sqliteTable('dispatch_turns', {
 	status: text('status'),
 	createdAt: text('created_at').notNull()
 });
+
+/**
+ * A loop mission's finished iterations, copied from ralph as each ends
+ * (ADR-0019 rule 5). DDL in `DISPATCH_ITERATIONS_SCHEMA_SQL`.
+ */
+export const dispatchLoopIterations = sqliteTable(
+	'dispatch_loop_iterations',
+	{
+		requestId: text('request_id').notNull(),
+		runId: text('run_id').notNull(),
+		iteration: integer('iteration').notNull(),
+		outcome: text('outcome').notNull(),
+		startedAt: text('started_at').notNull(),
+		finishedAt: text('finished_at').notNull(),
+		durationMs: integer('duration_ms').notNull(),
+		headBefore: text('head_before'),
+		headAfter: text('head_after'),
+		inputTokens: integer('input_tokens').notNull(),
+		outputTokens: integer('output_tokens').notNull(),
+		costUsd: real('cost_usd'),
+		validateOk: integer('validate_ok', { mode: 'boolean' }),
+		planOpen: integer('plan_open')
+	},
+	(table) => [primaryKey({ columns: [table.requestId, table.runId, table.iteration] })]
+);
+
+/**
+ * Automations (ADR-0019 rule 7): a dispatch template with a cron schedule.
+ * `last_slot` is the cursor; only later slots fire. Keep in step with
+ * `AUTOMATION_SCHEMA_SQL` in `automations/store.ts`.
+ */
+export const automations = sqliteTable('automations', {
+	id: text('id').primaryKey(),
+	projectId: text('project_id').notNull(),
+	name: text('name').notNull(),
+	cron: text('cron').notNull(),
+	timeZone: text('time_zone').notNull(),
+	provider: text('provider'),
+	payloadJson: text('payload_json').notNull(),
+	overlap: text('overlap').notNull(),
+	enabled: integer('enabled', { mode: 'boolean' }).notNull(),
+	pausedReason: text('paused_reason'),
+	createdBy: text('created_by').notNull(),
+	lastSlot: text('last_slot').notNull(),
+	createdAt: text('created_at').notNull(),
+	updatedAt: text('updated_at').notNull()
+});
+
+/** Each automation slot claimed, and what came of it. */
+export const automationRuns = sqliteTable(
+	'automation_runs',
+	{
+		automationId: text('automation_id').notNull(),
+		slot: text('slot').notNull(),
+		trigger: text('trigger').notNull(),
+		outcome: text('outcome').notNull(),
+		missionId: text('mission_id'),
+		message: text('message'),
+		createdAt: text('created_at').notNull(),
+		updatedAt: text('updated_at').notNull()
+	},
+	(table) => [primaryKey({ columns: [table.automationId, table.slot] })]
+);
 
 /** One scheduled or manual backup run (ADR-0010). No credentials. */
 export const backupRuns = sqliteTable('backup_runs', {
@@ -225,6 +292,29 @@ export const mateCrewCalls = sqliteTable(
 	(table) => [
 		primaryKey({ columns: [table.chatId, table.callId] }),
 		index('mate_crew_calls_at').on(table.chatId, table.at)
+	]
+);
+
+/**
+ * The admin terminal relay's audit trail (ADR-0021 rule 4): one row per
+ * attach, watching or taking over, with actor and start and end time. Never
+ * terminal bytes. Keep in step with `TERMINAL_RELAY_SCHEMA_SQL` in
+ * `terminal-relay/audit.ts`.
+ */
+export const terminalRelaySessions = sqliteTable(
+	'terminal_relay_sessions',
+	{
+		id: text('id').primaryKey(),
+		actor: text('actor').notNull(),
+		targetKind: text('target_kind').notNull(),
+		targetId: text('target_id').notNull(),
+		mode: text('mode').notNull(),
+		startedAt: text('started_at').notNull(),
+		endedAt: text('ended_at'),
+		endReason: text('end_reason')
+	},
+	(table) => [
+		index('terminal_relay_sessions_target').on(table.targetKind, table.targetId, table.startedAt)
 	]
 );
 

@@ -102,6 +102,26 @@ describe('createAccount', () => {
 	});
 });
 
+describe('account standing', () => {
+	it('reports email and role, and follows a demotion', async () => {
+		await createAccount(t.service, admin_headers, {
+			email: 'second@example.com',
+			name: 'Second',
+			role: 'admin',
+			password: TEST_PASSWORD
+		});
+		const second = await idOf('second@example.com');
+		expect(await t.service.store.getStanding(second)).toEqual({
+			email: 'second@example.com',
+			role: 'admin',
+			banned: false
+		});
+		await updateAccount(t.service, admin_headers, admin_id, second, { role: 'member' });
+		expect((await t.service.store.getStanding(second))?.role).toBe('member');
+		expect(await t.service.store.getStanding('no-such-account')).toBeUndefined();
+	});
+});
+
 describe('keeping an admin', () => {
 	it('refuses to demote or remove yourself', async () => {
 		await expect(

@@ -19,7 +19,13 @@ function health(patch: Partial<DispatchHealth> = {}): { dispatch: DispatchHealth
 			key_configured: true,
 			armed: true,
 			provider: 'webhook',
-			capabilities: { live_events: false, follow_up: true, cancel: true },
+			capabilities: {
+				live_events: false,
+				follow_up: true,
+				cancel: true,
+				loop: false,
+				terminal: false
+			},
 			...patch
 		}
 	};
@@ -91,8 +97,20 @@ describe('isFollowedMission', () => {
 });
 
 describe('missions across several runners', () => {
-	const webhook_caps = { live_events: false, follow_up: false, cancel: true };
-	const sand_caps = { live_events: true, follow_up: true, cancel: true };
+	const webhook_caps = {
+		live_events: false,
+		follow_up: false,
+		cancel: true,
+		loop: false,
+		terminal: false
+	};
+	const sand_caps = {
+		live_events: true,
+		follow_up: true,
+		cancel: true,
+		loop: false,
+		terminal: false
+	};
 	const dispatch = {
 		armed: true,
 		provider: 'webhook' as const,
@@ -148,11 +166,30 @@ describe('composerState', () => {
 		expect(
 			composerState(
 				done,
-				health({ capabilities: { live_events: false, follow_up: false, cancel: false } }).dispatch
+				health({
+					capabilities: {
+						live_events: false,
+						follow_up: false,
+						cancel: false,
+						loop: false,
+						terminal: false
+					}
+				}).dispatch
 			).reason
 		).toContain('follow-up');
 		expect(composerState(done, health({ armed: false }).dispatch).reason).toContain('disarmed');
 		expect(composerState(done, null).can_send).toBe(false);
+	});
+
+	it('never offers a reply on a loop, running or ended', () => {
+		const loop = { ...done, operation: 'loop' as const };
+		expect(composerState(loop, health().dispatch)).toEqual({
+			can_send: false,
+			reason: 'A loop works from its plan and does not take replies.'
+		});
+		expect(composerState({ ...loop, status: 'running' }, health().dispatch).reason).toContain(
+			'The loop is running'
+		);
 	});
 });
 
@@ -184,7 +221,13 @@ describe('formatElapsed', () => {
 });
 
 describe('missionCardState', () => {
-	const caps = (cancel: boolean) => ({ live_events: true, follow_up: true, cancel });
+	const caps = (cancel: boolean) => ({
+		live_events: true,
+		follow_up: true,
+		cancel,
+		loop: false,
+		terminal: false
+	});
 	const dispatch = {
 		armed: true,
 		provider: 'e2b' as const,
@@ -197,7 +240,10 @@ describe('missionCardState', () => {
 	const running = { status: 'running' as const, agent_id: 'sbx1', provider: 'e2b' as const };
 
 	it('offers Stop while a followed run can be cancelled', () => {
-		expect(missionCardState(running, dispatch)).toEqual({ busy: true, can_cancel: true });
+		expect(missionCardState(running, dispatch)).toEqual({
+			busy: true,
+			can_cancel: true
+		});
 	});
 
 	it('offers no Stop before launch, on a runner that cannot cancel, or once finished', () => {

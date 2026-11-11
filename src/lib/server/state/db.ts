@@ -5,6 +5,7 @@ import { getEnv } from '../env.js';
 import { createDispatchPolicyStore, type DispatchPolicyStore } from '../dispatch/policy.js';
 import {
 	createDispatchStore,
+	DISPATCH_ITERATIONS_SCHEMA_SQL,
 	DISPATCH_TURNS_SCHEMA_SQL,
 	type DispatchStore
 } from '../dispatch/store.js';
@@ -14,12 +15,22 @@ import { BACKUP_SCHEMA_SQL, createBackupStore, type BackupStore } from '../backu
 import { AUTH_SCHEMA_SQL } from '../auth/store.js';
 import { createTodoStore, TODO_SCHEMA_SQL, type TodoStore } from '../todos/store.js';
 import { createMateStore, MATE_SCHEMA_SQL, type MateStore } from '../mate/store.js';
+import {
+	createTerminalRelayAuditStore,
+	TERMINAL_RELAY_SCHEMA_SQL,
+	type TerminalRelayAuditStore
+} from '../terminal-relay/audit.js';
+import {
+	AUTOMATION_SCHEMA_SQL,
+	createAutomationStore,
+	type AutomationStore
+} from '../automations/store.js';
 import { getSecretBox } from '../secret-box.js';
 
 /**
  * Service-local UI, dispatch, backup, and account state. It stores
- * preferences, File/Tackle request records, backup settings and runs, and
- * Beadsmith accounts. The only credentials are backup keys sealed by the
+ * preferences, File/Tackle request records, automations and their fired
+ * slots, backup settings and runs, and Beadsmith accounts. The only credentials are backup keys sealed by the
  * secret box (ADR-0010) and one-way account password hashes (ADR-0011); never
  * Dolt passwords, workspaces, discovery roots, or Beads issue data.
  *
@@ -72,7 +83,9 @@ export const STATE_SCHEMA_SQL: string[] = [
 	BACKUP_SCHEMA_SQL,
 	...TODO_SCHEMA_SQL,
 	...MATE_SCHEMA_SQL,
-	...AUTH_SCHEMA_SQL
+	...AUTH_SCHEMA_SQL,
+	...TERMINAL_RELAY_SCHEMA_SQL,
+	...AUTOMATION_SCHEMA_SQL
 ];
 
 const DISPATCH_COLUMN_MIGRATIONS = [
@@ -91,6 +104,16 @@ const DISPATCH_COLUMN_MIGRATIONS = [
 		// old outcomes as news.
 		then: `UPDATE dispatch_requests SET chat_notice = status || ':' || COALESCE(run_id, '')
 			WHERE chat_id IS NOT NULL AND status IN ('succeeded', 'cancelled', 'failed')`
+	},
+	// How a loop's current run ended (ADR-0019 rule 4). needs_person is set on
+	// every ended loop, so it also marks "ended"; the reason can be unknown.
+	{
+		name: 'loop_stop_reason',
+		sql: 'ALTER TABLE dispatch_requests ADD COLUMN loop_stop_reason TEXT'
+	},
+	{
+		name: 'loop_needs_person',
+		sql: 'ALTER TABLE dispatch_requests ADD COLUMN loop_needs_person INTEGER'
 	}
 ] as const;
 
@@ -129,7 +152,7 @@ export async function initStateSchema(client: Client): Promise<void> {
 	await client.execute(
 		'CREATE INDEX IF NOT EXISTS dispatch_requests_chat ON dispatch_requests (chat_id, created_at) WHERE chat_id IS NOT NULL'
 	);
-	for (const statement of DISPATCH_TURNS_SCHEMA_SQL) {
+	for (const statement of [...DISPATCH_TURNS_SCHEMA_SQL, ...DISPATCH_ITERATIONS_SCHEMA_SQL]) {
 		await client.execute(statement);
 	}
 }
@@ -177,6 +200,8 @@ let policy_promise: Promise<DispatchPolicyStore> | undefined;
 let backup_promise: Promise<BackupStore> | undefined;
 let todo_promise: Promise<TodoStore> | undefined;
 let mate_promise: Promise<MateStore> | undefined;
+let relay_audit_promise: Promise<TerminalRelayAuditStore> | undefined;
+let automation_promise: Promise<AutomationStore> | undefined;
 let state_ok = false;
 
 async function openStateClient(): Promise<Client> {
@@ -199,6 +224,8 @@ async function openStateClient(): Promise<Client> {
 			backup_promise = undefined;
 			todo_promise = undefined;
 			mate_promise = undefined;
+			relay_audit_promise = undefined;
+			automation_promise = undefined;
 			throw error;
 		});
 	}
@@ -274,6 +301,22 @@ export async function getMateStore(): Promise<MateStore> {
 	return mate_promise;
 }
 
+/** Open (once) the terminal relay's audit store on the same database (ADR-0021). */
+export async function getTerminalRelayAuditStore(): Promise<TerminalRelayAuditStore> {
+	if (relay_audit_promise === undefined) {
+		relay_audit_promise = openStateClient().then((client) => createTerminalRelayAuditStore(client));
+	}
+	return relay_audit_promise;
+}
+
+/** Open (once) the automation store on the same database (ADR-0019 rule 7). */
+export async function getAutomationStore(): Promise<AutomationStore> {
+	if (automation_promise === undefined) {
+		automation_promise = openStateClient().then((client) => createAutomationStore(client));
+	}
+	return automation_promise;
+}
+
 /** Whether the preference database opened successfully at least once. */
 export function stateDbHealthy(): boolean {
 	return state_ok;
@@ -291,6 +334,8 @@ export function setStateStore(store: StateStore | undefined): void {
 		backup_promise = undefined;
 		todo_promise = undefined;
 		mate_promise = undefined;
+		relay_audit_promise = undefined;
+		automation_promise = undefined;
 		state_ok = false;
 	} else {
 		state_ok = true;
@@ -330,4 +375,14 @@ export function setTodoStore(store: TodoStore | undefined): void {
 /** Replace the cached First Mate chat store (tests only). */
 export function setMateStore(store: MateStore | undefined): void {
 	mate_promise = store === undefined ? undefined : Promise.resolve(store);
+}
+
+/** Replace the cached terminal relay audit store (tests only). */
+export function setTerminalRelayAuditStore(store: TerminalRelayAuditStore | undefined): void {
+	relay_audit_promise = store === undefined ? undefined : Promise.resolve(store);
+}
+
+/** Replace the cached automation store (tests only). */
+export function setAutomationStore(store: AutomationStore | undefined): void {
+	automation_promise = store === undefined ? undefined : Promise.resolve(store);
 }

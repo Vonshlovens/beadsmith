@@ -4,6 +4,7 @@ import { ProjectDiscoveryError } from './discovery.js';
 import { DoltError, isDoltConnectionError } from './dolt/client.js';
 import { DispatchError } from './dispatch/types.js';
 import { UnsupportedSchemaError } from './dolt/schema.js';
+import { UnderclassError } from './underclass/client.js';
 import type { ApiErrorBody, ApiErrorCode, DoltFailureKind } from '#lib/types.js';
 
 /**
@@ -361,6 +362,9 @@ export function safeError(error: unknown, fallback: ApiErrorCode = 'unavailable'
 	}
 	if (error instanceof UnsupportedSchemaError) {
 		return { code: 'unavailable', message: error.message };
+	}
+	if (error instanceof UnderclassError) {
+		return { code: 'unavailable', message: error.message, failure_kind: error.kind };
 	}
 	if (error instanceof DoltError) {
 		return { code: 'dolt_error', message: 'Remote Dolt query failed.' };

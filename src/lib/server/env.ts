@@ -1,4 +1,8 @@
-import type { DispatchProviderError, DispatchProviderId } from '#lib/types.js';
+import type {
+	DispatchProviderError,
+	DispatchProviderId,
+	UnderclassConfigError
+} from '#lib/types.js';
 import { MATE_RUNNER_IDS, type MateRunnerId } from '#lib/mate.js';
 import { normalizeCloudflareAccessIssuer } from './cloudflare-access.js';
 import {
@@ -110,6 +114,22 @@ export interface ServerEnv {
 	 * per `BDX_CREW_LAUNCH_WINDOW_MINUTES` (default 10).
 	 */
 	crew_launch_limit: { count: number; window_minutes: number };
+	/**
+	 * Underclass's admin API, read by the console (ADR-0022 rule 4): its
+	 * origin (`BDX_UNDERCLASS_URL`) and the path of its UI token
+	 * (`BDX_UNDERCLASS_UI_TOKEN_FILE`). Absent unless both are set and the URL
+	 * is usable; the model pool console is then off.
+	 */
+	underclass?: UnderclassSettings;
+	/** Why Underclass is off although one of its settings is present. */
+	underclass_error?: UnderclassConfigError;
+}
+
+/** Where the console reads the model pool. A path, never the token itself. */
+export interface UnderclassSettings {
+	/** An `https://` origin (or `http://` on loopback, for development), no path. */
+	origin: string;
+	ui_token_file: string;
 }
 
 /** First Mate chats in E2B sandboxes: one sandbox per chat (docs/sand-e2b.md). */
@@ -140,6 +160,27 @@ export function parseWebhookUrl(raw: string | undefined): string | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * Underclass settings. The URL must be a bare origin: the client appends
+ * only its own fixed `/admin/api/...` routes, so a configured path could
+ * only point those routes somewhere unintended. Plain HTTP is accepted on
+ * loopback only, so the bearer token never crosses a network unencrypted.
+ * @param source Environment to read.
+ */
+export function resolveUnderclass(source: NodeJS.ProcessEnv): {
+	underclass?: UnderclassSettings;
+	error?: ServerEnv['underclass_error'];
+} {
+	const raw = source.BDX_UNDERCLASS_URL?.trim() ?? '';
+	const ui_token_file = source.BDX_UNDERCLASS_UI_TOKEN_FILE?.trim() ?? '';
+	if (raw === '' && ui_token_file === '') return {};
+	if (raw === '') return { error: 'url_missing' };
+	const url = parseWebhookUrl(raw);
+	if (url === undefined || new URL(url).pathname !== '/') return { error: 'url_invalid' };
+	if (ui_token_file === '') return { error: 'token_file_missing' };
+	return { underclass: { origin: new URL(url).origin, ui_token_file } };
 }
 
 /**
@@ -532,6 +573,7 @@ export function readEnv(source: NodeJS.ProcessEnv = process.env): ServerEnv {
 	const tackle_repositories = loadTackleRepositoriesFromEnv(source);
 	const dispatch = resolveDispatchProvider(source);
 	const mate_runner = resolveMateRunners(source, resolveStateDir(source));
+	const underclass = resolveUnderclass(source);
 
 	return {
 		dolt_host,
@@ -588,7 +630,9 @@ export function readEnv(source: NodeJS.ProcessEnv = process.env): ServerEnv {
 		crew_launch_limit: {
 			count: parsePositiveInt(source.BDX_CREW_LAUNCH_LIMIT, 10),
 			window_minutes: parsePositiveInt(source.BDX_CREW_LAUNCH_WINDOW_MINUTES, 10)
-		}
+		},
+		underclass: underclass.underclass,
+		underclass_error: underclass.error
 	};
 }
 

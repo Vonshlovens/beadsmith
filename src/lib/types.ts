@@ -2,6 +2,7 @@
  * Wire types shared by server and client. Mirrors `docs/contract.md` §Wire types.
  * This file must stay free of runtime code.
  */
+import type { RalphHarness, RalphIterationOutcome, RalphMode, RalphStopReason } from './ralph.js';
 
 /** Every project exposed by the web service is a remote Dolt database. */
 export type ProjectState = 'remote';
@@ -178,6 +179,16 @@ export interface DispatchCapabilities {
 	follow_up: boolean;
 	/** Can stop a run in flight. */
 	cancel: boolean;
+	/**
+	 * Runs ralph loops (ADR-0019 rule 1): its sandboxes have ralph installed.
+	 * A loop launch on a provider without it is refused before anything starts.
+	 */
+	loop: boolean;
+	/**
+	 * Admins can open its missions' agent terminals (ADR-0021 rule 4): the
+	 * provider implements `attachTerminal`.
+	 */
+	terminal: boolean;
 }
 
 /** Public GitHub checkout shown on the operator console. Not a secret. */
@@ -247,6 +258,106 @@ export interface ConsoleSnapshot {
 	access: ConsoleAccess;
 }
 
+/** One quota window of a pooled account: Claude's 5h/7d windows or Codex's primary/secondary. */
+export interface ModelPoolWindow {
+	name: 'five_hour' | 'seven_day' | 'seven_day_fable' | 'primary' | 'secondary';
+	/** Share of the window used, 0 to 1 (can exceed 1 briefly); null when not reported. */
+	used_fraction: number | null;
+	resets_at: string | null;
+	window_seconds: number | null;
+}
+
+/** Request counters as Underclass keeps them; `unmeasured` succeeded without reported usage. */
+export interface ModelPoolCounters {
+	attempts: number;
+	unmeasured: number;
+	input_tokens: number;
+	output_tokens: number;
+}
+
+/** One pooled subscription. `label` is its email: admins only, never logged. */
+export interface ModelPoolAccount {
+	id: string;
+	label: string;
+	backend: 'claude' | 'codex' | 'copilot';
+	plan: string | null;
+	status: 'healthy' | 'cooling' | 'auth_error' | 'disabled';
+	/** Out of rotation until then; null unless cooling. */
+	cooling_until: string | null;
+	in_flight: number;
+	sticky_sessions: number;
+	month: ModelPoolCounters;
+	windows: ModelPoolWindow[];
+	/** Rate-limit reset credits the subscription has banked; null when not reported. */
+	banked_resets: number | null;
+	quota_observed_at: string | null;
+}
+
+/** One recent upstream attempt. */
+export interface ModelPoolRequest {
+	at: string;
+	model: string;
+	backend: string | null;
+	account_label: string | null;
+	status: number;
+	duration_ms: number;
+	/** How a streamed body ended (`completed`, `failed`, ...). */
+	outcome: string | null;
+	/** Sanitized upstream error code for a failed attempt. */
+	error_code: string | null;
+}
+
+/** Why the Underclass settings are unusable although one of them is set. */
+export type UnderclassConfigError = 'url_invalid' | 'token_file_missing' | 'url_missing';
+
+/** The console's view of the Underclass model pool (ADR-0022). */
+export interface ModelPoolSnapshot {
+	observed_at: string;
+	month_start: string;
+	accounts: ModelPoolAccount[];
+	in_flight: number;
+	month: ModelPoolCounters;
+	last_minute: ModelPoolCounters;
+	/** Requests per minute, oldest first, as Underclass's monitor reports them. */
+	minute_bins: number[];
+	month_by_model: {
+		model: string | null;
+		requests: number;
+		unmeasured: number;
+		input_tokens: number;
+		output_tokens: number;
+	}[];
+	/** The last 24 hours: totals, outcomes, upstream events and hourly buckets. */
+	day: {
+		from: string;
+		to: string;
+		requests: number;
+		attempts: number;
+		input_tokens: number;
+		output_tokens: number;
+		peak_concurrency: number;
+		outcomes: Record<string, number>;
+		events: Record<string, number>;
+		hours: {
+			start: string;
+			requests: number;
+			attempts: number;
+			input_tokens: number;
+			output_tokens: number;
+		}[];
+	};
+	recent: ModelPoolRequest[];
+}
+
+/**
+ * `GET /api/console/model-pool`. Off unless both Underclass settings are
+ * present; `config_error` names the problem when only one is, or the URL is
+ * unusable. Upstream failures are an error response with a `failure_kind`.
+ */
+export type ModelPoolResponse =
+	| { configured: false; config_error?: UnderclassConfigError }
+	| { configured: true; pool: ModelPoolSnapshot };
+
 export type ApiErrorCode =
 	| 'bad_request'
 	| 'unauthorized'
@@ -291,8 +402,11 @@ export type DependencyType = 'blocks' | 'related' | 'parent-child' | 'discovered
 /** Stored UI theme preference (settings key `ui.theme`). */
 export type ThemePreference = 'system' | 'light' | 'dark';
 
-/** Lifecycle intent the control plane may enqueue for an agent. */
-export type DispatchOperation = 'file' | 'tackle' | 'comment' | 'discuss';
+/**
+ * Lifecycle intent the control plane may enqueue for an agent. `loop` runs a
+ * multi-iteration ralph loop as one mission (ADR-0019).
+ */
+export type DispatchOperation = 'file' | 'tackle' | 'comment' | 'discuss' | 'loop';
 
 /**
  * What a `discuss` mission asks of the agent: talk the issue through, rewrite
@@ -325,6 +439,55 @@ export interface DispatchRequest {
 	created_at: string;
 	updated_at: string;
 	error_message?: string;
+	/** Present on `loop` missions. */
+	loop?: DispatchLoop;
+}
+
+/**
+ * A loop mission's flags and, once it has ended, why (ADR-0019 rule 5). The
+ * `run` prompt is not here: like a Tackle description it stays on the record.
+ */
+export interface DispatchLoop {
+	mode: RalphMode;
+	/** The bead it works on; absent = the project's whole plan. */
+	issue_id?: string;
+	harness?: RalphHarness;
+	model?: string;
+	effort?: string;
+	max_iterations?: number;
+	iteration_timeout_minutes?: number;
+	/** Why the current run ended; absent while it runs or when ralph recorded none. */
+	stop_reason?: RalphStopReason;
+	/** The ended run asks a person to look (ralph's stop reason or report). */
+	needs_person?: boolean;
+}
+
+/**
+ * One finished loop iteration as Beadsmith keeps it (ADR-0019 rule 5):
+ * numbers and a commit range only, never the agent's words or errors.
+ */
+export interface LoopIteration {
+	/** The mission's run it belongs to; a restarted loop is a new run. */
+	run_id: string;
+	iteration: number;
+	outcome: RalphIterationOutcome;
+	started_at: string;
+	finished_at: string;
+	duration_ms: number;
+	head_before: string | null;
+	head_after: string | null;
+	input_tokens: number;
+	output_tokens: number;
+	cost_usd: number | null;
+	/** null: the project has no validation commands, or they did not run. */
+	validate_ok: boolean | null;
+	/** Open plan items after the iteration; null when there is no plan. */
+	plan_open: number | null;
+}
+
+/** GET /api/projects/:id/dispatch/:requestId/iterations. */
+export interface LoopIterationsResponse {
+	iterations: LoopIteration[];
 }
 
 /**

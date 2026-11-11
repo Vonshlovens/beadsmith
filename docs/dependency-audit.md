@@ -23,9 +23,10 @@ override: that also bumps every unrelated caret-range package.
 
 ## Direct pins
 
-| Package     | Range     | Why                                                                                                                                                                  |
-| ----------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dompurify` | `^3.4.13` | Direct sanitizer for issue markdown (`src/lib/client/markdown.ts`). 3.4.12 and earlier are GHSA-55q2-fjhq-7xh7 (IN_PLACE hook XSS). Resolved lock version is 3.4.17. |
+| Package                            | Range             | Why                                                                                                                                                                                                                           |
+| ---------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@xterm/xterm`, `@xterm/addon-fit` | `6.0.0`, `0.11.0` | The admin terminal view (`src/lib/components/terminal-view.svelte`) feeds them raw bytes from an agent's terminal, so a new release is a reviewed bump rather than a caret drift. Loaded only when an admin opens a terminal. |
+| `dompurify`                        | `^3.4.13`         | Direct sanitizer for issue markdown (`src/lib/client/markdown.ts`). 3.4.12 and earlier are GHSA-55q2-fjhq-7xh7 (IN_PLACE hook XSS). Resolved lock version is 3.4.17.                                                          |
 
 ## Overrides (`pnpm-workspace.yaml`)
 

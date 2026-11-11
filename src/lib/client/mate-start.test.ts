@@ -113,8 +113,8 @@ describe('missionsNeedingYou', () => {
 
 describe('runsOnNote', () => {
 	const runners = [
-		{ id: 'remote' as const, label: 'forge' },
-		{ id: 'e2b' as const, label: 'Sand' }
+		{ id: 'remote' as const, label: 'forge', terminal: false },
+		{ id: 'e2b' as const, label: 'Sand', terminal: true }
 	];
 
 	it('is null without a runner', () => {

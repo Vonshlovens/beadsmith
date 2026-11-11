@@ -110,7 +110,14 @@ without tokens, credentials or full network configuration.
 
    It is named `beadsmith-agent` unless you pass a name (then set
    `BDX_E2B_TEMPLATE`). Rebuild after changing
-   [`sandbox/e2b/`](../sandbox/e2b/); running sandboxes keep their build.
+   [`sandbox/e2b/`](../sandbox/e2b/),
+   [`src/lib/server/e2b/image.ts`](../src/lib/server/e2b/image.ts), the hc
+   pin in [`nix/herdr-core.json`](../nix/herdr-core.json) or the ralph pin
+   in [`nix/ralph.json`](../nix/ralph.json); running sandboxes keep their
+   build. A template without ralph fails loop missions with a message
+   saying to rebuild. **Rebuild now if your template predates hc** (see
+   [Terminals](#terminals-hc)): the current `beadsmith-run` starts an hc core
+   and stops with "could not start its terminal server" on an older build.
 
 3. Write one model credential to a file: an Anthropic API key
    (`BDX_E2B_ANTHROPIC_API_KEY_FILE`) or a Claude subscription token from
@@ -249,11 +256,122 @@ screen shows **Runs on**.
 | `BDX_E2B_MAX_RUN_MINUTES`                     | Dispatch: a run's time limit. Default 55 (E2B's free plan stops a sandbox after an hour).                                                                         |
 | `BDX_E2B_IDLE_MINUTES`                        | Dispatch: how long a finished mission waits for a follow-up before pausing. Default 10.                                                                           |
 | `BDX_E2B_MATE_IDLE_MINUTES`                   | Chats: how long a quiet chat's sandbox stays up before pausing. Default 15.                                                                                       |
-| `BDX_E2B_MATE_MAX_SESSIONS`                   | Chats: live chat processes at once; idle ones are stopped to make room. Default 3.                                                                                |
+| `BDX_E2B_MATE_MAX_SESSIONS`                   | Chats: live chat CLIs at once; idle ones are stopped to make room. Default 3.                                                                                     |
 
 Secrets are read when used and never stored in `state.db`, logged or sent to
 the browser. A missing required setting leaves that use of Sand inactive, and
 the console says so (`E2B settings are incomplete`).
+
+## Terminals (hc)
+
+Missions and chats run interactive Claude Code in an
+[hc](https://github.com/herdrdev/herdr-core) terminal
+([ADR-0021](../specs/decisions/0021-hc-terminal-runtime.md)). The template
+carries what the terminals need:
+
+- `hc`, the version and `linux-x86_64` SHA-256 pinned in
+  [`nix/herdr-core.json`](../nix/herdr-core.json) (the same file the Nix
+  overlay reads for the forge guest). The build downloads the release
+  tarball and refuses it unless the hash matches. Nothing in a sandbox runs
+  `hc update`; a bump is a reviewed change to the pin, then a rebuild.
+- `~/.config/herdr-core/config.toml` with `notes = false`, so hc never types
+  into an agent on its own.
+- Claude Code's first-run answers (onboarding, folder trust for
+  `~/.beadsmith/work` and `~/mate`, the placeholder API key, the
+  bypass-permissions warning), from
+  [`src/lib/server/e2b/image.ts`](../src/lib/server/e2b/image.ts), so a
+  launch reaches the prompt without a keypress.
+- `beadsmith-hc connect`
+  ([`sandbox/e2b/beadsmith-hc.cjs`](../sandbox/e2b/beadsmith-hc.cjs)): `hc
+connect` with its binary frames carried as base64 lines, because the E2B
+  SDK hands command output to Beadsmith as text.
+
+`beadsmith-run` starts the core (`hc server start`) once setup is done, so
+terminals inherit the sandbox's Dolt forward and environment; a setup that
+cannot start it fails with exit code 14. The core runs as the sandbox's
+user on hc's default Unix socket, in a 0700 directory. No port is opened and
+nothing outside the sandbox speaks hc except Beadsmith, through the E2B
+process channel (ADR-0021 rule 1).
+
+Live check after a rebuild (not yet run):
+
+1. Start a Sand mission. In the sandbox (E2B CLI or dashboard terminal), run
+   `hc --version` (the pinned version), `hc server status` (a core with
+   uptime); the socket's directory (`$XDG_RUNTIME_DIR/herdr-core`,
+   `/run/user/$(id -u)/herdr-core` or `~/.local/state/herdr-core/default`,
+   whichever exists) is mode `drwx------`, and `ss -ltnp` lists no port
+   owned by hc.
+2. In the mission's checkout, `hc run --bg claude` and then `hc get <t>`:
+   the terminal reaches `idle` with app `claude-code` (Claude Code reports
+   OSC 7501) and never `blocked` on a dialog. `hc ls` shows the terminal;
+   `hc kill <t>` ends it.
+3. From the same sandbox, `printf '' | beadsmith-hc connect; echo $?` exits
+   0, and `echo 'not base64!' | beadsmith-hc connect; echo $?` exits 2.
+
+4. Start a Tackle mission and watch its thread: the live view shows tool
+   calls and text, the run ends `succeeded` with the agent's summary (and PR
+   link), and `hc ls` in the sandbox lists one live terminal labelled
+   `beadsmith-session=<the sandbox's beadsmith_session metadata>` that stays
+   up after the turn. `~/.beadsmith/runs/r1/` holds `ready`, `claim/`,
+   `turn.json` and `result.json`.
+5. Send a follow-up: `hc ls` still shows the same terminal (no new one), and
+   the reply arrives in the thread. Let the sandbox pause (idle timeout),
+   send another: it resumes with the same terminal.
+6. Cancel a working run: the terminal finishes (`hc ls --all`), the thread
+   says cancelled, and the next follow-up starts a new terminal running
+   `claude --resume <session id>` that remembers the conversation.
+
+Steps 4 to 6 are unit-tested against a fake hc core and a fake sandbox
+([`e2b-provider.test.ts`](../src/lib/server/dispatch/e2b-provider.test.ts));
+they have not been run against E2B yet.
+
+### Admin terminal relay
+
+An admin can watch a Sand mission's or chat's agent terminal, or take it
+over, through `POST /api/console/terminals`
+([contract](contract.md#http-and-ui-boundary), ADR-0021 rule 4). Beadsmith opens a
+fresh `beadsmith-hc connect` over the E2B process channel for each relay and
+calls `terminal.attach` on the agent's terminal (the mission's or chat's
+`beadsmith-session` label, or a loop's `ralph-loop`), `observe` when
+watching. Nothing in the sandbox changes for it. Watching never resumes a
+paused sandbox; taking over does. Every attach is a row in
+`terminal_relay_sessions` in `state.db`; the bytes are not kept anywhere.
+
+In the app, admins open it from the **Terminal** strip in a Sand mission's
+thread or a Sand chat
+([`terminal-view.svelte`](../src/lib/components/terminal-view.svelte); keys
+in [keyboard.md](keyboard.md#agent-terminal)). The strip appears only where
+the runner relays a terminal (the `terminal` capability on dispatch
+providers and chat runners).
+
+Operator check (not yet run against E2B; the routes are unit-tested against
+a fake hc core in
+[`server.test.ts`](../src/routes/api/console/terminals/server.test.ts), and
+the browser side's states and reconnects against a fake server in
+[`terminal-relay.test.ts`](../src/lib/client/terminal-relay.test.ts)):
+
+1. With a Sand mission running, as an admin in the browser's devtools
+   console on Beadsmith, `fetch('/api/console/terminals', { method: 'POST',
+headers: { 'content-type': 'application/json', 'x-bdx-request': '1' },
+body: JSON.stringify({ mission: '<dq_ id>', mode: 'watch', cols: 120,
+rows: 40 }) })` and read the body: an `open` frame, then `output` frames
+   whose base64 decodes to Claude Code's screen. Typing to the relay id
+   answers 409.
+2. The same with `mode: 'take_over'`, then post `{ data: btoa('/help\r') }`
+   to `/api/console/terminals/<relay>`: Claude Code shows its help in the
+   stream and in `hc read <terminal>` inside the sandbox.
+3. Let the sandbox pause and watch again: 409 saying it is paused, and the
+   sandbox stays paused in E2B's dashboard.
+4. `SELECT * FROM terminal_relay_sessions ORDER BY started_at DESC` in
+   `state.db` lists both attaches with your email, their mode, and an end
+   time once each stream closed.
+5. In the app, open the mission's thread: **Watch** shows Claude Code's
+   screen and follows its size; **Take over…** asks first, then resizes it
+   to the box and takes keys (Esc interrupts the agent, Shift+Esc leaves the
+   terminal); **Hand back** returns to watching. Switch themes and narrow
+   the window below 640px: the screen stays dark and Take over disappears.
+   Stop the network for a few seconds: the strip says Reconnecting… and
+   comes back.
 
 ## How a mission runs
 
@@ -267,43 +385,129 @@ the console says so (`E2B settings are incomplete`).
    [`beadsmith-run`](../sandbox/e2b/beadsmith-run) with a fresh Tailscale
    key. The script joins the tailnet, opens the Dolt forward, clones the
    checkout, installs any skill the checkout lacks under `.agents/skills/`
-   (excluded from git) and runs `claude -p --output-format stream-json`.
-3. Beadsmith reads the run's files for status, and tails its event log for
-   the thread's live view (text, thinking and tool names only; never tool
-   inputs or output).
-4. When the run ends, the sandbox's timeout drops to the idle time, then it
-   pauses. A follow-up resumes it, refreshes the GitHub token and starts the
-   next run with `--continue`. Cancel stops the run's process group.
-5. A run still working at the time limit pauses with the sandbox and is
-   reported failed. A follow-up resumes the sandbox, stops that run and
-   continues.
+   (excluded from git), starts the sandbox's hc core and writes `ready`.
+3. The first status read or live stream that sees `ready` claims the start
+   (`mkdir claim`, atomic, so two requests never send the prompt twice).
+   It connects to hc through `beadsmith-hc connect`, launches Claude Code in
+   a terminal (`claude --session-id <id>`, the id kept in the sandbox's
+   `beadsmith_session` metadata), sends the prompt with `terminal.send` and
+   writes the turn's start (hc's turn counter and the transcript line) to
+   `turn.json`. Nobody needs to stay connected: the CLI works on in its
+   terminal.
+4. Status reads and the thread's live view attach the session core
+   ([`src/lib/agent-session/`](../src/lib/agent-session/)) to that turn. It
+   reads Claude Code's own transcript with `file.read` (text, thinking and
+   tool names only; never tool inputs or output) and decides the turn is
+   over from hc's turn counter and status. The first to see the end writes
+   `result.json`; later reads use it without touching hc.
+5. When the run ends, the sandbox's timeout drops to the idle time, then it
+   pauses, with the CLI still in its terminal. A follow-up resumes it,
+   refreshes the GitHub token, runs setup again for the tailnet, and sends
+   the next message to the same CLI. If the terminal is gone, it starts
+   `claude --resume <id>` first. Cancel marks the run cancelled and ends the
+   CLI (`terminal.kill`); during setup it stops the setup script instead.
+6. A run still working at the time limit pauses with the sandbox and is
+   reported failed. A follow-up resumes the sandbox, ends that turn's CLI
+   and continues in a resumed one.
+
+## How a loop runs
+
+A loop mission ([ADR-0019](../specs/decisions/0019-ralph-loops-and-automations.md),
+[dispatch API](file-tackle-dispatch.md)) runs
+[ralph](https://github.com/Vonshlovens/von-ralph) in a sandbox of its own.
+The template installs ralph from its public repository at the commit pinned
+in [`nix/ralph.json`](../nix/ralph.json), with its production dependencies
+from its own lockfile; the build fails if the commit does not report the
+pinned version. The checkout must already be a ralph project
+(`.ralph/ralph.toml`) for `build`, `plan` and `reverse`; `run` needs none.
+
+1. Beadsmith creates the sandbox as for a mission, with a write-scoped
+   GitHub token at the egress (every loop mode writes) and E2B told to
+   destroy it, not pause it, on timeout. It writes ralph's command line to
+   `~/.beadsmith/runs/r1/loop.json` and starts `beadsmith-run r1`, the same
+   setup as a mission's. The sandbox's `beadsmith_loop` metadata holds
+   ralph's run name.
+2. The first status read or stream that sees `ready` claims the start and
+   opens two hc terminals in the checkout: `ralph serve --no-web` (named
+   `ralph-serve`, on 127.0.0.1:7420 only) and `ralph <mode> --name … --max …`
+   (named `ralph-loop`), then writes `started`. Both take the hc core's
+   environment, so the loop has the project's Dolt account and the
+   placeholders and nothing else. ralph runs each iteration's agent in hc
+   terminals of its own.
+3. Status reads ask ralph for the run and its iterations with `curl` to
+   loopback over the E2B process channel
+   ([`ralph-transport.ts`](../src/lib/server/e2b/ralph-transport.ts));
+   finished iterations are copied into `state.db`. The live view follows
+   ralph's event stream the same way and maps it onto the thread. If
+   `ralph serve` stops answering, the next read starts it again.
+4. When ralph's run ends, its stop reason (or, without one, the loop
+   terminal's exit code) decides the mission's status, and the report's
+   iteration count, duration and notes for a person become the summary. The
+   result goes to `result.json`, and the sandbox's timeout drops to the idle
+   time, after which E2B destroys it.
+5. Cancel marks the run cancelled, asks ralph to stop now, and ends the loop
+   terminal. A loop takes no follow-up.
+
+A loop still running at `BDX_E2B_MAX_RUN_MINUTES` is destroyed with its
+sandbox and reported failed; anything it had not pushed is lost. Keep the
+iteration limit within the run limit until long loops can pause and resume.
+
+Live check after a rebuild (not yet run; the steps above are unit-tested
+against a fake sandbox, hc core and ralph in
+[`e2b-provider.test.ts`](../src/lib/server/dispatch/e2b-provider.test.ts)
+and [`ralph-transport.test.ts`](../src/lib/server/e2b/ralph-transport.test.ts)):
+
+1. In a fresh sandbox from the template, `ralph --version` prints the pinned
+   version and `/opt/ralph` has no `.git`.
+2. On a project whose Tackle checkout has `.ralph/ralph.toml`, start a
+   `build` loop with `max_iterations` 2 on Sand. In the sandbox, `hc ls`
+   lists `ralph-serve` and `ralph-loop`; `ss -ltnp` shows ralph's port bound
+   to 127.0.0.1 only; `ralph status` shows the run named in the sandbox's
+   `beadsmith_loop` metadata.
+3. The mission thread shows each iteration's text and tool calls live, and
+   the mission's iteration rows fill in as iterations finish.
+4. When the loop ends, the thread shows the stop reason, the mission's
+   status matches it, and the sandbox is gone from E2B after the idle time.
+5. Start another and cancel it mid-iteration: the thread says cancelled,
+   `ralph show <name>` in the sandbox (before it goes) shows an operator
+   stop, and `hc ls --all` shows `ralph-loop` finished.
+6. In the sandbox, `tr '\0' '\n' < /proc/<ralph's pid>/environ` lists the
+   placeholders and `BEADS_DOLT_*`, and no real model key or GitHub token.
 
 ## How a chat runs
 
 The chat runner is the mate runner's own core
 ([`src/lib/mate-runner/`](../src/lib/mate-runner/)) running inside
-Beadsmith, with an E2B spawner instead of SSH. The sandbox is found again by
-the chat's session id. Claude Code runs in `/home/user/mate`. Chat logs live
-under `<state dir>/sand-mate`. Deleting a chat deletes its sandbox; if E2B
-cannot be reached, the chat stays so the delete can be retried.
+Beadsmith, reaching the chat's sandbox over the E2B process channel instead
+of SSH. The sandbox is found again by the chat's session id. Claude Code
+runs interactively in an hc terminal in `/home/user/mate`, driven by the
+session core exactly as on the forge runner
+([first-mate.md](first-mate.md#how-the-runner-runs-a-chat)); `beadsmith-hc
+connect` starts the sandbox's hc core on first use, with the sandbox's
+environment. Chat logs live under `<state dir>/sand-mate`. Deleting a chat
+deletes its sandbox; if E2B cannot be reached, the chat stays so the delete
+can be retried.
 
-On every create and resume, Beadsmith writes First Mate's standing
-instructions (`AGENTS.md`) and the crew tools relay (`.crew/relay.cjs` and
-`.crew/mcp.json`) into that directory, so changing them needs no template
-rebuild. It starts the relay's serve side over the E2B commands API, then
-Claude Code with `--mcp-config`; Claude Code starts the relay's stdio side
-as an MCP server. A tool call travels as a JSON line over a unix socket to
+Whenever Beadsmith connects to a chat's sandbox (the chat's first message,
+or the first after a restart, an eviction or a lost channel), it writes
+First Mate's standing instructions (`AGENTS.md`) and the crew tools relay
+(`.crew/relay.cjs` and `.crew/mcp.json`) into that directory, so changing
+them needs no template rebuild. It ends a Claude Code left from before (it
+was talking to the old relay), starts the relay's serve side over the E2B
+commands API, then launches Claude Code with `--mcp-config` (resuming the
+session when its transcript is there); Claude Code starts the relay's stdio
+side as an MCP server. A tool call travels as a JSON line over a unix socket to
 the serve side, out on its stdout to Beadsmith, and the reply comes back on
 its stdin. Beadsmith runs the call as the chat's owner, looked up from the
 session on every call, so a deleted chat or a banned owner gets nothing. The
-relay is restarted if it exits (five times per chat process) and stopped
-with Claude Code. No token or address in the sandbox reaches Beadsmith any
+relay is restarted if it exits (five times per connection) and stopped
+with the connection. No token or address in the sandbox reaches Beadsmith any
 other way ([ADR-0020](../specs/decisions/0020-first-mate-crew-tools.md)).
 
-E2B errors and the end of Claude Code's stderr, when it exits badly, go to
-Beadsmith's server log with credential shapes stripped; the browser only
-sees a fixed message. Mission sandboxes do the same for a failed run's
-`stderr.log` and `setup.log`.
+E2B and hc errors, and a launch that fails, go to Beadsmith's server log
+with credential shapes stripped; the browser only sees a fixed message (or,
+for a CLI stopped at a first-run prompt, that the image must pre-accept it). Mission sandboxes do the same for a failed setup's
+`setup.log`.
 
 ## Costs and limits
 
@@ -311,7 +515,8 @@ sees a fixed message. Mission sandboxes do the same for a failed run's
   compute and E2B keeps them until they are deleted; whether it charges for
   their storage is not documented. Deleting a chat deletes its sandbox. A
   finished mission's sandbox stays paused (so follow-ups work) until you
-  delete it in E2B's dashboard.
+  delete it in E2B's dashboard. A finished loop's sandbox is destroyed after
+  the idle time.
 - E2B's free plan stops a sandbox after one hour of continuous running;
   pausing resets that. Raise `BDX_E2B_MAX_RUN_MINUTES` only on a plan that
   allows longer.
@@ -340,7 +545,7 @@ Not yet checked:
   rewritten and tools answer again.
 
 A failed setup step shows in the thread by name (joining the tailnet,
-reaching Dolt, cloning). `~/.beadsmith/runs/<run>/setup.log` and
-`stderr.log` in a mission's sandbox, and
+reaching Dolt, cloning, starting hc). `~/.beadsmith/runs/<run>/setup.log` in
+a mission's sandbox, `hc ls --all` and `hc read <terminal>` there, and
 `~/.beadsmith/tailscale/tailscaled.log`, say what went wrong. Open them from
 E2B's dashboard or CLI; the mission's agent id is the sandbox id.

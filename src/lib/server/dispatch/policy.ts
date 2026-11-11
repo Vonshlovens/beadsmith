@@ -21,6 +21,8 @@ export const ELABORATE_NOT_ALLOWED_MESSAGE =
 	'Elaborate changes the issue, so it needs Tackle allowed for this project.';
 export const CLOSE_NOT_ALLOWED_MESSAGE =
 	'Close changes the issue, so it needs Tackle allowed for this project.';
+export const LOOP_NOT_ALLOWED_MESSAGE =
+	'A loop changes issues and code, so it needs Tackle allowed for this project.';
 
 export interface DispatchPolicy {
 	armed: boolean;
@@ -138,7 +140,8 @@ export function dispatchEnabled(key_configured: boolean, armed: boolean): boolea
 /**
  * Whether this operation may proceed after the global arm check. Comment and
  * a plain discussion only talk, so either allow admits them; elaborate and
- * close change the issue the way Tackle does, so they need Tackle.
+ * close change the issue the way Tackle does, so they need Tackle. Every loop
+ * mode writes Beads or code, so a loop needs Tackle too (ADR-0019 rule 5).
  *
  * @param allow - The project's allow row.
  * @param operation - Requested operation.
@@ -152,7 +155,7 @@ export function operationAllowed(
 	if (operation === 'file') {
 		return allow.file;
 	}
-	if (operation === 'tackle') {
+	if (operation === 'tackle' || operation === 'loop') {
 		return allow.tackle;
 	}
 	if (operation === 'discuss' && (intent === 'elaborate' || intent === 'close')) {
@@ -171,6 +174,9 @@ export function deniedOperationMessage(
 	}
 	if (operation === 'tackle') {
 		return TACKLE_NOT_ALLOWED_MESSAGE;
+	}
+	if (operation === 'loop') {
+		return LOOP_NOT_ALLOWED_MESSAGE;
 	}
 	if (operation === 'discuss') {
 		if (intent === 'elaborate') {

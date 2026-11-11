@@ -61,6 +61,8 @@ own license file inside the package.
 | @types/node | 26.6.5 | MIT |
 | @types/trusted-types | 2.0.7 | MIT |
 | @types/ws | 8.18.2 | MIT |
+| @xterm/addon-fit | 0.11.0 | MIT |
+| @xterm/xterm | 6.0.0 | MIT |
 | acorn | 8.19.0 | MIT |
 | aria-query | 5.3.1 | Apache-2.0 |
 | aws-ssl-profiles | 1.1.2 | MIT |

@@ -1,25 +1,33 @@
 #!/usr/bin/env bash
-# One agent run inside a Beadsmith E2B sandbox (docs/sand-e2b.md).
+# Set up one agent run inside a Beadsmith E2B sandbox (docs/sand-e2b.md).
 #
 #   beadsmith-run <run-id>
 #
 # Beadsmith's e2b provider (src/lib/server/dispatch/e2b-provider.ts) writes
 # ~/.beadsmith/runs/<run-id>/prompt and starts this script in the background.
-# The provider reads these files back; keep the names in step with it:
+# It readies the sandbox for the run (tailnet, Dolt forward, checkout, the hc
+# core) and exits. It does not run the agent: Beadsmith starts Claude Code in
+# an hc terminal and sends it the prompt itself (ADR-0021), so a follow-up
+# reaches the same running CLI. The provider reads these files back; keep
+# the names in step with it:
 #
-#   pid          the agent's process (and process group) id
-#   events.jsonl Claude Code's stream-json event log
-#   stderr.log   the agent's stderr (its end goes to Beadsmith's server log on
-#                failure, never to the browser)
-#   started_ms   finished_ms   exit   (exit code; written last)
-#   cancelled    created by the provider before it stops the run
-#   setup.log    this script's own output
+#   pid          this script's process (and process group) id, for a cancel
+#                during setup
+#   started_ms   finished_ms
+#   ready        setup is done and the hc core is up (written last)
+#   exit         setup's exit code, written only when setup failed
+#   cancelled    created by the provider when it stops the run
+#   setup.log    this script's own output (its end goes to Beadsmith's server
+#                log on failure, never to the browser)
+#
+# Beadsmith adds claim/, turn.json and result.json as it starts and follows
+# the run's turn.
 #
 # Environment from the sandbox: BEADSMITH_REPO_URL/_REF, BEADSMITH_TS_TAGS,
 # BEADSMITH_DOLT_TAILNET_HOST/_PORT, BEADS_DOLT_* (the project's own scoped
 # Dolt account) and placeholder ANTHROPIC_API_KEY / GH_TOKEN values, which
 # E2B's egress replaces with the real keys. Per run: BEADSMITH_TS_AUTHKEY (a
-# single-use ephemeral Tailscale key) and BEADSMITH_CONTINUE (1 = follow-up).
+# single-use ephemeral Tailscale key).
 set -uo pipefail
 
 run_id="${1:?usage: beadsmith-run <run-id>}"
@@ -40,8 +48,7 @@ finish() {
 	exit "$1"
 }
 now_ms >"$dir/started_ms"
-touch "$dir/events.jsonl"
-# Until the agent starts, cancel stops this script itself.
+# A cancel during setup stops this script.
 echo "$$" >"$dir/pid"
 
 ts() { tailscale --socket="$ts_sock" "$@"; }
@@ -146,14 +153,25 @@ if [ ! -f .beads/metadata.json ]; then
 	fi
 fi
 
-# --- The agent ----------------------------------------------------------------
-args=(-p --output-format stream-json --verbose --dangerously-skip-permissions)
-[ "${BEADSMITH_CONTINUE:-0}" = "1" ] && args+=(--continue)
+# --- The terminal server (ADR-0021) -------------------------------------------
+# Agents run in hc terminals, which take their environment from the hc core,
+# not from whoever asks for them. Start the core here, after the tailnet, the
+# Dolt forward and the checkout are ready, so it inherits this sandbox's
+# BEADS_DOLT_* account, placeholders and CA settings (the single-use
+# Tailscale key is already unset). Already running (a follow-up, or a resumed
+# sandbox): `hc server start` leaves it as it is. Its own session, so a
+# cancel that stops this run's process group leaves the core and the other
+# runs' terminals alone. The core listens only on its Unix socket in a 0700
+# directory; Beadsmith reaches it through beadsmith-hc over the E2B process
+# channel, never a port (ADR-0021 rule 1).
+if ! setsid -w hc server start --json; then
+	echo "hc server start failed"
+	finish 14
+fi
 
+# --- Ready -------------------------------------------------------------------
+# Beadsmith starts (or, on a follow-up, finds) the agent's terminal once it
+# sees this file. A run cancelled during setup never becomes ready.
 [ -f "$dir/cancelled" ] && finish 130
-# A session of its own, so cancel can stop the agent and everything it started.
-setsid claude "${args[@]}" <"$dir/prompt" >"$dir/events.jsonl" 2>"$dir/stderr.log" &
-agent=$!
-echo "$agent" >"$dir/pid"
-wait "$agent"
-finish $?
+now_ms >"$dir/finished_ms"
+now_ms >"$dir/ready"

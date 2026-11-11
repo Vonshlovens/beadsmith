@@ -63,7 +63,42 @@ reality**. Search `src/` before treating a spec as implemented.
   or inbound path in the sandbox. Beads changes stay delegated to missions,
   which record their chat and report their outcome back to it as a crew
   notice ([ADR-0020](decisions/0020-first-mate-crew-tools.md)).
-- Target, partly shipped (0016, 0018): **agents run in scoped sandboxes**. A beads sandbox
+- Accepted, being implemented: **every agent runs in an hc terminal**
+  (herdr-core) inside its sandbox, as the interactive CLI (Claude Code
+  first), for chats and missions on Sand and forge. Only Beadsmith, or the
+  forge runner, speaks hc, through `hc connect` over the E2B process channel
+  or the runner's SSH; no hc socket or port leaves the sandbox. Members still
+  see sanitized MissionEvents, now derived from the CLI's transcript; admins
+  may watch or take over the raw terminal through an audited console relay
+  that stores no bytes. hc is pinned by version and SHA-256 in one file
+  ([ADR-0021](decisions/0021-hc-terminal-runtime.md)). Sand missions and
+  First Mate chats (on both runners) run this way today, and the relay
+  serves Sand missions and chats, where admins open it from the thread's or
+  chat's terminal view; the forge guest's hc and the forge relay follow.
+- **ralph loops are missions**. A `loop`
+  dispatch runs [ralph](https://github.com/Vonshlovens/von-ralph) in the
+  mission's hc terminal on Sand or forge (pinned by commit, never in the app
+  image); Beadsmith reads iterations and events, steers and stops it through
+  `ralph serve` on the sandbox's loopback over the channel it already holds,
+  under the usual arm, allow and repository map. Sand runs loops today
+  (curl to loopback over the E2B process channel), and admins start one from
+  a project or issue page or the agent dialog; forge and loop controls
+  follow. **Automations** are Beadsmith's: dispatch templates on a cron in
+  `state.db`, fired by an in-process ticker
+  (`src/lib/server/automations/`) through dispatch as the automation on
+  behalf of its creator; ralph's own schedules are not used. The ticker
+  ships; the automations page and its API follow
+  ([ADR-0019](decisions/0019-ralph-loops-and-automations.md)).
+- **Underclass is the model gateway** on forge: a subscription pool on host
+  loopback that guests reach only through the host's key-injecting filter,
+  so no guest holds the proxy key or can reach Underclass's UI or admin API.
+  Sand keeps E2B's egress injection and does not use the pool. Accepted,
+  being implemented: admins see and tend the pool in the console, which
+  calls a fixed allowlist of Underclass's admin API server-side over tailnet
+  HTTPS with the UI token from a file; the token never reaches the browser
+  or `state.db`
+  ([ADR-0022](decisions/0022-underclass-model-gateway.md)).
+- Target, partly shipped (0016, 0018, 0021): **agents run in scoped sandboxes**. A beads sandbox
   (the orchestrator) holds per-project Dolt grants and asks for repository
   work through dispatch; a repo sandbox reaches one repository. Model and
   repository keys stay outside sandboxes, behind a proxy. Beadsmith may
@@ -145,7 +180,10 @@ Follow the `architecture` skill at
 | [0016-first-mate-worker-runtime.md](decisions/0016-first-mate-worker-runtime.md) | [`fleet/hosts/forge/runtime.nix`](../fleet/hosts/forge/runtime.nix) | Persistent guest Claude Code, host model proxy and signed runner |
 | [0017-native-desktop-client.md](decisions/0017-native-desktop-client.md) | [`desktop/`](../desktop/README.md) | Native Rune client reading Dolt directly with the web app's read contract; macOS bundle and release workflow |
 | [0018-sand-e2b-sandboxes.md](decisions/0018-sand-e2b-sandboxes.md) | [`src/lib/server/e2b/`](../src/lib/server/e2b/), [`src/lib/server/dispatch/e2b-provider.ts`](../src/lib/server/dispatch/e2b-provider.ts), [`src/lib/server/mate/e2b-runner.ts`](../src/lib/server/mate/e2b-runner.ts), [`sandbox/e2b/`](../sandbox/e2b/) | Sand: E2B sandboxes for missions and chats; several runners, picked in First Mate |
+| [0019-ralph-loops-and-automations.md](decisions/0019-ralph-loops-and-automations.md) | Partly: [`src/lib/server/dispatch/`](../src/lib/server/dispatch/), [`src/lib/server/automations/`](../src/lib/server/automations/), [`sandbox/e2b/`](../sandbox/e2b/), [`nix/ralph.json`](../nix/ralph.json) | Loop missions running ralph in an hc terminal; Beadsmith-owned automations |
 | [0020-first-mate-crew-tools.md](decisions/0020-first-mate-crew-tools.md) | [`src/lib/server/crew/`](../src/lib/server/crew/) | Crew tools: one transport-free MCP tool module for First Mate chats (read tools, todo writes and mission launches as the chat's owner), relayed into Sand chats by [`src/lib/server/mate/crew-bridge.ts`](../src/lib/server/mate/crew-bridge.ts) |
+| [0021-hc-terminal-runtime.md](decisions/0021-hc-terminal-runtime.md) | Partly: the hc client is in [`src/lib/hc/`](../src/lib/hc/), the session core in [`src/lib/agent-session/`](../src/lib/agent-session/), and Sand missions ([`src/lib/server/dispatch/e2b-provider.ts`](../src/lib/server/dispatch/e2b-provider.ts)) and First Mate chats ([`src/lib/mate-runner/`](../src/lib/mate-runner/)) run on it; the admin relay for Sand is in [`src/lib/server/terminal-relay/`](../src/lib/server/terminal-relay/); the forge guest has no hc yet and forge chats have no relay | hc terminal runtime for every agent: `hc connect` over the sandbox's own channel, transcript-derived MissionEvents, admin relay with audited attach and take-over |
+| [0022-underclass-model-gateway.md](decisions/0022-underclass-model-gateway.md) | [`fleet/hosts/forge/runtime.nix`](../fleet/hosts/forge/runtime.nix), [`fleet/hosts/forge/model-proxy.mjs`](../fleet/hosts/forge/model-proxy.mjs); the console client is planned | Underclass pool on forge behind the guest filter; admin console reads its API server-side |
 
 ## UI map
 

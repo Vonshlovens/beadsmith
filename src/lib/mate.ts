@@ -21,6 +21,8 @@ export type MateRunnerId = (typeof MATE_RUNNER_IDS)[number];
 export interface MateRunnerInfo {
 	id: MateRunnerId;
 	label: string;
+	/** Admins can open its chats' agent terminals (ADR-0021 rule 4). */
+	terminal: boolean;
 }
 
 /** One chat as listed. */

@@ -13,55 +13,16 @@ import type {
 	SandboxRef
 } from '../e2b/sandbox.js';
 import { OAUTH_PLACEHOLDER } from '../e2b/sandbox.js';
-import { CREW_MCP_CONFIG_PATH, CREW_RELAY_PATH, MATE_WORKDIR } from './crew-bridge.js';
+import { CLAUDE_CONFIG_DIR, MATE_WORKDIR } from '../e2b/image.js';
+import { SESSION_LABEL } from '#lib/agent-session/session.js';
+import { connectHc } from '#lib/hc/client.js';
+import { FakeClaude } from '#lib/test/fake-claude.js';
+import type { FakeTerminal } from '#lib/test/fake-hc.js';
+import { CREW_MCP_CONFIG_PATH, CREW_RELAY_PATH } from './crew-bridge.js';
 import { createE2bMateRunner } from './e2b-runner.js';
 
 const SESSION = '0e7c1a52-3f0b-4b7e-9a51-2a3c4d5e6f70';
 const TOKEN = 'sk-ant-oat01-REAL-subscription-token';
-
-/** A Claude Code stand-in: answers each stdin message with one turn. */
-class FakeClaude implements InteractiveCommand {
-	stdin: string[] = [];
-	closed = false;
-	killed = false;
-	#exit: (code: number | null) => void = () => undefined;
-	readonly #done = new Promise<number | null>((resolve) => (this.#exit = resolve));
-
-	constructor(
-		readonly command: string,
-		readonly cwd: string | undefined,
-		private readonly out: (chunk: string) => void,
-		readonly err: (chunk: string) => void
-	) {
-		out(`${JSON.stringify({ type: 'system', subtype: 'init', session_id: SESSION })}\n`);
-	}
-
-	async sendStdin(data: string) {
-		this.stdin.push(data);
-		const reply = [
-			{ type: 'assistant', message: { content: [{ type: 'text', text: 'Aye, captain.' }] } },
-			{ type: 'result', subtype: 'success', is_error: false, result: 'Aye, captain.' }
-		];
-		// Split mid-line, as a real stream would.
-		const text = reply.map((line) => `${JSON.stringify(line)}\n`).join('');
-		this.out(text.slice(0, 11));
-		this.out(text.slice(11));
-	}
-	async closeStdin() {
-		this.closed = true;
-		this.#exit(0);
-	}
-	async kill() {
-		this.killed = true;
-		this.#exit(null);
-	}
-	exit(code: number) {
-		this.#exit(code);
-	}
-	wait() {
-		return this.#done;
-	}
-}
 
 /** The crew relay's serve side: frames out on stdout, replies on stdin. */
 class FakeRelay implements InteractiveCommand {
@@ -86,12 +47,13 @@ class FakeRelay implements InteractiveCommand {
 	}
 }
 
+/** A chat sandbox: its own hc core with a fake Claude Code, and the crew relay. */
 class FakeChatSandbox implements SandboxRef {
-	commands: FakeClaude[] = [];
+	readonly claude = new FakeClaude({ config_dir: CLAUDE_CONFIG_DIR });
 	relays: FakeRelay[] = [];
 	/** Every file written, in order, as [path, content]. */
 	writes: [string, string][] = [];
-	/** Interactive commands in start order: 'relay' or 'claude'. */
+	/** What started in order: 'relay', or 'hc' for each connection to the core. */
 	started: string[] = [];
 	execs: string[] = [];
 	timeouts: number[] = [];
@@ -99,7 +61,16 @@ class FakeChatSandbox implements SandboxRef {
 	constructor(
 		readonly id: string,
 		readonly metadata: Record<string, string>
-	) {}
+	) {
+		this.claude.onMessage = (t) => {
+			this.claude.say('Aye, captain.', t);
+			this.claude.endTurn(t);
+		};
+	}
+	/** Claude Code terminals in launch order. */
+	get terminals(): FakeTerminal[] {
+		return [...this.claude.core.terminals.values()];
+	}
 	async exec(command: string) {
 		this.execs.push(command);
 		return { exit_code: 0, stdout: '' };
@@ -112,22 +83,18 @@ class FakeChatSandbox implements SandboxRef {
 			on_stderr: (chunk: string) => void;
 		}
 	) {
-		if (command.includes(CREW_RELAY_PATH)) {
-			const relay = new FakeRelay(command, options.on_stdout);
-			this.relays.push(relay);
-			this.started.push('relay');
-			return relay;
-		}
-		const claude = new FakeClaude(command, options.cwd, options.on_stdout, options.on_stderr);
-		this.commands.push(claude);
-		this.started.push('claude');
-		return claude;
+		if (!command.includes(CREW_RELAY_PATH)) throw new Error(`unexpected command ${command}`);
+		const relay = new FakeRelay(command, options.on_stdout);
+		this.relays.push(relay);
+		this.started.push('relay');
+		return relay;
 	}
 	async setTimeout(ms: number) {
 		this.timeouts.push(ms);
 	}
 	async kill() {
 		this.killed = true;
+		this.claude.core.disconnectAll();
 	}
 	async start() {}
 	async follow() {}
@@ -154,7 +121,14 @@ const OWNER: CrewContext = {
 	scope: null
 };
 
-function setup(options: { create_error?: Error; sandboxes?: Map<string, FakeChatSandbox> } = {}) {
+function setup(
+	options: {
+		create_error?: Error;
+		sandboxes?: Map<string, FakeChatSandbox>;
+		/** What each new sandbox's Claude Code reports at launch. */
+		launch_status?: string;
+	} = {}
+) {
 	const sandboxes = options.sandboxes ?? new Map<string, FakeChatSandbox>();
 	const logs: string[] = [];
 	const contexts: string[] = [];
@@ -165,6 +139,9 @@ function setup(options: { create_error?: Error; sandboxes?: Map<string, FakeChat
 			if (options.create_error !== undefined) throw options.create_error;
 			created.push(input);
 			const sandbox = new FakeChatSandbox(`chat-sbx${sandboxes.size + 1}`, input.metadata);
+			if (options.launch_status !== undefined) {
+				sandbox.claude.launch_status = options.launch_status;
+			}
 			sandboxes.set(sandbox.id, sandbox);
 			return sandbox;
 		},
@@ -204,6 +181,13 @@ function setup(options: { create_error?: Error; sandboxes?: Map<string, FakeChat
 		driver,
 		read_secret: async () => TOKEN,
 		now: () => (now += 61_000),
+		connect_hc: async (sandbox) => {
+			const fake = sandbox as FakeChatSandbox;
+			if (fake.killed) throw new Error('gone');
+			fake.started.push('hc');
+			return connectHc(fake.claude.core.connect());
+		},
+		timing: { poll_ms: 5, startup_ms: 500, settle_ms: 50 },
 		crew: {
 			handler: createCrewMcpHandler({ tools: [whoami], log: () => undefined }),
 			async context(session_id) {
@@ -271,15 +255,17 @@ describe('Sand First Mate runner', () => {
 		});
 		expect(input.network.headers['github.com']).toBeUndefined();
 
-		const claude = sandboxes.get('chat-sbx1')!.commands[0];
+		const sandbox = sandboxes.get('chat-sbx1')!;
+		const [claude] = sandbox.terminals;
 		expect(claude.cwd).toBe(MATE_WORKDIR);
-		expect(claude.command).toContain("'--session-id' '" + SESSION + "'");
-		expect(claude.stdin.join('')).toContain('Ahoy');
+		expect(claude.argv.slice(3, 5)).toEqual(['--session-id', SESSION]);
+		expect(claude.labels).toMatchObject({ 'beadsmith-chat': 'mc_one', [SESSION_LABEL]: SESSION });
+		expect(claude.sent).toEqual(['Ahoy']);
 		// Activity keeps the sandbox from pausing mid-conversation.
 		expect(sandboxes.get('chat-sbx1')!.timeouts.length).toBeGreaterThan(0);
 	});
 
-	it('keeps one process per chat and drops a repeated message id', async () => {
+	it('keeps one CLI per chat and drops a repeated message id', async () => {
 		const { runner, sandboxes } = setup();
 		const input = { session_id: SESSION, message_id: 'm1', prompt: 'Ahoy', scope: null };
 		const first = await runner.sendMessage('mc_one', input);
@@ -287,9 +273,13 @@ describe('Sand First Mate runner', () => {
 		await collect(runner, 'mc_one', (all) => all.some((e) => e.type === 'result'));
 		await runner.sendMessage('mc_one', { ...input, message_id: 'm2', prompt: 'Again' });
 		const sandbox = sandboxes.get('chat-sbx1')!;
+		await until(() => sandbox.terminals[0]?.sent.length === 2);
 		expect(sandboxes.size).toBe(1);
-		expect(sandbox.commands).toHaveLength(1);
-		expect(sandbox.commands[0].stdin).toHaveLength(2);
+		expect(sandbox.terminals).toHaveLength(1);
+		expect(sandbox.terminals[0].sent).toEqual(['Ahoy', 'Again']);
+		// One connection serves the whole conversation.
+		expect(sandbox.started).toEqual(['hc', 'relay']);
+		await runner.close();
 	});
 
 	it('refuses a message for another session', async () => {
@@ -327,22 +317,46 @@ describe('Sand First Mate runner', () => {
 		};
 		expectWired(sandbox.writes);
 		// The relay listens before Claude Code starts its stdio side.
-		expect(sandbox.started).toEqual(['relay', 'claude']);
-		expect(sandbox.commands[0].command).toContain(`'--mcp-config' '${CREW_MCP_CONFIG_PATH}'`);
+		expect(sandbox.started).toEqual(['hc', 'relay']);
+		expect(sandbox.claude.core.calls.findIndex((c) => c.method === 'terminal.run')).toBeGreaterThan(
+			-1
+		);
+		expect(sandbox.terminals[0].argv.slice(-2)).toEqual(['--mcp-config', CREW_MCP_CONFIG_PATH]);
 		await first.runner.close();
 		expect(sandbox.relays[0].killed).toBe(true);
+		expect(sandbox.terminals[0].state).toBe('finished');
 
-		// A restarted Beadsmith finds the same sandbox and resumes it.
+		// A restarted Beadsmith finds the same sandbox and resumes the CLI session.
 		const second = setup({ sandboxes });
 		await second.runner.sendMessage('mc_one', { ...input, message_id: 'm2' });
-		await until(() => sandbox.commands.length === 2);
+		await until(() => sandbox.terminals[1]?.sent.length === 1);
 		expect(sandboxes.size).toBe(1);
 		expectWired(sandbox.writes.slice(3));
-		expect(sandbox.started).toEqual(['relay', 'claude', 'relay', 'claude']);
-		expect(sandbox.commands[1].command).toContain(`'--mcp-config' '${CREW_MCP_CONFIG_PATH}'`);
-		// The old relay and Claude Code are stopped before new ones start.
+		expect(sandbox.started).toEqual(['hc', 'relay', 'hc', 'relay']);
+		expect(sandbox.terminals[1].argv).toContain('--resume');
+		expect(sandbox.terminals[1].argv.slice(-2)).toEqual(['--mcp-config', CREW_MCP_CONFIG_PATH]);
+		// The old relay is stopped before the new one starts.
 		expect(sandbox.execs.at(-1)).toContain(`${CREW_RELAY_PATH} serve`);
 		await second.runner.close();
+	});
+
+	it('ends a CLI left talking to an old relay before starting a new one', async () => {
+		const sandboxes = new Map<string, FakeChatSandbox>();
+		const input = { session_id: SESSION, message_id: 'm1', prompt: 'Ahoy', scope: null };
+		// Beadsmith stopped without shutting the chat down: the CLI is still live.
+		const crashed = setup({ sandboxes });
+		await crashed.runner.sendMessage('mc_one', input);
+		await collect(crashed.runner, 'mc_one', (all) => all.some((e) => e.type === 'result'));
+		const sandbox = sandboxes.get('chat-sbx1')!;
+		const old = sandbox.terminals[0];
+
+		const second = setup({ sandboxes });
+		await second.runner.sendMessage('mc_one', { ...input, message_id: 'm2' });
+		await until(() => sandbox.terminals[1]?.sent.length === 1);
+		expect(old.state).toBe('finished');
+		expect(sandbox.terminals[1].argv).toContain('--resume');
+		await second.runner.close();
+		await crashed.runner.close();
 	});
 
 	it('runs a relayed tool call as the chat owner and replies on the relay', async () => {
@@ -379,7 +393,7 @@ describe('Sand First Mate runner', () => {
 		await runner.close();
 	});
 
-	it('logs E2B and Claude Code failures on the server only', async () => {
+	it('logs E2B and agent failures on the server only', async () => {
 		const detail = 'E2B 500: template beadsmith-agent quota exceeded for team t_9';
 		const failing = setup({ create_error: new Error(detail) });
 		await failing.runner.sendMessage('mc_one', {
@@ -395,21 +409,22 @@ describe('Sand First Mate runner', () => {
 		expect(failing.logs.join('\n')).toContain(detail);
 		expect(failing.logs.join('\n')).not.toContain(SESSION);
 
-		const { runner, sandboxes, logs } = setup();
+		// A CLI that stops at a first-run prompt fails its launch with a clear error.
+		const sandboxes = new Map<string, FakeChatSandbox>();
+		const { runner, logs } = setup({ sandboxes, launch_status: 'blocked' });
 		await runner.sendMessage('mc_one', {
 			session_id: SESSION,
 			message_id: 'm1',
 			prompt: 'a',
 			scope: null
 		});
-		await collect(runner, 'mc_one', (all) => all.some((e) => e.type === 'result'));
-		const claude = sandboxes.get('chat-sbx1')!.commands[0];
-		claude.err(`${'noise '.repeat(2_000)}Error: rate limited by api.anthropic.com\n`);
-		claude.exit(1);
-		await until(() => logs.some((line) => line.includes('Claude Code exited (1)')));
-		const line = logs.find((entry) => entry.includes('Claude Code exited (1)'))!;
-		expect(line).toContain('rate limited');
-		expect(line.length).toBeLessThan(2_200);
+		const blocked = await collect(runner, 'mc_one', (all) => all.some((e) => e.type === 'error'));
+		expect(blocked.at(-1)).toMatchObject({
+			type: 'error',
+			message: expect.stringMatching(/first-run/)
+		});
+		expect(sandboxes.get('chat-sbx1')!.terminals[0].sent).toEqual([]);
+		expect(logs.join('\n')).toContain('could not start');
 		await runner.close();
 	});
 

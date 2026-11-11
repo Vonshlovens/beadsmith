@@ -24,10 +24,12 @@ import type {
 	DiscussIntent,
 	DispatchRequest,
 	DispatchTurnsResponse,
+	LoopIterationsResponse,
 	DoltFailureKind,
 	IssueDetailResponse,
 	IssueListResponse,
 	Mission,
+	ModelPoolResponse,
 	Project,
 	ReadyListResponse,
 	StatusSnapshot,
@@ -36,6 +38,7 @@ import type {
 
 import type { Todo, TodoComment, TodoStatus } from '#lib/server/todos/store.js';
 import type { RouteIssue } from '#lib/todos/route-state.js';
+import type { LoopLaunch } from '#lib/client/loop.js';
 import type {
 	MateChat,
 	MateChatDetail,
@@ -239,6 +242,11 @@ export const api = {
 	/** Arm or disarm File/Tackle globally. Provider configuration is unchanged. */
 	setDispatchArmed(armed: boolean, init?: RequestInitLike) {
 		return request<{ armed: boolean }>('PUT', '/console/dispatch', { ...init, body: { armed } });
+	},
+
+	/** The Underclass model pool, or `{configured: false}` when it is off (ADR-0022). */
+	modelPool(init?: RequestInitLike) {
+		return request<ModelPoolResponse>('GET', '/console/model-pool', init);
 	},
 
 	/** Backup settings (no secrets), recent runs, and run state. */
@@ -454,11 +462,33 @@ export const api = {
 		);
 	},
 
+	/** Start a ralph loop (ADR-0019) on the project's plan or on one bead. */
+	launchLoop(
+		project_id: string,
+		body: { idempotency_key: string } & LoopLaunch,
+		init?: RequestInitLike
+	) {
+		return request<{ request: DispatchRequest }>(
+			'POST',
+			`/projects/${encodeURIComponent(project_id)}/dispatch`,
+			{ ...init, body: { operation: 'loop', ...launch_field(), ...body } }
+		);
+	},
+
 	/** One mission's conversation: operator messages and finished runs' replies. */
 	dispatchTurns(project_id: string, request_id: string, init?: RequestInitLike) {
 		return request<DispatchTurnsResponse>(
 			'GET',
 			`/projects/${encodeURIComponent(project_id)}/dispatch/${encodeURIComponent(request_id)}/turns`,
+			init
+		);
+	},
+
+	/** A loop mission's finished iterations, oldest first; empty for other missions. */
+	dispatchIterations(project_id: string, request_id: string, init?: RequestInitLike) {
+		return request<LoopIterationsResponse>(
+			'GET',
+			`/projects/${encodeURIComponent(project_id)}/dispatch/${encodeURIComponent(request_id)}/iterations`,
 			init
 		);
 	},

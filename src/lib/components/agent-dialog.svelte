@@ -15,6 +15,7 @@
 	import ChatTextIcon from 'phosphor-svelte/lib/ChatTextIcon';
 	import PencilLineIcon from 'phosphor-svelte/lib/PencilLineIcon';
 	import XIcon from 'phosphor-svelte/lib/XIcon';
+	import ArrowsClockwiseIcon from 'phosphor-svelte/lib/ArrowsClockwiseIcon';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import AgentThread from '#lib/components/agent-thread.svelte';
 	import IssueId from '#lib/components/issue-id.svelte';
@@ -28,6 +29,9 @@
 		missionVerb,
 		type AgentIntent
 	} from '#lib/client/agent.js';
+	import { run_place } from '#lib/client/agent-runner.svelte.js';
+	import { missionThreadHref } from '#lib/client/first-mate.js';
+	import { loopAvailability } from '#lib/client/loop.js';
 	import { relativeShort } from '#lib/client/format.js';
 	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
 	import { projectList, statusSnapshot } from '#lib/client/projects.svelte.js';
@@ -45,6 +49,9 @@
 	const open = $derived(target !== null);
 	const project = $derived(projectList().find((item) => item.id === target?.project_id));
 	const availability = $derived(agentAvailability(statusSnapshot(), project?.allow));
+	const loop_visible = $derived(
+		loopAvailability(statusSnapshot(), project?.allow, run_place.launchField().provider).visible
+	);
 
 	let intent = $state<AgentIntent>('discuss');
 	let message = $state('');
@@ -66,9 +73,7 @@
 	});
 	const thread_mission = $derived(history.find((mission) => mission.id === thread_id));
 	const page_href = $derived(
-		thread_id === null || target === null
-			? null
-			: `/first-mate?thread=${encodeURIComponent(thread_id)}&project=${encodeURIComponent(target.project_id)}`
+		thread_id === null || target === null ? null : missionThreadHref(target.project_id, thread_id)
 	);
 
 	// Reset whenever a new target opens the dialog.
@@ -150,6 +155,19 @@
 		}
 	}
 
+	/** Hand this issue to the loop dialog, which explains any refusal. */
+	function runLoop() {
+		if (target === null) return;
+		app_state.openLoop({
+			project_id: target.project_id,
+			issue: {
+				id: target.issue_id,
+				title: target.issue_title,
+				issue_type: target.issue_type ?? 'task'
+			}
+		});
+	}
+
 	function onMessageKeydown(event: KeyboardEvent) {
 		if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
 			event.preventDefault();
@@ -166,6 +184,13 @@
 				when: () => open && thread_id === null,
 				run: () => pick(entry.id)
 			})),
+			{
+				keys: ['l'],
+				label: 'Run a loop on this issue',
+				group: 'Agent' as const,
+				when: () => open && thread_id === null && loop_visible,
+				run: () => runLoop()
+			},
 			{
 				keys: ['mod+Enter'],
 				label: 'Launch',
@@ -305,6 +330,17 @@
 						<span class="why faint"><span class="kbd">⌘⏎</span> launch</span>
 					{/if}
 					<span class="spacer"></span>
+					{#if loop_visible}
+						<button
+							class="btn btn-sm btn-ghost"
+							type="button"
+							aria-keyshortcuts="l"
+							{@attach tip('Work on it in a ralph loop instead (l)')}
+							onclick={runLoop}
+						>
+							<ArrowsClockwiseIcon size={14} aria-hidden="true" /> Run a loop
+						</button>
+					{/if}
 					<button
 						class="btn btn-sm btn-primary"
 						type="button"

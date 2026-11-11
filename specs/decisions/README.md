@@ -26,3 +26,7 @@ edit an ADR on every conversation — see `.agents/skills/architecture/SKILL.md`
 | [0016](./0016-first-mate-worker-runtime.md) | First Mate worker runtime |
 | [0017](./0017-native-desktop-client.md) | A native desktop client on Rune reads Dolt directly with the web app's read contract, for the server's owner |
 | [0018](./0018-sand-e2b-sandboxes.md) | Sand: E2B sandboxes beside self-hosted runners, picked per chat and mission in First Mate |
+| [0019](./0019-ralph-loops-and-automations.md) | Ralph loops are missions: ralph runs in the sandbox's hc terminal and Beadsmith reads `ralph serve` over the sandbox channel; Beadsmith owns schedules |
+| [0020](./0020-first-mate-crew-tools.md) | First Mate crew tools: one transport-free MCP tool module, relayed into Sand chats over the E2B process channel |
+| [0021](./0021-hc-terminal-runtime.md) | Every agent runs as an interactive CLI in an hc terminal inside its sandbox; admins can watch or take over through an audited relay |
+| [0022](./0022-underclass-model-gateway.md) | Underclass is the model gateway behind forge's key-injecting filter; Sand keeps egress injection; the console reads Underclass's admin API server-side |

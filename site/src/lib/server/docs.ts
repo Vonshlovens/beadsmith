@@ -85,6 +85,14 @@ export const DOCS: DocEntry[] = [
 			'Running missions and First Mate chats in hosted E2B sandboxes, with keys kept outside them.'
 	},
 	{
+		slug: 'model-pool',
+		path: 'docs/model-pool.md',
+		group: 'Use it',
+		title: 'Model pool',
+		summary:
+			'The console page for the Underclass accounts that serve agent work: states, quota windows and recent requests.'
+	},
+	{
 		slug: 'agent-access',
 		path: 'docs/agent-access.md',
 		group: 'Use it',

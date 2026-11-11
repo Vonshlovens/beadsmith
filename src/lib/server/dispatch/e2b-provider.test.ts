@@ -1,18 +1,27 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseE2bSettings } from '../env.js';
 import type { MissionEvent } from '#lib/mission-events.js';
+import { claudeCode } from '#lib/agent-session/claude-code.js';
+import { FakeHcCore, type FakeTerminal } from '#lib/test/fake-hc.js';
+import { FakeRalph } from '#lib/test/fake-ralph.js';
 import {
 	buildSandboxNetwork,
 	createE2bProvider,
+	LOOP_METADATA,
+	LOOP_TERMINAL,
 	parseRunFiles,
-	runUpdateFromFiles,
+	ralphArgv,
+	SERVE_TERMINAL,
+	settledUpdate,
+	SESSION_METADATA,
 	type SandboxCreateInput,
 	type SandboxDriver,
 	type SandboxNetwork,
 	type SandboxRef
 } from './e2b-provider.js';
-import { AGENT_BUSY_MESSAGE } from './provider.js';
+import { AGENT_BUSY_MESSAGE, RUN_NOT_CANCELLABLE_MESSAGE } from './provider.js';
 import { ANTHROPIC_PLACEHOLDER, GITHUB_PLACEHOLDER } from '../e2b/sandbox.js';
+import { CLAUDE_CONFIG_DIR, HC_CARRIER, RUNS_DIR, WORK_DIR } from '../e2b/image.js';
 
 const SETTINGS = parseE2bSettings({
 	BDX_E2B_API_KEY_FILE: '/run/secrets/e2b',
@@ -27,13 +36,77 @@ const SETTINGS = parseE2bSettings({
 const ANTHROPIC_KEY = 'sk-ant-api03-REAL-KEY-never-in-sandbox';
 const GITHUB_TOKEN = 'ghs_REALTOKENneverinsandbox0000';
 const DOLT_PASSWORD = 'scoped-dolt-password-0000';
+const PR = 'https://github.com/example-org/beads-web/pull/7';
 
-/** One run's files inside the fake sandbox. */
+const later = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** What `beadsmith-run` left behind for one run. */
 interface FakeRun {
+	/** Setup done and the core is up (the default once started). */
+	ready: boolean;
+	/** Setup failed with this code. */
 	exit?: number;
 	cancelled?: boolean;
-	result?: string;
-	events?: string[];
+	claimed_s?: number;
+	setup_killed?: boolean;
+}
+
+/**
+ * A fake Claude Code on a fake hc core: idle at launch; each message is a
+ * turn that `finish` ends (or that ends at once with `auto`).
+ */
+class FakeClaude {
+	readonly core = new FakeHcCore();
+	readonly lines: string[] = [];
+	transcript = '';
+	auto = true;
+	launch_status = 'idle';
+	reply = `Done. Opened ${PR}`;
+
+	constructor() {
+		this.core.onRun = (t) => this.core.setStatus(t.address, this.launch_status);
+		this.core.onSend = (t, text) =>
+			queueMicrotask(() => {
+				this.write({ type: 'user', message: { role: 'user', content: text } });
+				this.core.setStatus(t.address, 'working');
+				this.write({
+					type: 'assistant',
+					message: { content: [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: {} }] }
+				});
+				if (this.auto) this.finish(t);
+			});
+	}
+
+	write(entry: unknown): void {
+		this.lines.push(JSON.stringify(entry));
+		this.core.files.set(this.transcript, this.lines.map((l) => `${l}\n`).join(''));
+	}
+
+	finish(t: FakeTerminal = this.live()!): void {
+		this.write({
+			type: 'user',
+			message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok' }] }
+		});
+		this.write({ type: 'assistant', message: { content: [{ type: 'text', text: this.reply }] } });
+		this.write({ type: 'system', subtype: 'turn_duration', durationMs: 4200 });
+		this.core.endTurn(t.address, 'idle');
+	}
+
+	live(): FakeTerminal | undefined {
+		return [...this.core.terminals.values()].find((t) => t.state === 'live');
+	}
+
+	runs(): string[][] {
+		return this.core.calls
+			.filter((c) => c.method === 'terminal.run')
+			.map((c) => c.params.argv as string[]);
+	}
+
+	sends(): string[] {
+		return this.core.calls
+			.filter((c) => c.method === 'terminal.send')
+			.map((c) => c.params.text as string);
+	}
 }
 
 class FakeSandbox implements SandboxRef {
@@ -42,52 +115,97 @@ class FakeSandbox implements SandboxRef {
 	started: { command: string; envs: Record<string, string> }[] = [];
 	networks: SandboxNetwork[] = [];
 	timeouts: number[] = [];
+	carriers = 0;
 	killed = false;
-	constructor(readonly id: string) {}
+	/** What setup does when `beadsmith-run` starts. */
+	setup: Partial<FakeRun> = { ready: true };
+	constructor(
+		readonly id: string,
+		readonly claude: FakeClaude
+	) {}
+
+	file(run_id: string, name: string): string | undefined {
+		return this.files.get(`${RUNS_DIR}/${run_id}/${name}`);
+	}
 
 	async exec(command: string) {
-		const status = /^d='[^']+\/(r[0-9]+)'; if \[ ! -d/.exec(command);
-		if (status) {
-			const run = this.runs.get(status[1]);
+		const run_of = (re: RegExp) => this.runs.get(re.exec(command)?.[1] ?? '');
+		if (/^d='[^']+\/(r[0-9]+)'; if \[ ! -d/.test(command)) {
+			const id = /runs\/(r[0-9]+)'/.exec(command)![1];
+			const run = this.runs.get(id);
 			if (run === undefined) return { exit_code: 0, stdout: 'missing\n' };
 			return {
 				exit_code: 0,
 				stdout:
 					`exit=${run.exit ?? ''}\ncancelled=${run.cancelled ? '1' : ''}\n` +
-					`started=1000\nfinished=6000\nresult=${run.result ?? ''}\n`
+					`ready=${run.ready ? '1' : ''}\nclaimed=${run.claimed_s ?? ''}\nnow=1000\n` +
+					`started=${this.file(id, 'started') === undefined ? '' : '1'}\n` +
+					`turn=${this.file(id, 'turn.json') ?? ''}\nresult=${this.file(id, 'result.json') ?? ''}\n`
 			};
 		}
+		if (command.startsWith("mkdir '") && command.includes('/claim')) {
+			const run = run_of(/runs\/(r[0-9]+)\/claim/)!;
+			if (run.claimed_s !== undefined) return { exit_code: 1, stdout: '' };
+			run.claimed_s = 1000;
+			return { exit_code: 0, stdout: '' };
+		}
+		if (command.startsWith("cat '")) {
+			const path = /^cat '([^']+)'/.exec(command)![1];
+			return { exit_code: 0, stdout: this.files.get(path) ?? '' };
+		}
 		if (command.startsWith('tail -c')) {
-			return {
-				exit_code: 0,
-				stdout: `Error: Dolt refused ${DOLT_PASSWORD}\n--- setup.log\ncloning…\n`
-			};
+			return { exit_code: 0, stdout: `cloning…\nError: Dolt refused ${DOLT_PASSWORD}\n` };
 		}
 		if (command.startsWith('ls -1')) {
 			return { exit_code: 0, stdout: [...this.runs.keys()].join('\n') };
 		}
-		const cancel = /^d='[^']+\/(r[0-9]+)'; \[ -d/.exec(command);
-		if (cancel) {
-			const run = this.runs.get(cancel[1]);
+		if (/^d='[^']+\/(r[0-9]+)'; \[ -d/.test(command)) {
+			const run = run_of(/runs\/(r[0-9]+)'/);
 			if (run === undefined || run.exit !== undefined) return { exit_code: 3, stdout: '' };
 			run.cancelled = true;
+			if (!run.ready) run.setup_killed = true;
 			return { exit_code: 0, stdout: '' };
 		}
 		return { exit_code: 0, stdout: '' };
 	}
 	async start(command: string, envs: Record<string, string>) {
 		this.started.push({ command, envs });
-		const run_id = command.split(' ')[1];
-		this.runs.set(run_id, {});
+		this.runs.set(command.split(' ')[1], { ready: false, ...this.setup });
 	}
-	async follow(command: string, on_stdout: (chunk: string) => void) {
-		const run_id = /runs\/(r[0-9]+)'/.exec(command)?.[1] ?? '';
-		const from = Number(/tail -n \+([0-9]+)/.exec(command)?.[1] ?? '1');
-		const lines = (this.runs.get(run_id)?.events ?? []).slice(from - 1);
-		// Split across chunks to exercise line buffering.
-		const text = lines.map((entry) => `${entry}\n`).join('');
-		on_stdout(text.slice(0, 7));
-		on_stdout(text.slice(7));
+	async follow(): Promise<never> {
+		throw new Error('missions follow the transcript over hc');
+	}
+	/** `beadsmith-hc connect`: hc's bytes as base64 lines both ways. */
+	async interactive(
+		command: string,
+		options: { on_stdout: (chunk: string) => void; on_stderr: (chunk: string) => void }
+	) {
+		expect(command).toBe(`${HC_CARRIER} connect`);
+		this.carriers += 1;
+		const hc = this.claude.core.connect();
+		let exited!: (code: number | null) => void;
+		const exit = new Promise<number | null>((resolve) => (exited = resolve));
+		hc.onData((bytes) => {
+			const line = `${Buffer.from(bytes).toString('base64')}\n`;
+			// Split a line across callbacks, as E2B may.
+			options.on_stdout(line.slice(0, 5));
+			options.on_stdout(line.slice(5));
+		});
+		hc.onClose(() => exited(0));
+		let pending = '';
+		return {
+			sendStdin: async (data: string) => {
+				pending += data;
+				let newline;
+				while ((newline = pending.indexOf('\n')) !== -1) {
+					hc.write(new Uint8Array(Buffer.from(pending.slice(0, newline), 'base64')));
+					pending = pending.slice(newline + 1);
+				}
+			},
+			closeStdin: async () => {},
+			kill: async () => hc.close(),
+			wait: () => exit
+		};
 	}
 	async writeFile(path: string, content: string) {
 		this.files.set(path, content);
@@ -101,12 +219,15 @@ class FakeSandbox implements SandboxRef {
 	async kill() {
 		this.killed = true;
 	}
-	async interactive(): Promise<never> {
-		throw new Error('dispatch never starts an interactive command');
-	}
 }
 
-function setup(overrides: { create_fails?: boolean } = {}) {
+const providers: Array<{ claude: FakeClaude }> = [];
+afterEach(() => {
+	for (const { claude } of providers.splice(0)) claude.core.disconnectAll();
+});
+
+function setup(overrides: { create_fails?: boolean; ralph?: FakeRalph } = {}) {
+	const claude = new FakeClaude();
 	const sandboxes = new Map<string, FakeSandbox>();
 	const states = new Map<string, 'running' | 'paused'>();
 	const metadata = new Map<string, Record<string, string>>();
@@ -115,10 +236,18 @@ function setup(overrides: { create_fails?: boolean } = {}) {
 		async create(input) {
 			if (overrides.create_fails) throw new Error(`quota exceeded for key ${ANTHROPIC_KEY}`);
 			created.push(input);
-			const sandbox = new FakeSandbox(`sbx${sandboxes.size + 1}`);
+			const sandbox = new FakeSandbox(`sbx${sandboxes.size + 1}`, claude);
 			sandboxes.set(sandbox.id, sandbox);
 			states.set(sandbox.id, 'running');
 			metadata.set(sandbox.id, input.metadata);
+			// Loop sandboxes have no CLI session of Beadsmith's.
+			if (input.metadata[SESSION_METADATA] !== undefined) {
+				claude.transcript = claudeCode.transcriptPath({
+					cwd: WORK_DIR,
+					config_dir: CLAUDE_CONFIG_DIR,
+					session_id: input.metadata[SESSION_METADATA]
+				});
+			}
 			return sandbox;
 		},
 		async connect(id) {
@@ -149,9 +278,22 @@ function setup(overrides: { create_fails?: boolean } = {}) {
 			if (database !== 'beads_web') throw new Error('no account');
 			return { user: 'sbx_beads_web', password: DOLT_PASSWORD };
 		},
+		timing: { poll_ms: 5, startup_ms: 500, settle_ms: 50, wait_ms: 5 },
+		...(overrides.ralph === undefined ? {} : { ralph_fetch: () => overrides.ralph!.fetch }),
 		log: (message) => logs.push(message)
 	});
-	return { provider, sandboxes, states, created, mint_github_token, mint_tailscale_key, logs };
+	providers.push({ claude });
+	return {
+		provider,
+		claude,
+		sandboxes,
+		states,
+		metadata,
+		created,
+		mint_github_token,
+		mint_tailscale_key,
+		logs
+	};
 }
 
 const TACKLE = {
@@ -200,6 +342,7 @@ describe('E2B provider', () => {
 			beadsmith_repository: TACKLE.repository.url,
 			beadsmith_write: '1'
 		});
+		expect(input.metadata[SESSION_METADATA]).toMatch(/^[0-9a-f-]{36}$/);
 		expect(input.envs).toMatchObject({
 			ANTHROPIC_API_KEY: ANTHROPIC_PLACEHOLDER,
 			BEADS_DOLT_SERVER_HOST: '127.0.0.1',
@@ -218,7 +361,7 @@ describe('E2B provider', () => {
 		expect(mint_github_token).toHaveBeenCalledWith(TACKLE.repository.url, true);
 
 		const sandbox = sandboxes.get('sbx1')!;
-		expect(sandbox.files.get('/home/user/.beadsmith/runs/r1/prompt')).toBe('Tackle bw-1');
+		expect(sandbox.file('r1', 'prompt')).toBe('Tackle bw-1');
 		// The skills the prompts name ride along, whatever the checkout holds.
 		for (const name of ['file', 'tackle', 'comment', 'discuss']) {
 			expect(sandbox.files.get(`/home/user/.beadsmith/skills/${name}/SKILL.md`)).toMatch(
@@ -226,10 +369,7 @@ describe('E2B provider', () => {
 			);
 		}
 		expect(sandbox.started).toEqual([
-			{
-				command: 'beadsmith-run r1',
-				envs: { BEADSMITH_TS_AUTHKEY: 'tskey-auth-single-use', BEADSMITH_CONTINUE: '0' }
-			}
+			{ command: 'beadsmith-run r1', envs: { BEADSMITH_TS_AUTHKEY: 'tskey-auth-single-use' } }
 		]);
 	});
 
@@ -267,186 +407,616 @@ describe('E2B provider', () => {
 		expect(logs[0]).not.toContain(ANTHROPIC_KEY);
 	});
 
-	it('logs the end of a failed run, redacted, once', async () => {
+	it('reports a running setup without touching hc', async () => {
+		const { provider, sandboxes } = setup();
+		await provider.launch(TACKLE);
+		const sandbox = sandboxes.get('sbx1')!;
+		sandbox.runs.get('r1')!.ready = false;
+		expect(await provider.getRun('sbx1', 'r1')).toEqual({ status: 'running' });
+		expect(sandbox.carriers).toBe(0);
+	});
+
+	it('names a failed setup step and logs its log, redacted, once', async () => {
 		const { provider, sandboxes, logs } = setup();
 		await provider.launch(TACKLE);
-		sandboxes.get('sbx1')!.runs.set('r1', { exit: 1 });
-		expect(await provider.getRun('sbx1', 'r1')).toMatchObject({ status: 'failed' });
+		sandboxes.get('sbx1')!.runs.set('r1', { ready: false, exit: 13 });
+		expect(await provider.getRun('sbx1', 'r1')).toEqual({
+			status: 'failed',
+			error_message: 'The sandbox joined the tailnet but Dolt did not answer.'
+		});
 		await provider.getRun('sbx1', 'r1');
 		expect(logs).toHaveLength(1);
-		expect(logs[0]).toContain('sbx1/r1 exited 1');
+		expect(logs[0]).toContain('sbx1/r1 setup exited 13');
 		expect(logs[0]).toContain('Dolt refused [redacted]');
 		expect(logs[0]).not.toContain(DOLT_PASSWORD);
 	});
 
-	it('reads run status from the run files and sets the idle timeout once finished', async () => {
-		const { provider, sandboxes } = setup();
+	it('starts the CLI in an hc terminal, sends the prompt, and reads the turn to its result', async () => {
+		const { provider, claude, sandboxes, created } = setup();
+		claude.auto = false;
 		await provider.launch(TACKLE);
 		const sandbox = sandboxes.get('sbx1')!;
-		expect(await provider.getRun('sbx1', 'r1')).toEqual({ status: 'running' });
-		expect(sandbox.timeouts).toEqual([]);
+		const session_id = created[0].metadata[SESSION_METADATA];
 
-		sandbox.runs.set('r1', {
-			exit: 0,
-			result: JSON.stringify({
-				type: 'result',
-				subtype: 'success',
-				is_error: false,
-				duration_ms: 5000,
-				result: `Opened https://github.com/example-org/beads-web/pull/7 (db password ${DOLT_PASSWORD})`
-			})
-		});
+		expect(await provider.getRun('sbx1', 'r1')).toEqual({ status: 'running' });
+		const [argv] = claude.runs();
+		expect(argv).toEqual([
+			'claude',
+			'--permission-mode',
+			'bypassPermissions',
+			'--session-id',
+			session_id
+		]);
+		// The prompt goes in with terminal.send, never on the command line.
+		expect(claude.sends()).toEqual(['Tackle bw-1']);
+		expect(JSON.parse(sandbox.file('r1', 'turn.json')!)).toEqual({ base: 0, first_line: 1 });
+		expect(claude.live()!.labels).toMatchObject({ 'beadsmith-session': session_id });
+
+		// Still working: a second read neither starts nor sends again.
+		expect(await provider.getRun('sbx1', 'r1')).toEqual({ status: 'running' });
+		expect(claude.sends()).toHaveLength(1);
+
+		claude.finish();
 		const update = await provider.getRun('sbx1', 'r1');
-		expect(update).toMatchObject({
+		expect(update).toEqual({
 			status: 'succeeded',
-			duration_ms: 5000,
-			git_pr_url: 'https://github.com/example-org/beads-web/pull/7'
+			result_summary: `Done. Opened ${PR}`,
+			duration_ms: 4200,
+			git_pr_url: PR
 		});
-		expect(update.result_summary).not.toContain(DOLT_PASSWORD);
-		expect(sandbox.timeouts).toEqual([10 * 60_000]);
-		// Cached: a later read does not need the sandbox.
-		sandbox.runs.clear();
-		expect(await provider.getRun('sbx1', 'r1')).toMatchObject({ status: 'succeeded' });
+		expect(JSON.parse(sandbox.file('r1', 'result.json')!)).toMatchObject({
+			status: 'succeeded',
+			git_pr_url: PR
+		});
+		expect(sandbox.timeouts).toEqual([SETTINGS.idle_minutes * 60_000]);
+		// The CLI keeps running between turns.
+		expect(claude.live()).toBeDefined();
+		const carriers = sandbox.carriers;
+		expect(await provider.getRun('sbx1', 'r1')).toEqual(update);
+		expect(sandbox.carriers).toBe(carriers);
+	});
+
+	it('relays the mission CLI terminal to a watcher and never wakes a paused sandbox for it', async () => {
+		const { provider, claude, states } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		expect(await provider.getRun('sbx1', 'r1')).toEqual({ status: 'running' });
+		const cli = claude.live()!;
+		const received: string[] = [];
+		const relay = await provider.attachTerminal!('sbx1', {
+			mode: 'watch',
+			cols: 80,
+			rows: 24,
+			onData: (bytes) => void received.push(new TextDecoder().decode(bytes))
+		});
+		claude.core.output(cli.address, 'thinking hard');
+		await vi.waitFor(() => expect(received.join('')).toContain('thinking hard'));
+		relay.close();
+
+		states.set('sbx1', 'paused');
+		await expect(
+			provider.attachTerminal!('sbx1', { mode: 'watch', cols: 80, rows: 24, onData: () => {} })
+		).rejects.toThrow(/paused/);
+		expect(states.get('sbx1')).toBe('paused');
+	});
+
+	it('starts a run once when two reads race for it', async () => {
+		const { provider, claude } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		await Promise.all([provider.getRun('sbx1', 'r1'), provider.getRun('sbx1', 'r1')]);
+		expect(claude.runs()).toHaveLength(1);
+		expect(claude.sends()).toHaveLength(1);
+	});
+
+	it('fails a launch that stops on a first-run prompt instead of answering it', async () => {
+		const { provider, claude, sandboxes } = setup();
+		claude.launch_status = 'blocked';
+		await provider.launch(TACKLE);
+		const update = await provider.getRun('sbx1', 'r1');
+		expect(update.status).toBe('failed');
+		expect(update.error_message).toMatch(/stopped at a prompt before its first turn/);
+		expect(claude.sends()).toEqual([]);
+		expect(sandboxes.get('sbx1')!.file('r1', 'result.json')).toBeDefined();
 	});
 
 	it('reports a gone or time-limited sandbox as failed', async () => {
 		const { provider, states } = setup();
 		await provider.launch(TACKLE);
 		states.set('sbx1', 'paused');
-		expect(await provider.getRun('sbx1', 'r1')).toMatchObject({
-			status: 'failed',
-			error_message: expect.stringContaining('55-minute limit')
-		});
-		expect(await provider.getRun('sbx-gone', 'r1')).toMatchObject({ status: 'failed' });
+		expect((await provider.getRun('sbx1', 'r1')).error_message).toMatch(/55-minute limit/);
+		expect(await provider.getRun('gone', 'r1')).toMatchObject({ status: 'failed' });
 	});
 
-	it('continues the session in a new run, with a fresh token and the full time limit', async () => {
-		const { provider, sandboxes, mint_github_token } = setup();
+	it('sends a follow-up to the same running CLI, with a fresh token and the full time limit', async () => {
+		const { provider, claude, sandboxes, mint_github_token } = setup();
+		claude.auto = false;
 		await provider.launch(TACKLE);
-		const sandbox = sandboxes.get('sbx1')!;
-		await expect(provider.createRun?.('sbx1', 'more')).rejects.toThrow(AGENT_BUSY_MESSAGE);
+		await provider.getRun('sbx1', 'r1');
+		await expect(provider.createRun!('sbx1', 'more')).rejects.toThrow(AGENT_BUSY_MESSAGE);
+		claude.finish();
+		await provider.getRun('sbx1', 'r1');
 
-		sandbox.runs.set('r1', { exit: 0 });
-		expect(await provider.createRun?.('sbx1', 'more')).toEqual({ run_id: 'r2' });
-		expect(sandbox.started.at(-1)).toMatchObject({
+		claude.auto = true;
+		expect(await provider.createRun!('sbx1', 'Now add tests')).toEqual({ run_id: 'r2' });
+		const sandbox = sandboxes.get('sbx1')!;
+		expect(sandbox.started.at(-1)).toEqual({
 			command: 'beadsmith-run r2',
-			envs: { BEADSMITH_CONTINUE: '1' }
+			envs: { BEADSMITH_TS_AUTHKEY: 'tskey-auth-single-use' }
 		});
-		expect(sandbox.files.get('/home/user/.beadsmith/runs/r2/prompt')).toBe('more');
 		expect(sandbox.networks).toHaveLength(1);
 		expect(mint_github_token).toHaveBeenCalledTimes(2);
 		expect(sandbox.timeouts.at(-1)).toBe(55 * 60_000);
+
+		expect((await provider.getRun('sbx1', 'r2')).status).toMatch(/running|succeeded/);
+		expect(claude.runs()).toHaveLength(1);
+		expect(claude.sends()).toEqual(['Tackle bw-1', 'Now add tests']);
+		const turn = JSON.parse(sandbox.file('r2', 'turn.json')!);
+		expect(turn.base).toBe(1);
+		expect(turn.first_line).toBeGreaterThan(1);
 	});
 
-	it('stops a run cut off by the time limit before continuing', async () => {
-		const { provider, sandboxes, states } = setup();
+	it('resumes the CLI session when its terminal is gone', async () => {
+		const { provider, claude, created } = setup();
 		await provider.launch(TACKLE);
+		await provider.getRun('sbx1', 'r1');
+		await later(10);
+		expect((await provider.getRun('sbx1', 'r1')).status).toBe('succeeded');
+		claude.core.exit(claude.live()!.address);
+
+		await provider.createRun!('sbx1', 'again');
+		await provider.getRun('sbx1', 'r2');
+		expect(claude.runs()[1]).toContain('--resume');
+		expect(claude.runs()[1]).toContain(created[0].metadata[SESSION_METADATA]);
+		expect(claude.sends().at(-1)).toBe('again');
+	});
+
+	it('fails a turn whose terminal was lost', async () => {
+		const { provider, claude } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		await provider.getRun('sbx1', 'r1');
+		claude.core.exit(claude.live()!.address, 1);
+		expect(await provider.getRun('sbx1', 'r1')).toMatchObject({
+			status: 'failed',
+			error_message: 'The agent terminal was lost in the middle of a turn.'
+		});
+		// A status read does not start the CLI again.
+		expect(claude.runs()).toHaveLength(1);
+	});
+
+	it('stops a turn cut off by the time limit before continuing', async () => {
+		const { provider, claude, sandboxes, states } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		await provider.getRun('sbx1', 'r1');
 		states.set('sbx1', 'paused');
-		expect(await provider.createRun?.('sbx1', 'pick it up')).toEqual({ run_id: 'r2' });
-		expect(sandboxes.get('sbx1')!.runs.get('r1')?.cancelled).toBe(true);
+		await provider.createRun!('sbx1', 'carry on');
+		const sandbox = sandboxes.get('sbx1')!;
+		expect(sandbox.runs.get('r1')!.cancelled).toBe(true);
+		expect(claude.core.terminal('t1').state).toBe('finished');
+		expect(sandbox.started.map((s) => s.command)).toEqual(['beadsmith-run r1', 'beadsmith-run r2']);
 	});
 
-	it('cancels a working run and refuses a finished one', async () => {
-		const { provider, sandboxes } = setup();
+	it('cancels a working run by ending the CLI and refuses a finished one', async () => {
+		const { provider, claude, sandboxes } = setup();
+		claude.auto = false;
 		await provider.launch(TACKLE);
-		await provider.cancelRun?.('sbx1', 'r1');
+		await provider.getRun('sbx1', 'r1');
+		await provider.cancelRun!('sbx1', 'r1');
+		expect(claude.core.terminal('t1').state).toBe('finished');
 		expect(await provider.getRun('sbx1', 'r1')).toEqual({ status: 'cancelled' });
-		sandboxes.get('sbx1')!.runs.set('r2', { exit: 0 });
-		await expect(provider.cancelRun?.('sbx1', 'r2')).rejects.toThrow(
-			'This run cannot be cancelled.'
-		);
+		await expect(provider.cancelRun!('sbx1', 'r1')).rejects.toThrow(RUN_NOT_CANCELLABLE_MESSAGE);
+
+		// Cancelled during setup: the setup script is stopped, no CLI starts.
+		await provider.launch({ ...TACKLE, name: 'second' });
+		const second = sandboxes.get('sbx2')!;
+		second.runs.get('r1')!.ready = false;
+		await provider.cancelRun!('sbx2', 'r1');
+		expect(second.runs.get('r1')!.setup_killed).toBe(true);
+		second.runs.get('r1')!.ready = true;
+		expect(await provider.getRun('sbx2', 'r1')).toEqual({ status: 'cancelled' });
+		expect(claude.runs()).toHaveLength(1);
 	});
 
-	it('streams the event log as mission events and resumes after the last id', async () => {
-		const { provider, sandboxes } = setup();
+	it('streams the transcript as mission events and resumes after the last id', async () => {
+		const { provider, claude, sandboxes } = setup();
+		claude.auto = false;
 		await provider.launch(TACKLE);
-		const run = sandboxes.get('sbx1')!.runs.get('r1')!;
-		const result = JSON.stringify({
-			type: 'result',
-			subtype: 'success',
-			is_error: false,
-			result: 'done'
-		});
-		run.events = [
-			JSON.stringify({ type: 'system', subtype: 'init' }),
-			JSON.stringify({
-				type: 'assistant',
-				message: { content: [{ type: 'text', text: 'hello' }] }
-			}),
-			result
-		];
-		run.exit = 0;
-		run.result = result;
-
 		const events: MissionEvent[] = [];
-		const outcome = await provider.streamMissionEvents?.('sbx1', 'r1', async (event) => {
+		const streaming = provider.streamMissionEvents!('sbx1', 'r1', async (event) => {
 			events.push(event);
+			if (event.type === 'tool_call' && event.status === 'running') claude.finish();
 		});
-		expect(outcome).toBe('terminal');
-		expect(events).toEqual([
-			{ type: 'assistant', id: '2.0', text: 'hello' },
-			{ type: 'result', id: '3.0', status: 'succeeded', text: 'done' }
-		]);
+		expect(await streaming).toBe('terminal');
+		expect(events.map((e) => e.type)).toEqual(['tool_call', 'tool_call', 'assistant', 'result']);
+		expect(events.at(-1)).toMatchObject({
+			type: 'result',
+			status: 'succeeded',
+			text: `Done. Opened ${PR}`,
+			duration_ms: 4200
+		});
+		const result = JSON.parse(sandboxes.get('sbx1')!.file('r1', 'result.json')!);
+		expect(result).toMatchObject({ status: 'succeeded', event_id: events.at(-1)!.id });
 
-		const resumed: MissionEvent[] = [];
-		await provider.streamMissionEvents?.(
+		// A finished run replays only its stored result, unless the client has it.
+		const again: MissionEvent[] = [];
+		const after = events[1].id;
+		expect(
+			await provider.streamMissionEvents!('sbx1', 'r1', async (e) => void again.push(e), {
+				last_event_id: after
+			})
+		).toBe('terminal');
+		expect(again).toEqual([events.at(-1)]);
+		const none: MissionEvent[] = [];
+		await provider.streamMissionEvents!('sbx1', 'r1', async (e) => void none.push(e), {
+			last_event_id: events.at(-1)!.id
+		});
+		expect(none).toEqual([]);
+	});
+
+	it('resumes a live stream after the last id the client saw', async () => {
+		const { provider, claude } = setup();
+		claude.auto = false;
+		await provider.launch(TACKLE);
+		await provider.getRun('sbx1', 'r1');
+		const first: MissionEvent[] = [];
+		const controller = new AbortController();
+		const one = provider.streamMissionEvents!(
 			'sbx1',
 			'r1',
 			async (event) => {
-				resumed.push(event);
+				first.push(event);
+				controller.abort();
 			},
-			{ last_event_id: '2.0' }
+			{ signal: controller.signal }
 		);
-		expect(resumed.map((event) => event.id)).toEqual(['3.0']);
+		expect(await one).toBe('disconnected');
+		expect(first.map((e) => e.type)).toEqual(['tool_call']);
+
+		const rest: MissionEvent[] = [];
+		const two = provider.streamMissionEvents!('sbx1', 'r1', async (e) => void rest.push(e), {
+			last_event_id: first[0].id
+		});
+		await later(20);
+		claude.finish();
+		expect(await two).toBe('terminal');
+		expect(rest.map((e) => e.type)).toEqual(['tool_call', 'assistant', 'result']);
+		expect(rest[0]).toMatchObject({ status: 'completed' });
 	});
 
 	it('ends a cancelled stream with a cancelled result', async () => {
 		const { provider, sandboxes } = setup();
 		await provider.launch(TACKLE);
-		const run = sandboxes.get('sbx1')!.runs.get('r1')!;
-		run.events = [];
-		run.cancelled = true;
-		run.exit = 143;
+		sandboxes.get('sbx1')!.runs.set('r1', { ready: false, cancelled: true, exit: 130 });
 		const events: MissionEvent[] = [];
-		await provider.streamMissionEvents?.('sbx1', 'r1', async (event) => {
-			events.push(event);
-		});
-		expect(events).toEqual([expect.objectContaining({ type: 'result', status: 'cancelled' })]);
+		expect(
+			await provider.streamMissionEvents!('sbx1', 'r1', async (e) => void events.push(e))
+		).toBe('terminal');
+		expect(events).toEqual([{ type: 'result', id: '0.9000', status: 'cancelled' }]);
 	});
 });
 
 describe('run files', () => {
 	it('parses the status script output', () => {
-		expect(parseRunFiles('missing\n')).toEqual({ exists: false, cancelled: false });
-		expect(parseRunFiles('exit=1\ncancelled=\nstarted=10\nfinished=30\nresult=\n')).toEqual({
-			exists: true,
-			exit_code: 1,
-			cancelled: false,
-			started_ms: 10,
-			finished_ms: 30,
-			result_line: undefined
-		});
-	});
-
-	it('explains an exit without a result', () => {
+		expect(parseRunFiles('missing\n')).toEqual({ exists: false, cancelled: false, ready: false });
 		expect(
-			runUpdateFromFiles(
-				{ exists: true, exit_code: 2, cancelled: false, started_ms: 10, finished_ms: 30 },
-				''
+			parseRunFiles(
+				'exit=\ncancelled=\nready=1\nclaimed=990\nnow=1000\n' +
+					'turn={"base":2,"first_line":40}\nresult={"status":"succeeded","event_id":"52.9000","duration_ms":5}\n'
 			)
 		).toEqual({
+			exists: true,
+			exit_code: undefined,
+			cancelled: false,
+			ready: true,
+			claim_age_s: 10,
+			turn: { base: 2, first_line: 40 },
+			result: { status: 'succeeded', event_id: '52.9000', duration_ms: 5 }
+		});
+		// Files Beadsmith did not write in the expected shape are ignored.
+		const odd = parseRunFiles('ready=1\nturn={"base":-1}\nresult={"status":"running"}\n');
+		expect(odd).not.toHaveProperty('turn');
+		expect(odd).not.toHaveProperty('result');
+	});
+
+	it('settles a run from its files', () => {
+		const base = { exists: true, cancelled: false, ready: true };
+		expect(settledUpdate({ ...base })).toBeUndefined();
+		expect(settledUpdate({ ...base, exit_code: 10 })).toMatchObject({
+			error_message: 'The sandbox could not join the tailnet.'
+		});
+		expect(settledUpdate({ ...base, exit_code: 14 })).toMatchObject({
+			error_message: 'The sandbox could not start its terminal server (hc).'
+		});
+		expect(settledUpdate({ ...base, cancelled: true, exit_code: 130 })).toEqual({
+			status: 'cancelled'
+		});
+		// A claim with no turn long after the CLI's startup limit: the starter died.
+		expect(settledUpdate({ ...base, claim_age_s: 30 })).toBeUndefined();
+		expect(settledUpdate({ ...base, claim_age_s: 3_600 })).toEqual({
 			status: 'failed',
-			duration_ms: 20,
-			error_message: 'The agent exited with code 2 before reporting a result.'
+			error_message: 'The agent did not start.'
+		});
+	});
+});
+
+const LOOP = {
+	name: 'Loop: build',
+	dolt_database: 'beads_web',
+	repository: { url: 'https://github.com/example-org/beads-web', starting_ref: 'main' },
+	loop: { mode: 'build' as const, max_iterations: 5, harness: 'claude' as const }
+};
+
+describe('ralphArgv', () => {
+	it('passes the loop flags and keeps a run prompt out of flag position', () => {
+		expect(
+			ralphArgv('bdx-run-0123abcd', {
+				mode: 'run',
+				prompt: '--max 999',
+				issue_id: 'bw-1',
+				harness: 'codex',
+				model: 'gpt-5',
+				effort: 'high',
+				max_iterations: 3,
+				iteration_timeout_minutes: 20
+			})
+		).toEqual([
+			'ralph',
+			'run',
+			'--name',
+			'bdx-run-0123abcd',
+			'--no-observer',
+			'--max',
+			'3',
+			'--harness',
+			'codex',
+			'--model',
+			'gpt-5',
+			'--effort',
+			'high',
+			'--timeout',
+			'20',
+			'--bead',
+			'bw-1',
+			'--',
+			'--max 999'
+		]);
+		expect(ralphArgv('bdx-plan-0123abcd', { mode: 'plan', max_iterations: 2 })).toEqual([
+			'ralph',
+			'plan',
+			'--name',
+			'bdx-plan-0123abcd',
+			'--no-observer',
+			'--max',
+			'2'
+		]);
+	});
+});
+
+describe('E2B provider loops', () => {
+	async function launched(options: { ralph?: FakeRalph } = {}) {
+		const ralph = options.ralph ?? new FakeRalph();
+		const env = setup({ ralph });
+		const launch = await env.provider.launchLoop!(LOOP);
+		const sandbox = env.sandboxes.get(launch.agent_id)!;
+		const name = env.metadata.get(launch.agent_id)![LOOP_METADATA];
+		return { ...env, ralph, launch, sandbox, name };
+	}
+
+	function terminals(claude: FakeClaude) {
+		return [...claude.core.terminals.values()];
+	}
+
+	it('launches a sandbox of its own that E2B destroys, with the loop command and no prompt', async () => {
+		const { launch, created, sandbox, name, mint_github_token } = await launched();
+		expect(launch).toEqual({ agent_id: 'sbx1', run_id: 'r1' });
+		const [input] = created;
+		expect(input.on_timeout).toBe('kill');
+		expect(name).toMatch(/^bdx-build-[0-9a-f]{8}$/);
+		expect(input.metadata).toMatchObject({ beadsmith_write: '1', beadsmith_database: 'beads_web' });
+		expect(input.metadata).not.toHaveProperty(SESSION_METADATA);
+		// The loop writes code, so its checkout gets a token that can push.
+		expect(mint_github_token).toHaveBeenCalledWith(
+			'https://github.com/example-org/beads-web',
+			true
+		);
+		expect(JSON.parse(sandbox.file('r1', 'loop.json')!)).toEqual([
+			'ralph',
+			'build',
+			'--name',
+			name,
+			'--no-observer',
+			'--max',
+			'5',
+			'--harness',
+			'claude'
+		]);
+		expect(sandbox.file('r1', 'prompt')).toBeUndefined();
+		expect(sandbox.started.map((s) => s.command)).toEqual(['beadsmith-run r1']);
+		// Keys stay at the egress; the sandbox holds only the project's Dolt account.
+		expect(JSON.stringify(input.envs)).not.toContain(ANTHROPIC_KEY);
+		expect(JSON.stringify(input.envs)).not.toContain(GITHUB_TOKEN);
+	});
+
+	it('starts ralph serve and the loop as hc terminals once, then reports iterations', async () => {
+		const { provider, claude, ralph, sandbox, name } = await launched();
+		// ralph has not recorded the run yet: still starting.
+		expect(await provider.getRun('sbx1', 'r1')).toEqual({ status: 'running' });
+		const started = terminals(claude);
+		expect(started.map((t) => [t.name, t.cwd])).toEqual([
+			[SERVE_TERMINAL, WORK_DIR],
+			[LOOP_TERMINAL, WORK_DIR]
+		]);
+		expect(started[0].argv).toEqual(['ralph', 'serve', '--no-web', '--port', '7420']);
+		expect(started[1].argv).toEqual(JSON.parse(sandbox.file('r1', 'loop.json')!));
+		expect(sandbox.file('r1', 'started')).toBe('');
+
+		ralph.addRun({ name });
+		ralph.iterations.set(name, [
+			{
+				iteration: 1,
+				outcome: 'completed',
+				startedAt: '2026-11-11T10:00:00.000Z',
+				finishedAt: '2026-11-11T10:04:00.000Z',
+				durationMs: 240_000,
+				headBefore: 'aaaaaaa',
+				headAfter: 'bbbbbbb',
+				inputTokens: 100,
+				outputTokens: 50,
+				costUsd: 0.25,
+				validateOk: true,
+				planOpen: 4,
+				lastMessage: 'secret agent words'
+			}
+		]);
+		const update = await provider.getRun('sbx1', 'r1');
+		expect(update.status).toBe('running');
+		expect(update.iterations).toEqual([
+			expect.objectContaining({ iteration: 1, outcome: 'completed', plan_open: 4 })
+		]);
+		expect(JSON.stringify(update)).not.toContain('secret agent words');
+		// Nothing started twice.
+		expect(terminals(claude)).toHaveLength(2);
+		// Only allowlisted ralph routes.
+		expect(ralph.requests.every((r) => r.method === 'GET')).toBe(true);
+	});
+
+	it('relays the loop terminal, not ralph serve', async () => {
+		const { provider, claude } = await launched();
+		await provider.getRun('sbx1', 'r1');
+		const loop = terminals(claude).find((t) => t.name === LOOP_TERMINAL)!;
+		const relay = await provider.attachTerminal!('sbx1', {
+			mode: 'watch',
+			cols: 80,
+			rows: 24,
+			onData: () => {}
+		});
+		const attach = claude.core.calls.findLast((call) => call.method === 'terminal.attach');
+		expect(attach?.params.terminal).toBe(loop.address);
+		relay.close();
+	});
+
+	it('maps a finished loop onto the mission and lets the sandbox go', async () => {
+		const { provider, claude, ralph, sandbox, name } = await launched();
+		await provider.getRun('sbx1', 'r1');
+		ralph.addRun({ name, status: 'finished', alive: false, stopReason: 'plan_exhausted' });
+		ralph.reports.set(name, {
+			stopReason: 'plan_exhausted',
+			iterations: 3,
+			durationMs: 900_000,
+			needsHuman: [`bw-9 needs a decision; password ${DOLT_PASSWORD}`]
+		});
+		claude.core.exit(terminals(claude)[1].address, 3);
+		const update = await provider.getRun('sbx1', 'r1');
+		expect(update).toMatchObject({ status: 'succeeded', duration_ms: 900_000 });
+		expect(update.result_summary).toContain('The loop ended after 3 iterations');
+		expect(update.result_summary).toContain('A person should look.');
+		expect(update.result_summary).toContain('bw-9 needs a decision');
+		expect(update.result_summary).not.toContain(DOLT_PASSWORD);
+		expect(update.loop_end).toEqual({ stop_reason: 'plan_exhausted', needs_person: true });
+		expect(JSON.parse(sandbox.file('r1', 'result.json')!)).toMatchObject({ status: 'succeeded' });
+		// Later reads come from result.json and keep how the loop ended.
+		expect((await provider.getRun('sbx1', 'r1')).loop_end).toEqual({
+			stop_reason: 'plan_exhausted',
+			needs_person: true
+		});
+		expect(sandbox.timeouts.at(-1)).toBe(SETTINGS.idle_minutes * 60_000);
+		expect(sandbox.killed).toBe(false);
+	});
+
+	it('asks for a person when the report does, even after a clean stop', async () => {
+		const { provider, claude, ralph, name } = await launched();
+		await provider.getRun('sbx1', 'r1');
+		ralph.addRun({ name, status: 'finished', alive: false, stopReason: 'max_iterations' });
+		ralph.reports.set(name, {
+			stopReason: 'max_iterations',
+			iterations: 5,
+			durationMs: 60_000,
+			needsHuman: ['bw-3 is blocked on a credential']
+		});
+		claude.core.exit(terminals(claude)[1].address, 0);
+		const update = await provider.getRun('sbx1', 'r1');
+		expect(update.status).toBe('succeeded');
+		expect(update.loop_end).toEqual({ stop_reason: 'max_iterations', needs_person: true });
+	});
+
+	it('fails with a clear message when the template has no ralph', async () => {
+		const { provider, claude } = await launched();
+		await provider.getRun('sbx1', 'r1');
+		claude.core.exit(terminals(claude)[1].address, 127);
+		expect(await provider.getRun('sbx1', 'r1')).toEqual({
+			status: 'failed',
+			error_message: 'This sandbox has no ralph. Rebuild the Sand template (docs/sand-e2b.md).'
 		});
 	});
 
-	it('names the setup step that failed', () => {
-		expect(runUpdateFromFiles({ exists: true, exit_code: 10, cancelled: false }, '')).toMatchObject(
-			{ status: 'failed', error_message: 'The sandbox could not join the tailnet.' }
+	it('cancels by stopping ralph now and ending its terminal', async () => {
+		const { provider, claude, ralph, name } = await launched();
+		await provider.getRun('sbx1', 'r1');
+		ralph.addRun({ name });
+		await provider.cancelRun!('sbx1', 'r1');
+		expect(ralph.stops).toEqual([{ name, graceful: false }]);
+		expect(terminals(claude).find((t) => t.name === LOOP_TERMINAL)?.state).toBe('finished');
+		expect(await provider.getRun('sbx1', 'r1')).toEqual({ status: 'cancelled' });
+		await expect(provider.cancelRun!('sbx1', 'r1')).rejects.toThrow(RUN_NOT_CANCELLABLE_MESSAGE);
+	});
+
+	it('refuses a follow-up', async () => {
+		const { provider } = await launched();
+		await expect(provider.createRun!('sbx1', 'more')).rejects.toThrow('A loop takes no follow-up.');
+	});
+
+	it('streams ralph events as mission events and records the result once', async () => {
+		const { provider, ralph, sandbox, name } = await launched();
+		await provider.getRun('sbx1', 'r1');
+		ralph.addRun({ name });
+		ralph.emit(name, { type: 'iteration_started' });
+		ralph.emit(name, { type: 'assistant', text: `working with ${DOLT_PASSWORD}` });
+		ralph.emit(name, { type: 'tool_call', name: 'Bash', input: { command: 'cat secrets' } });
+		ralph.emit(name, { type: 'tool_result', isError: false, output: 'secret output' });
+		const finished = ralph.emit(name, {
+			type: 'run_finished',
+			reason: 'plan_complete',
+			iterations: 1
+		});
+		const run = ralph.runs.get(name)!;
+		run.status = 'finished';
+		run.alive = false;
+		run.stopReason = 'plan_complete';
+		const events: MissionEvent[] = [];
+		const outcome = await provider.streamMissionEvents!('sbx1', 'r1', async (e) => {
+			events.push(e);
+		});
+		expect(outcome).toBe('terminal');
+		expect(events.map((e) => e.type)).toEqual(['assistant', 'tool_call', 'tool_call', 'result']);
+		expect(JSON.stringify(events)).not.toContain(DOLT_PASSWORD);
+		expect(JSON.stringify(events)).not.toContain('secret output');
+		expect(events.at(-1)).toMatchObject({
+			id: String(finished),
+			status: 'succeeded',
+			text: 'The loop ended after 1 iteration: no open plan items are left.'
+		});
+		expect(JSON.parse(sandbox.file('r1', 'result.json')!)).toMatchObject({
+			status: 'succeeded',
+			event_id: String(finished)
+		});
+
+		// A browser that already saw the result is not sent it again.
+		const again: MissionEvent[] = [];
+		await provider.streamMissionEvents!(
+			'sbx1',
+			'r1',
+			async (e) => {
+				again.push(e);
+			},
+			{ last_event_id: String(finished) }
 		);
-		expect(runUpdateFromFiles({ exists: true, exit_code: 13, cancelled: false }, '')).toMatchObject(
-			{ error_message: 'The sandbox joined the tailnet but Dolt did not answer.' }
-		);
+		expect(again).toEqual([]);
+		// One that did not, is.
+		await provider.streamMissionEvents!('sbx1', 'r1', async (e) => {
+			again.push(e);
+		});
+		expect(again).toEqual([expect.objectContaining({ type: 'result', id: String(finished) })]);
 	});
 });

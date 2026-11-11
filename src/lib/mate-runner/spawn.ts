@@ -1,27 +1,39 @@
 /**
- * Start a chat's Claude Code process: over SSH in the First Mate sandbox (the
- * production shape), or as a local command (development and tests).
+ * Reach a chat's hc core (ADR-0021 rule 1): over SSH in the First Mate guest
+ * (the production shape), or as a local `hc connect` (development).
  *
- * The sandbox provides everything else: the working directory with its
- * AGENTS.md and skills, `bd`, and the model endpoint (ANTHROPIC_BASE_URL
+ * Either way the runner gets an hc client and nothing else: the session core
+ * (`src/lib/agent-session/`) launches Claude Code in a terminal of that core.
+ * The guest provides everything the agent needs: the working directory with
+ * its AGENTS.md and skills, `bd`, and the model endpoint (ANTHROPIC_BASE_URL
  * pointing at a host-side proxy that adds the credential, ADR-0015 rule 6).
- * Nothing secret is passed on this command line.
+ * Nothing secret is passed on these command lines.
  */
 
 import { spawn } from 'node:child_process';
-import type { AgentLaunch, AgentProcess, SpawnAgent } from './session.js';
+import { connectHc } from '../hc/client.js';
+import { childProcessTransport } from '../hc/node-transport.js';
+import type { AgentConnection, ConnectAgent } from './session.js';
 
-export interface SshAgentConfig {
-	/** `user@host` of the sandbox. */
-	target: string;
-	/** Private key the runner uses to reach the sandbox. */
-	identity_file: string;
-	/** known_hosts file pinning the sandbox's host key. */
-	known_hosts_file: string;
-	/** Directory in the sandbox the agent runs in. */
+/** Where the agent runs on the far side of the channel. */
+export interface AgentPlace {
+	/** Absolute working directory of the agent. */
 	workdir: string;
-	/** The Claude Code executable in the sandbox. */
+	/** Absolute Claude Code config directory (`~/.claude`); its transcripts live under it. */
+	config_dir: string;
+	/** The Claude Code executable the terminal runs. */
 	claude: string;
+	/** The hc executable. */
+	hc: string;
+}
+
+export interface SshAgentConfig extends AgentPlace {
+	/** `user@host` of the guest. */
+	target: string;
+	/** Private key the runner uses to reach the guest. */
+	identity_file: string;
+	/** known_hosts file pinning the guest's host key. */
+	known_hosts_file: string;
 }
 
 /**
@@ -34,40 +46,13 @@ export function scopePrompt(scope: string): string {
 	return `This chat is about the Beads project whose Dolt database is "${database}". This is the initial scope; follow scope changes supplied with later user messages. Start there unless the user asks about other projects.`;
 }
 
-/** Claude Code arguments for one long-lived chat process. */
-export function claudeArgs(launch: AgentLaunch): string[] {
-	const args = [
-		'-p',
-		'--input-format',
-		'stream-json',
-		'--output-format',
-		'stream-json',
-		'--verbose',
-		// The sandbox is the boundary (ADR-0015): no per-tool prompts, which
-		// nobody could answer from a headless process anyway.
-		'--permission-mode',
-		'bypassPermissions',
-		launch.resume ? '--resume' : '--session-id',
-		launch.session_id
-	];
-	if (launch.scope !== null) {
-		args.push('--append-system-prompt', scopePrompt(launch.scope));
-	}
-	if (launch.mcp_config !== undefined) {
-		args.push('--mcp-config', launch.mcp_config);
-	}
-	return args;
-}
-
 /** Quote one word for a POSIX shell. */
 export function shellQuote(word: string): string {
 	return `'${word.replace(/'/g, `'\\''`)}'`;
 }
 
-export function sshArgs(config: SshAgentConfig, launch: AgentLaunch): string[] {
-	const remote = `cd ${shellQuote(config.workdir)} && exec ${[config.claude, ...claudeArgs(launch)]
-		.map(shellQuote)
-		.join(' ')}`;
+/** `ssh` arguments that run `hc connect` in the guest, with the host key pinned. */
+export function sshArgs(config: SshAgentConfig): string[] {
 	return [
 		'-T',
 		'-o',
@@ -86,17 +71,26 @@ export function sshArgs(config: SshAgentConfig, launch: AgentLaunch): string[] {
 		config.identity_file,
 		config.target,
 		'--',
-		remote
+		`exec ${shellQuote(config.hc)} connect`
 	];
 }
 
-export function sshSpawner(config: SshAgentConfig): SpawnAgent {
-	return (launch) =>
-		spawn('ssh', sshArgs(config, launch), { stdio: ['pipe', 'pipe', 'pipe'] }) as AgentProcess;
+function launchOf(place: AgentPlace): AgentConnection['launch'] {
+	return { cwd: place.workdir, config_dir: place.config_dir, command: place.claude };
 }
 
-/** Run Claude Code (or a stand-in speaking its stream-json) on this machine. */
-export function localSpawner(command: string, cwd: string): SpawnAgent {
-	return (launch) =>
-		spawn(command, claudeArgs(launch), { cwd, stdio: ['pipe', 'pipe', 'pipe'] }) as AgentProcess;
+/** Connect to the guest's hc core over SSH; the channel ends with the client. */
+export function sshConnector(config: SshAgentConfig): ConnectAgent {
+	return async () => {
+		const child = spawn('ssh', sshArgs(config), { stdio: ['pipe', 'pipe', 'ignore'] });
+		return { client: await connectHc(childProcessTransport(child)), launch: launchOf(config) };
+	};
+}
+
+/** Connect to an hc core on this machine (development). */
+export function localConnector(place: AgentPlace): ConnectAgent {
+	return async () => {
+		const child = spawn(place.hc, ['connect'], { stdio: ['pipe', 'pipe', 'ignore'] });
+		return { client: await connectHc(childProcessTransport(child)), launch: launchOf(place) };
+	};
 }

@@ -18,6 +18,7 @@ import {
 	toThemePreference
 } from '#lib/client/theme.js';
 import type { AgentTarget } from '#lib/client/agent.js';
+import type { LoopTarget } from '#lib/client/loop.js';
 import { run_place } from '#lib/client/agent-runner.svelte.js';
 import type { ResolvedTheme, StatusSnapshot, ThemePreference } from '#lib/types.js';
 
@@ -45,6 +46,8 @@ class AppState {
 	activity_seen_at = $state(0);
 	/** The issue the agent dialog is about; null while it is closed. */
 	agent_target = $state<AgentTarget | null>(null);
+	/** Where the loop dialog starts a loop; null while it is closed. */
+	loop_target = $state<LoopTarget | null>(null);
 	/** Last project route visited, so `g i` works from cross-project pages. */
 	last_project_id = $state<string | null>(null);
 	/** Stored preference, seeded from the shell that the server rendered. */
@@ -234,11 +237,29 @@ class AppState {
 		this.closeDrawer();
 		this.first_mate_open = false;
 		this.closeActivity();
+		this.loop_target = null;
 		this.agent_target = target;
 	}
 
 	closeAgent() {
 		this.agent_target = null;
+	}
+
+	/**
+	 * Open the loop dialog on a project or one bead (key `L`).
+	 *
+	 * @param target - The project, and the bead when started from one.
+	 */
+	openLoop(target: LoopTarget) {
+		this.closeDrawer();
+		this.first_mate_open = false;
+		this.closeActivity();
+		this.agent_target = null;
+		this.loop_target = target;
+	}
+
+	closeLoop() {
+		this.loop_target = null;
 	}
 
 	/** Collapse the desktop rail, or open the drawer on a narrow screen. */

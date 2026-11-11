@@ -9,9 +9,11 @@ escalation only for real decisions.
 
 Beadsmith does not run the agent. It stores each chat and relays it to a
 **mate runner**, a separate service that keeps one agent session alive per
-chat (for example Claude Code in headless stream-json mode inside a sandbox,
-[ADR-0015](../specs/decisions/0015-scoped-agent-sandboxes.md)). This page is
-the contract between the two.
+chat (interactive Claude Code in an hc terminal inside a sandbox,
+[ADR-0015](../specs/decisions/0015-scoped-agent-sandboxes.md) and
+[ADR-0021](../specs/decisions/0021-hc-terminal-runtime.md)). This page is
+the contract between the two, and [how Beadsmith's own runner
+works](#how-the-runner-runs-a-chat).
 
 ## Who can use it
 
@@ -283,7 +285,8 @@ data: {"type":"assistant","id":"e000042","text":"Two workers started."}
 
 `POST /v1/mate/chats/{chat_id}/interrupt` → `202`. Stops the agent's current
 turn; the session survives. The turn should end with a `result` whose status
-is `cancelled`.
+is `cancelled`. Messages still queued behind the turn are dropped too (stop
+means stop); if nothing was running yet, one `cancelled` result closes them.
 
 ### Delete
 
@@ -294,6 +297,66 @@ chat. `404` (never knew it) is fine too.
 
 `GET /v1/health` → `{ "ok": true }`. Beadsmith caches the answer for 15
 seconds and shows admins when the runner is not answering.
+
+## How the runner runs a chat
+
+Both runners Beadsmith ships, the `remote` one on the forge host
+([`scripts/mate-runner.ts`](../scripts/mate-runner.ts)) and the `e2b` one
+inside Beadsmith, are the same core
+([`src/lib/mate-runner/`](../src/lib/mate-runner/)). Each chat's agent is
+interactive Claude Code in an [hc](https://github.com/herdrdev/herdr-core)
+terminal, driven by the session core
+([`src/lib/agent-session/`](../src/lib/agent-session/), ADR-0021):
+
+- The runner reaches the hc core only through a channel it already holds:
+  `ssh <guest> hc connect` with the pinned host key on forge, the E2B
+  process channel on Sand ([sand-e2b.md](sand-e2b.md#how-a-chat-runs)). No
+  hc socket or port leaves the guest or sandbox.
+- The first message launches `claude --session-id <session_id>` in the
+  working directory, labelled `beadsmith-chat=<chat id>`, and pastes the
+  prompt into it; the prompt is never on a command line. The CLI keeps
+  running between turns, so a follow-up is the next message to the same
+  process.
+- Events come from Claude Code's own session transcript (one mapping for
+  chats and missions), sanitized, and are recorded in the chat log with the
+  runner's `e…` ids. A turn ends when hc's turn counter moves and the
+  transcript has its end record; every turn ends with a `result`.
+- A message sent during a turn waits in the runner and goes in when the
+  turn ends. A CLI waiting for a decision (hc reports `blocked`) is never
+  typed into: the message fails with an error saying so. Stop (interrupt)
+  is one way out; on Sand an admin can also take over the chat's terminal
+  through the relay (the **Terminal** strip under the chat's header;
+  `POST /api/console/terminals`, docs/contract.md) and answer it by hand.
+  Forge chats have no relay yet, so they show no strip.
+- The chat holds no channel while it has no agent. After a runner
+  restart, an idle chat being evicted (`MATE_RUNNER_MAX_SESSIONS`), the
+  CLI exiting or the channel dropping, the next message connects again:
+  the session core follows a CLI that is still live, or launches
+  `claude --resume <session_id>` when the transcript is there (a new,
+  empty sandbox starts the session fresh). A turn whose CLI exits or whose
+  channel is lost ends with an error and a `failed` result. Shutdown and
+  eviction end the CLI; a runner that crashed finds it still running.
+
+The forge runner's settings (environment of `mate-runner.service`):
+
+| Setting                    | Meaning                                                                              |
+| -------------------------- | ------------------------------------------------------------------------------------ |
+| `MATE_AGENT_SSH`           | `user@host` of the guest; with `MATE_AGENT_SSH_KEY` and `MATE_AGENT_KNOWN_HOSTS`     |
+| `MATE_AGENT_WORKDIR`       | Absolute working directory of the agent in the guest                                 |
+| `MATE_AGENT_CLAUDE_CONFIG` | Absolute Claude Code config directory there (`~/.claude`); transcripts live under it |
+| `MATE_AGENT_CLAUDE`        | The Claude Code executable the terminal runs (default `claude`)                      |
+| `MATE_AGENT_HC`            | The hc executable in the guest (default `hc`)                                        |
+| `MATE_AGENT_LOCAL=1`       | Development: run `hc connect` on this machine instead of over SSH                    |
+
+Operator check once the guest has hc (not yet run; unit tests cover the
+runner against a fake hc core): open a First Mate chat on the forge runner
+and send a message. In the guest, `hc ls` lists one live terminal labelled
+`beadsmith-chat=<chat id>` running Claude Code in the working directory.
+Send a second message: the same terminal answers. Press stop during a long
+answer: the chat shows the turn cancelled and the terminal is still live.
+Restart `mate-runner.service` and send again: a new terminal runs
+`claude --resume` and the answer shows the agent remembers the
+conversation.
 
 ## Code
 

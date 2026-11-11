@@ -5,6 +5,8 @@ import type { FileCheckoutMapping } from './dispatch/file-maps.js';
 import { parseGitHubRepositoryUrl, parseGitRef } from './dispatch/repositories.js';
 import type { TackleRepositoryMapping } from './dispatch/repositories.js';
 import { normalizeEndpoint } from './backup/s3.js';
+import { LOOP_MAX_ITERATIONS, RALPH_HARNESSES, RALPH_MODES } from '#lib/ralph.js';
+import { EFFORT_PATTERN, MODEL_PATTERN } from '#lib/agent-session/claude-code.js';
 import {
 	CHAT_ID_PATTERN,
 	CREW_NOTICE_PREFIX,
@@ -119,12 +121,57 @@ const discuss_dispatch_schema = z
 	})
 	.strict();
 
+/** Bounds on a loop besides its iteration limit (LOOP_MAX_ITERATIONS in ralph.ts). */
+export const LOOP_MAX_ITERATION_TIMEOUT_MINUTES = 240;
+export const LOOP_PROMPT_MAX = 8000;
+
+const loop_dispatch_schema = z
+	.object({
+		operation: z.literal('loop'),
+		provider: dispatch_provider_schema,
+		idempotency_key: z.string().regex(IDEMPOTENCY_KEY_PATTERN, 'invalid idempotency key'),
+		mode: z.enum(RALPH_MODES),
+		prompt: z.string().trim().min(1).max(LOOP_PROMPT_MAX).optional(),
+		issue_id: issue_id_schema.optional(),
+		harness: z.enum(RALPH_HARNESSES).optional(),
+		model: z.string().regex(MODEL_PATTERN, 'invalid model').optional(),
+		effort: z.string().regex(EFFORT_PATTERN, 'invalid effort').optional(),
+		max_iterations: z.number().int().min(1).max(LOOP_MAX_ITERATIONS),
+		iteration_timeout_minutes: z
+			.number()
+			.int()
+			.min(1)
+			.max(LOOP_MAX_ITERATION_TIMEOUT_MINUTES)
+			.optional()
+	})
+	.strict()
+	.superRefine((loop, ctx) => {
+		// ralph run takes its task as a prompt; the other modes use the
+		// checkout's own prompts, so a prompt there would be silently ignored.
+		if (loop.mode === 'run' && loop.prompt === undefined) {
+			ctx.addIssue({ code: 'custom', path: ['prompt'], message: 'a run loop needs a prompt' });
+		}
+		if (loop.mode !== 'run' && loop.prompt !== undefined) {
+			ctx.addIssue({ code: 'custom', path: ['prompt'], message: 'only a run loop takes a prompt' });
+		}
+		// ralph narrows build (and records run) to one bead; plan and reverse
+		// work on the whole project (ADR-0019 rule 6).
+		if (loop.issue_id !== undefined && loop.mode !== 'build' && loop.mode !== 'run') {
+			ctx.addIssue({
+				code: 'custom',
+				path: ['issue_id'],
+				message: 'only a build or run loop works on one bead'
+			});
+		}
+	});
+
 /** Body of `POST /api/projects/:id/dispatch`. */
 export const dispatch_schema = z.discriminatedUnion('operation', [
 	file_dispatch_schema,
 	tackle_dispatch_schema,
 	comment_dispatch_schema,
-	discuss_dispatch_schema
+	discuss_dispatch_schema,
+	loop_dispatch_schema
 ]);
 
 export const dispatch_request_id_schema = z
@@ -435,3 +482,48 @@ export const mate_message_schema = z
 export const mate_event_id_schema = z
 	.string()
 	.regex(/^[A-Za-z0-9._:-]{1,128}$/, 'invalid event id');
+
+// --- Admin terminal relay (ADR-0021 rule 4) -------------------------------
+
+const relay_cells_schema = z.number().int().min(1).max(1000);
+
+/**
+ * Body of `POST /api/console/terminals`: exactly one of a mission or a chat
+ * (never a sandbox or terminal address), how to attach, and the viewer's grid.
+ */
+export const open_terminal_relay_schema = z
+	.object({
+		mission: dispatch_request_id_schema.optional(),
+		chat: mate_chat_id_schema.optional(),
+		mode: z.enum(['watch', 'take_over']),
+		cols: relay_cells_schema,
+		rows: relay_cells_schema
+	})
+	.strict()
+	.refine(
+		(value) => (value.mission === undefined) !== (value.chat === undefined),
+		'name exactly one of mission or chat'
+	);
+
+export const terminal_relay_id_schema = z
+	.string()
+	.regex(/^tr_[a-f0-9]{32}$/, 'invalid terminal relay id');
+
+/** Body of `POST /api/console/terminals/:relay`: base64 keystrokes, a new size, or both. */
+export const terminal_relay_input_schema = z
+	.object({
+		data: z
+			.string()
+			.max(65_536)
+			.regex(/^[A-Za-z0-9+/]*={0,2}$/, 'data must be base64')
+			.optional(),
+		cols: relay_cells_schema.optional(),
+		rows: relay_cells_schema.optional()
+	})
+	.strict()
+	.refine((value) => (value.cols === undefined) === (value.rows === undefined), {
+		message: 'send cols and rows together'
+	})
+	.refine((value) => value.data !== undefined || value.cols !== undefined, {
+		message: 'send data or a size'
+	});

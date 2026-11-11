@@ -27,7 +27,10 @@ describe('initStateSchema', () => {
 			'auth_session',
 			'auth_user',
 			'auth_verification',
+			'automation_runs',
+			'automations',
 			'backup_runs',
+			'dispatch_loop_iterations',
 			'dispatch_project_allows',
 			'dispatch_requests',
 			'dispatch_turns',
@@ -37,14 +40,15 @@ describe('initStateSchema', () => {
 			'mate_events',
 			'settings',
 			'tackle_repository_maps',
+			'terminal_relay_sessions',
 			'todo_comments',
 			'todo_route_issues',
 			'todos'
 		]);
 	});
 
-	it('declares the application, todo and account tables and indexes', () => {
-		expect(STATE_SCHEMA_SQL).toHaveLength(23);
+	it('declares the application, todo, account, relay audit and automation tables and indexes', () => {
+		expect(STATE_SCHEMA_SQL).toHaveLength(28);
 	});
 
 	it('adds run result columns to an existing table', async () => {

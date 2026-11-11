@@ -7,6 +7,11 @@ let
     cp ${../../../scripts/mate-runner.ts} $out/scripts/mate-runner.ts
     cp ${../../../scripts/ts-resolve.mjs} $out/scripts/ts-resolve.mjs
     cp -r ${../../../src/lib/mate-runner} $out/src/lib/mate-runner
+    # The session core and hc client the runner drives chats with (ADR-0021).
+    cp -r ${../../../src/lib/agent-session} $out/src/lib/agent-session
+    cp -r ${../../../src/lib/hc} $out/src/lib/hc
+    mkdir -p $out/src/lib/server/dispatch
+    cp ${../../../src/lib/server/dispatch/sanitize.ts} $out/src/lib/server/dispatch/sanitize.ts
     cp ${../../../src/lib/mission-events.ts} $out/src/lib/mission-events.ts
     echo '{"type":"module"}' > $out/package.json
   '';
@@ -57,6 +62,7 @@ in {
       MATE_AGENT_SSH_KEY = "%d/agent-key";
       MATE_AGENT_KNOWN_HOSTS = toString knownHosts;
       MATE_AGENT_WORKDIR = "/var/lib/agent/home/work";
+      MATE_AGENT_CLAUDE_CONFIG = "/var/lib/agent/home/.claude";
       MATE_AGENT_CLAUDE = "/run/current-system/sw/bin/mate-claude";
     };
     serviceConfig = {

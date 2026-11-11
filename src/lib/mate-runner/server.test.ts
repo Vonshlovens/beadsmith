@@ -3,105 +3,92 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createInterface } from 'node:readline';
-import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { SESSION_LABEL } from '#lib/agent-session/session.js';
+import { connectHc } from '#lib/hc/client.js';
+import { FakeClaude } from '#lib/test/fake-claude.js';
+import type { FakeTerminal } from '#lib/test/fake-hc.js';
 import { ChatStore } from './event-log.js';
 import { createRunnerHandler } from './server.js';
-import type { AgentLaunch, AgentProcess } from './session.js';
+import { CHAT_LABEL } from './session.js';
 import { signRequest } from './signature.js';
 
 const SECRET = 's'.repeat(40);
 const SESSION = '6f1c2a0e-1b2c-4d3e-8f90-123456789abc';
-
-/** A stand-in for Claude Code: answers each user line with a short turn. */
-class FakeAgent implements AgentProcess {
-	stdin = new PassThrough();
-	stdout = new PassThrough();
-	stderr = new PassThrough();
-	killed = false;
-	readonly #exit: ((code: number | null) => void)[] = [];
-
-	constructor(readonly launch: AgentLaunch) {
-		this.stdout.write(
-			`${JSON.stringify({ type: 'system', subtype: 'init', session_id: launch.session_id })}\n`
-		);
-		createInterface({ input: this.stdin }).on('line', (line) => {
-			const input = JSON.parse(line) as { type: string; message?: { content: { text: string }[] } };
-			if (input.type === 'control_request') {
-				this.emit({ type: 'result', subtype: 'error_during_execution', is_error: true });
-				return;
-			}
-			const text = input.message?.content[0]?.text ?? '';
-			if (text === 'hang') return;
-			this.emit({
-				type: 'assistant',
-				message: { content: [{ type: 'text', text: `echo: ${text}` }] }
-			});
-			this.emit({
-				type: 'result',
-				subtype: 'success',
-				is_error: false,
-				result: `echo: ${text}`,
-				duration_ms: 5
-			});
-		});
-		this.stdin.on('finish', () => this.exit(0));
-	}
-
-	emit(line: unknown): void {
-		this.stdout.write(`${JSON.stringify(line)}\n`);
-	}
-
-	exit(code: number | null): void {
-		for (const listener of this.#exit.splice(0)) listener(code);
-	}
-
-	kill(): boolean {
-		this.killed = true;
-		this.exit(null);
-		return true;
-	}
-
-	once(event: 'exit', listener: (code: number | null) => void): unknown;
-	once(event: 'error', listener: (error: Error) => void): unknown;
-	once(
-		event: string,
-		listener: ((code: number | null) => void) | ((error: Error) => void)
-	): unknown {
-		if (event === 'error') return this;
-		this.#exit.push(listener as (code: number | null) => void);
-		return this;
-	}
-}
+/** Another chat's CLI session. */
+const OTHER = '00000000-0000-4000-8000-000000000000';
+const THIRD = '00000000-0000-4000-8000-000000000003';
+const WORKDIR = '/home/agent/work';
+const TIMING = { poll_ms: 5, startup_ms: 500, settle_ms: 50, turn_ms: 5_000 };
 
 let dir: string;
 let server: Server;
 let base: string;
-let agents: FakeAgent[];
+let fake: FakeClaude;
 let handler: ReturnType<typeof createRunnerHandler>;
-let failSpawn = false;
+let failConnect = false;
+let connects = 0;
+
+const later = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function until(check: () => boolean, ms = 2_000): Promise<void> {
+	const deadline = Date.now() + ms;
+	while (!check()) {
+		if (Date.now() > deadline) throw new Error('condition never held');
+		await later(2);
+	}
+}
+
+/** A Claude Code that echoes each message, except `hang`, which never ends its turn. */
+function newFake(): FakeClaude {
+	const claude = new FakeClaude({ config_dir: '/home/agent/.claude' });
+	claude.onMessage = (t, text) => {
+		if (text.endsWith('hang')) return;
+		claude.say(`echo: ${text}`, t);
+		claude.endTurn(t);
+	};
+	claude.core.onInterrupt = (t) => claude.core.setStatus(t.address, 'idle');
+	return claude;
+}
+
+/** The live terminal of the chat with this CLI session. */
+function terminalOf(session_id = SESSION): FakeTerminal {
+	const found = [...fake.core.terminals.values()].filter(
+		(t) => t.labels[SESSION_LABEL] === session_id && t.state === 'live'
+	);
+	if (found.length !== 1) throw new Error(`expected one live terminal, found ${found.length}`);
+	return found[0];
+}
 
 async function start(max_live_sessions = 3): Promise<void> {
-	agents = [];
 	handler = createRunnerHandler({
 		secret: SECRET,
 		store: new ChatStore(dir),
-		spawn: (launch) => {
-			if (failSpawn) {
-				failSpawn = false;
-				throw new Error('spawn failed');
+		connect: async () => {
+			connects += 1;
+			if (failConnect) {
+				failConnect = false;
+				throw new Error('ssh: connection refused');
 			}
-			const agent = new FakeAgent(launch);
-			agents.push(agent);
-			return agent;
+			return {
+				client: await connectHc(fake.core.connect()),
+				launch: { cwd: WORKDIR, config_dir: fake.config_dir, command: 'mate-claude' }
+			};
 		},
 		max_live_sessions,
-		heartbeat_ms: 50
+		heartbeat_ms: 50,
+		agent: { timing: TIMING }
 	});
 	server = createServer((req, res) => void handler(req, res));
 	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
 	base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+}
+
+/** Stop serving; `graceful` runs the runner's own shutdown, as SIGTERM does. */
+async function shutdown(graceful: boolean): Promise<void> {
+	if (graceful) await handler.close();
+	server.closeAllConnections();
+	await new Promise((resolve) => server.close(resolve));
 }
 
 function signed(method: string, target: string, body = ''): RequestInit {
@@ -154,14 +141,21 @@ async function readEvents(chat: string, count: number, after?: string) {
 
 beforeEach(async () => {
 	dir = mkdtempSync(join(tmpdir(), 'mate-runner-'));
+	fake = newFake();
+	failConnect = false;
+	connects = 0;
 	await start();
 });
 
 afterEach(async () => {
-	server.closeAllConnections();
-	await new Promise((resolve) => server.close(resolve));
+	await shutdown(true).catch(() => undefined);
 	rmSync(dir, { recursive: true, force: true });
 });
+
+async function interrupt(chat: string) {
+	const target = `/v1/mate/chats/${chat}/interrupt`;
+	return fetch(`${base}${target}`, signed('POST', target));
+}
 
 describe('mate runner', () => {
 	it('refuses unsigned requests', async () => {
@@ -170,7 +164,7 @@ describe('mate runner', () => {
 		expect(await ok.json()).toEqual({ ok: true });
 	});
 
-	it('runs a turn and replays it as events', async () => {
+	it('runs a turn in an hc terminal and replays it as events', async () => {
 		const res = await post('chat1', 'hello', 'm1');
 		expect(res.status).toBe(202);
 		expect(await res.json()).toEqual({ event_id: 'e000000001' });
@@ -178,10 +172,40 @@ describe('mate runner', () => {
 		expect(events).toEqual([
 			{ type: 'user', id: 'e000000001', text: 'hello', message_id: 'm1' },
 			{ type: 'assistant', id: 'e000000002', text: 'echo: hello' },
-			{ type: 'result', id: 'e000000003', status: 'succeeded', text: 'echo: hello', duration_ms: 5 }
+			{
+				type: 'result',
+				id: 'e000000003',
+				status: 'succeeded',
+				text: 'echo: hello',
+				duration_ms: 42
+			}
 		]);
-		expect(agents[0]?.launch).toEqual({ session_id: SESSION, resume: false, scope: 'beads-web' });
 		expect(await readEvents('chat1', 2, 'e000000001')).toHaveLength(2);
+
+		const t = terminalOf();
+		expect(t.argv.slice(0, 5)).toEqual([
+			'mate-claude',
+			'--permission-mode',
+			'bypassPermissions',
+			'--session-id',
+			SESSION
+		]);
+		expect(t.argv).toContain('--append-system-prompt');
+		expect(t.cwd).toBe(WORKDIR);
+		expect(t.labels).toEqual({ [CHAT_LABEL]: 'chat1', [SESSION_LABEL]: SESSION });
+		// The prompt is pasted into the running CLI, never put on its command line.
+		expect(t.sent).toEqual(['hello']);
+		expect(t.argv.join(' ')).not.toContain('hello');
+	});
+
+	it('sends a follow-up to the same running CLI', async () => {
+		await post('chat1', 'one', 'm1');
+		await readEvents('chat1', 3);
+		await post('chat1', 'two', 'm2');
+		expect((await readEvents('chat1', 6)).at(-1)).toMatchObject({ text: 'echo: two' });
+		expect(fake.core.terminals.size).toBe(1);
+		expect(terminalOf().sent).toEqual(['one', 'two']);
+		expect(connects).toBe(1);
 	});
 
 	it('sends a retried message to the agent only once', async () => {
@@ -190,111 +214,165 @@ describe('mate runner', () => {
 		expect(await again.json()).toEqual({ event_id: 'e000000001' });
 		const events = await readEvents('chat1', 3);
 		expect(events.filter((event) => event.type === 'user')).toHaveLength(1);
+		expect(terminalOf().sent).toEqual(['hello']);
 	});
 
 	it('keeps one session per chat', async () => {
 		await post('chat1', 'hello', 'm1');
-		const other = await post('chat1', 'hi', 'm2', '00000000-0000-4000-8000-000000000000');
-		expect(other.status).toBe(409);
+		expect((await post('chat1', 'hi', 'm2', OTHER)).status).toBe(409);
 	});
 
-	it('interrupts a running turn', async () => {
+	it('queues a message sent while the agent works and sends it when the turn ends', async () => {
 		await post('chat1', 'hang', 'm1');
-		const target = '/v1/mate/chats/chat1/interrupt';
-		await readEvents('chat1', 1);
-		expect((await fetch(`${base}${target}`, signed('POST', target))).status).toBe(202);
-		const events = await readEvents('chat1', 2);
-		expect(events[1]).toMatchObject({ type: 'result', status: 'cancelled' });
+		await until(() => terminalOf().sent.length === 1);
+		expect((await post('chat1', 'next', 'm2')).status).toBe(202);
+		await later(30);
+		expect(terminalOf().sent).toEqual(['hang']);
+		fake.say('done', terminalOf());
+		fake.endTurn(terminalOf());
+		const events = await readEvents('chat1', 6);
+		expect(events.map((e) => e.type)).toEqual([
+			'user',
+			'user',
+			'assistant',
+			'result',
+			'assistant',
+			'result'
+		]);
+		expect(events.at(-1)).toMatchObject({ text: 'echo: next' });
+		expect(terminalOf().sent).toEqual(['hang', 'next']);
 	});
 
-	it('resumes the session in a new process after a restart', async () => {
+	it('interrupts a running turn and drops what was queued behind it', async () => {
+		await post('chat1', 'hang', 'm1');
+		await until(() => terminalOf().sent.length === 1);
+		await post('chat1', 'never', 'm2');
+		expect((await interrupt('chat1')).status).toBe(202);
+		const events = await readEvents('chat1', 3);
+		expect(events[2]).toMatchObject({ type: 'result', status: 'cancelled' });
+		await later(30);
+		expect(terminalOf().sent).toEqual(['hang']);
+		expect(new ChatStore(dir).get('chat1').meta?.pending).toBe(0);
+		// The CLI keeps running for the next message.
+		await post('chat1', 'after', 'm3');
+		expect((await readEvents('chat1', 6)).at(-1)).toMatchObject({ text: 'echo: after' });
+	});
+
+	it('resumes the CLI session in a new terminal after a runner restart', async () => {
 		await post('chat1', 'one', 'm1');
 		await readEvents('chat1', 3);
-		server.closeAllConnections();
-		await new Promise((resolve) => server.close(resolve));
+		const first = terminalOf();
+		await shutdown(true);
+		// Shutdown ends the CLI, as it ended the old headless process.
+		expect(first.state).toBe('finished');
 		await start();
 		await post('chat1', 'two', 'm2');
 		const events = await readEvents('chat1', 6);
 		expect(events.at(-1)).toMatchObject({ type: 'result', text: 'echo: two' });
-		expect(agents[0]?.launch.resume).toBe(true);
+		const second = terminalOf();
+		expect(second.argv).toContain('--resume');
+		expect(second.argv).not.toContain('--session-id');
+		// Earlier turns are not replayed as new events.
+		expect(events.filter((e) => e.type === 'assistant')).toHaveLength(2);
 	});
 
-	it('reports an agent that dies mid-turn', async () => {
+	it('follows a CLI that outlived a crashed runner', async () => {
+		await post('chat1', 'one', 'm1');
+		await readEvents('chat1', 3);
+		await shutdown(false);
+		await start();
+		await post('chat1', 'two', 'm2');
+		expect((await readEvents('chat1', 6)).at(-1)).toMatchObject({ text: 'echo: two' });
+		expect(fake.core.terminals.size).toBe(1);
+		expect(terminalOf().sent).toEqual(['one', 'two']);
+	});
+
+	it('reports an agent that dies mid-turn and resumes it on the next message', async () => {
 		await post('chat1', 'hang', 'm1');
-		await readEvents('chat1', 1);
-		agents[0]?.exit(1);
-		const events = await readEvents('chat1', 2);
+		await until(() => terminalOf().sent.length === 1);
+		fake.core.exit(terminalOf().address, 1);
+		const events = await readEvents('chat1', 3);
 		expect(events[1]).toMatchObject({ type: 'error' });
+		expect(events[2]).toMatchObject({ type: 'result', status: 'failed' });
+		await post('chat1', 'again', 'm2');
+		expect((await readEvents('chat1', 6)).at(-1)).toMatchObject({ text: 'echo: again' });
+		expect(terminalOf().argv).toContain('--resume');
+	});
+
+	it('ends a turn whose channel is lost with an error', async () => {
+		await post('chat1', 'hang', 'm1');
+		await until(() => terminalOf().sent.length === 1);
+		fake.core.disconnectAll();
+		const events = await readEvents('chat1', 2);
+		expect(events[1]).toMatchObject({ type: 'error', message: expect.stringMatching(/lost/) });
+		expect(new ChatStore(dir).get('chat1').meta?.pending).toBe(0);
+	});
+
+	it('refuses to type into a CLI that waits for a decision', async () => {
+		await post('chat1', 'one', 'm1');
+		await readEvents('chat1', 3);
+		fake.core.setStatus(terminalOf().address, 'blocked');
+		await later(10);
+		await post('chat1', 'two', 'm2');
+		const events = await readEvents('chat1', 5);
+		expect(events[4]).toMatchObject({ type: 'error', message: expect.stringMatching(/decision/) });
+		expect(terminalOf().sent).toEqual(['one']);
 	});
 
 	it('stops the oldest idle session to stay under the cap', async () => {
-		server.closeAllConnections();
-		await new Promise((resolve) => server.close(resolve));
+		await shutdown(true);
 		await start(1);
 		await post('chat1', 'one', 'm1');
 		await readEvents('chat1', 3);
-		await post('chat2', 'two', 'm2');
+		const first = terminalOf();
+		await post('chat2', 'two', 'm2', OTHER);
 		await readEvents('chat2', 3);
-		expect(agents).toHaveLength(2);
-		await post('chat3', 'hang', 'm3');
-		await readEvents('chat3', 1);
-		const busy = await post('chat1', 'again', 'm4');
-		expect(busy.status).toBe(503);
+		expect(first.state).toBe('finished');
+		await post('chat3', 'hang', 'm3', THIRD);
+		await until(() => terminalOf(THIRD).sent.length === 1);
+		expect((await post('chat1', 'again', 'm4')).status).toBe(503);
 	});
 
-	it('forgets a deleted chat', async () => {
+	it('forgets a deleted chat and ends its CLI', async () => {
 		await post('chat1', 'hello', 'm1');
 		await readEvents('chat1', 3);
+		const t = terminalOf();
 		const target = '/v1/mate/chats/chat1';
 		expect((await fetch(`${base}${target}`, signed('DELETE', target))).status).toBe(204);
-		const fresh = await post('chat1', 'hi', 'm9', '00000000-0000-4000-8000-000000000000');
+		expect(t.state).toBe('finished');
+		expect(new ChatStore(dir).get('chat1').after(undefined)).toEqual([]);
+		const fresh = await post('chat1', 'hi', 'm9', OTHER);
 		expect(await fresh.json()).toEqual({ event_id: 'e000000001' });
 	});
 
 	it('does not consume message ids on capacity rejection', async () => {
-		server.closeAllConnections();
-		await new Promise((resolve) => server.close(resolve));
+		await shutdown(true);
 		await start(1);
 		await post('busy', 'hang', 'm1');
-		expect((await post('waiting', 'hello', 'm2')).status).toBe(503);
-		agents[0]!.emit({ type: 'result', subtype: 'success' });
-		expect((await post('waiting', 'hello', 'm2')).status).toBe(202);
+		await until(() => terminalOf().sent.length === 1);
+		expect((await post('waiting', 'hello', 'm2', OTHER)).status).toBe(503);
+		fake.endTurn(terminalOf());
+		await readEvents('busy', 2);
+		expect((await post('waiting', 'hello', 'm2', OTHER)).status).toBe(202);
 		expect((await readEvents('waiting', 3)).at(-1)).toMatchObject({
 			type: 'result',
 			status: 'succeeded'
 		});
 	});
 
-	it('ignores late output from a deleted process', async () => {
-		await post('chat1', 'hello', 'm1');
-		const old = agents[0]!;
-		const target = '/v1/mate/chats/chat1';
-		await fetch(`${base}${target}`, signed('DELETE', target));
-		old.emit({ type: 'assistant', message: { content: [{ type: 'text', text: 'stale' }] } });
-		expect(new ChatStore(dir).get('chat1').after(undefined)).toEqual([]);
-	});
-
-	it('treats unsolicited assistant activity as busy and interruptible', async () => {
-		await post('chat1', 'hello', 'm1');
-		agents[0]!.emit({
-			type: 'assistant',
-			message: { content: [{ type: 'text', text: 'reporting' }] }
-		});
-		await readEvents('chat1', 4);
-		const target = '/v1/mate/chats/chat1/interrupt';
-		await fetch(`${base}${target}`, signed('POST', target));
-		expect((await readEvents('chat1', 5)).at(-1)).toMatchObject({ status: 'cancelled' });
-	});
-
-	it('allows retry after a synchronous spawn failure', async () => {
-		failSpawn = true;
-		expect((await post('chat1', 'hello', 'm1')).status).toBe(500);
+	it('reports an agent that cannot start, and starts it on the next message', async () => {
+		failConnect = true;
 		expect((await post('chat1', 'hello', 'm1')).status).toBe(202);
-		expect((await readEvents('chat1', 3)).at(-1)).toMatchObject({ status: 'succeeded' });
+		const events = await readEvents('chat1', 2);
+		expect(events[1]).toMatchObject({ type: 'error', message: expect.stringMatching(/start/) });
+		expect(JSON.stringify(events)).not.toContain('ssh');
+		await post('chat1', 'hello', 'm2');
+		expect((await readEvents('chat1', 4)).at(-1)).toMatchObject({ status: 'succeeded' });
 	});
 
 	it('applies changed scope to the next message in the existing session', async () => {
 		await post('chat1', 'hello', 'm1');
+		await readEvents('chat1', 3);
 		const target = '/v1/mate/chats/chat1/messages';
 		const body = JSON.stringify({
 			session_id: SESSION,
@@ -305,12 +383,14 @@ describe('mate runner', () => {
 		expect((await fetch(`${base}${target}`, signed('POST', target, body))).status).toBe(202);
 		const events = await readEvents('chat1', 6);
 		expect(events.at(-1)?.text).toContain('other_project');
-		expect(agents).toHaveLength(1);
+		expect(terminalOf().sent[1]).toMatch(/other_project[\s\S]*next$/);
+		expect(fake.core.terminals.size).toBe(1);
 		expect(new ChatStore(dir).get('chat1').meta?.scope).toBe('d_other_project');
 	});
 
 	it('preserves an omitted project scope and clears it only on explicit null', async () => {
 		await post('chat1', 'hello', 'm1');
+		await readEvents('chat1', 3);
 		const target = '/v1/mate/chats/chat1/messages';
 		const omitted = JSON.stringify({ session_id: SESSION, message_id: 'm2', prompt: 'next' });
 		expect((await fetch(`${base}${target}`, signed('POST', target, omitted))).status).toBe(202);
@@ -326,14 +406,16 @@ describe('mate runner', () => {
 		expect((await fetch(`${base}${target}`, signed('POST', target, cleared))).status).toBe(202);
 		expect((await readEvents('chat1', 9)).at(-1)?.text).toContain('every available Beads project');
 		expect(new ChatStore(dir).get('chat1').meta?.scope).toBeNull();
-		expect(agents).toHaveLength(1);
+		expect(fake.core.terminals.size).toBe(1);
 	});
 
 	it('stops active sessions on shutdown and refuses new requests', async () => {
 		await post('chat1', 'hang', 'm1');
+		await until(() => terminalOf().sent.length === 1);
+		const t = terminalOf();
 		await handler.close();
-		expect(agents[0]!.stdin.writableEnded).toBe(true);
-		expect((await post('chat2', 'hello', 'm2')).status).toBe(503);
+		expect(t.state).toBe('finished');
+		expect((await post('chat2', 'hello', 'm2', OTHER)).status).toBe(503);
 	});
 
 	it('rejects reuse of an id for a different message', async () => {
@@ -345,6 +427,7 @@ describe('mate runner', () => {
 		expect((await post('chat1', '', 'm1')).status).toBe(400);
 		expect((await post('chat1', 'hi', 'bad id!')).status).toBe(400);
 		expect((await post('chat1', 'hi', 'm1', 'not-a-uuid')).status).toBe(400);
+		expect((await post('chat1', 'hi', 'm1', SESSION.toUpperCase())).status).toBe(400);
 		const target = '/v1/mate/chats/bad.id/messages';
 		expect((await fetch(`${base}${target}`, signed('POST', target, '{}'))).status).toBe(400);
 	});

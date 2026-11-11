@@ -33,7 +33,8 @@ const OPERATION_LABEL: Record<DispatchOperation, string> = {
 	file: 'File',
 	tackle: 'Tackle',
 	comment: 'Comment',
-	discuss: 'Discuss'
+	discuss: 'Discuss',
+	loop: 'Loop'
 };
 
 export interface CrewNoticeDeps {

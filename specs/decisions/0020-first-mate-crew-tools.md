@@ -155,8 +155,9 @@ The relay is restarted up to five times per Claude Code process and killed
 with it. `AgentLaunch.mcp_config` adds `--mcp-config` to the shared
 `claudeArgs`. E2B create and connect errors and a 2,000-character stderr
 tail on a bad exit go to the server log only, stripped of credential shapes;
-the dispatch provider logs a failed run's `stderr.log` and `setup.log` tails
-the same way.
+the dispatch provider logs a failed setup's `setup.log` tail the same way
+(its runs used to log `stderr.log` too, before missions moved into hc
+terminals under [0021](./0021-hc-terminal-runtime.md)).
 
 **Write tools.** `src/lib/server/crew/write-tools.ts`. `create_todo`,
 `update_todo` and `complete_todo` change the todo store directly

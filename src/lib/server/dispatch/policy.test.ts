@@ -70,6 +70,16 @@ describe('operationAllowed', () => {
 	});
 });
 
+describe('operationAllowed for loop', () => {
+	it('needs Tackle, because every loop mode writes Beads or code', () => {
+		expect(operationAllowed({ file: true, tackle: false }, 'loop')).toBe(false);
+		expect(operationAllowed({ file: false, tackle: true }, 'loop')).toBe(true);
+		expect(deniedOperationMessage('loop')).toBe(
+			'A loop changes issues and code, so it needs Tackle allowed for this project.'
+		);
+	});
+});
+
 describe('operationAllowed for discuss', () => {
 	it('lets either allow talk, but needs Tackle to change the issue', () => {
 		const file_only = { file: true, tackle: false };

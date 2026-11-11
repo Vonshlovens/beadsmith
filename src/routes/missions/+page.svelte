@@ -1,10 +1,21 @@
 <script lang="ts">
-	/** Fleet view of agent missions across projects; each row opens its thread. */
+	/**
+	 * Fleet view of agent missions across projects; each row opens its thread.
+	 * A kind filter separates ralph loops from one-shot runs.
+	 */
 	import { refreshAll } from '$app/navigation';
 	import EmptyState from '#lib/components/empty-state.svelte';
 	import MissionsList from '#lib/components/missions-list.svelte';
 	import PageHeader from '#lib/components/page-header.svelte';
 	import { isBusyStatus } from '#lib/client/agent.js';
+	import {
+		filterMissions,
+		MISSION_KIND_LABEL,
+		MISSION_KINDS,
+		missionKind,
+		type MissionKind
+	} from '#lib/client/loop.js';
+	import { tip } from '#lib/client/tooltip.js';
 	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
 	import { stepFocus } from '#lib/client/list-focus.js';
 	import { PRODUCT_NAME } from '#lib/product.js';
@@ -14,7 +25,43 @@
 
 	let list_el = $state<HTMLDivElement | null>(null);
 	let refreshing = $state(false);
+	let kind = $state<MissionKind>('all');
 	const working = $derived(data.missions.filter((mission) => isBusyStatus(mission.status)).length);
+	const loops_running = $derived(
+		data.missions.filter(
+			(mission) => missionKind(mission) === 'loop' && isBusyStatus(mission.status)
+		).length
+	);
+	const has_loops = $derived(data.missions.some((mission) => missionKind(mission) === 'loop'));
+	const shown = $derived(filterMissions(data.missions, kind));
+	const meta = $derived(
+		[
+			kind === 'all' ? String(data.missions.length) : `${shown.length} of ${data.missions.length}`,
+			working > 0 ? `${working} working` : '',
+			loops_running > 0 ? `${loops_running} ${loops_running === 1 ? 'loop' : 'loops'}` : ''
+		]
+			.filter(Boolean)
+			.join(' · ')
+	);
+
+	function kindCount(value: MissionKind): number {
+		return filterMissions(data.missions, value).length;
+	}
+
+	/** Arrow keys move the choice, as in any radio group. */
+	function onKindKey(event: KeyboardEvent) {
+		const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+		if (step === 0) return;
+		event.preventDefault();
+		const next =
+			MISSION_KINDS[
+				(MISSION_KINDS.indexOf(kind) + step + MISSION_KINDS.length) % MISSION_KINDS.length
+			];
+		kind = next;
+		(event.currentTarget as HTMLElement)
+			.querySelector<HTMLButtonElement>(`[data-kind="${next}"]`)
+			?.focus();
+	}
 
 	async function refresh() {
 		refreshing = true;
@@ -46,13 +93,32 @@
 <div class="wrap is-wide missions">
 	<PageHeader
 		title="Missions"
-		meta={working > 0
-			? `${data.missions.length} · ${working} working`
-			: String(data.missions.length)}
-		meta_label="{data.missions.length} runs across all projects, {working} working"
+		{meta}
+		meta_label="{shown.length} of {data.missions
+			.length} runs across all projects, {working} working, {loops_running} loops running"
 		onrefresh={refresh}
 		{refreshing}
-	/>
+	>
+		{#snippet actions()}
+			{#if has_loops}
+				<!-- svelte-ignore a11y_interactive_supports_focus -->
+				<div class="kind" role="radiogroup" aria-label="Kind of run" onkeydown={onKindKey}>
+					{#each MISSION_KINDS as value (value)}
+						<button
+							type="button"
+							role="radio"
+							data-kind={value}
+							aria-checked={kind === value}
+							tabindex={kind === value ? 0 : -1}
+							class:is-on={kind === value}
+							{@attach tip(`${kindCount(value)} runs`)}
+							onclick={() => (kind = value)}>{MISSION_KIND_LABEL[value]}</button
+						>
+					{/each}
+				</div>
+			{/if}
+		{/snippet}
+	</PageHeader>
 
 	{#if data.error}
 		<div class="banner banner-err" role="alert">
@@ -74,9 +140,22 @@
 				<a class="btn btn-sm" href="/projects">Open projects</a>
 			{/snippet}
 		</EmptyState>
+	{:else if shown.length === 0}
+		<EmptyState
+			title={kind === 'loop' ? 'No loops in these runs' : 'No one-shot runs in these runs'}
+			description="The filter shows {MISSION_KIND_LABEL[
+				kind
+			].toLowerCase()} only, from the latest {data.missions.length} runs."
+		>
+			{#snippet actions()}
+				<button class="btn btn-sm" type="button" onclick={() => (kind = 'all')}
+					>Show all runs</button
+				>
+			{/snippet}
+		</EmptyState>
 	{:else}
 		<div bind:this={list_el}>
-			<MissionsList missions={data.missions} show_project />
+			<MissionsList missions={shown} show_project />
 		</div>
 	{/if}
 </div>
@@ -84,5 +163,42 @@
 <style>
 	.missions {
 		max-width: 1480px;
+	}
+	/* The activity log's project picker, so filters read alike across pages. */
+	.kind {
+		display: flex;
+		gap: 2px;
+		padding: 2px;
+		border: 1px solid var(--line);
+		border-radius: var(--r-1);
+		background: var(--s2);
+	}
+	.kind button {
+		height: 22px;
+		padding: 0 8px;
+		border: 0;
+		border-radius: 2px;
+		background: none;
+		color: var(--tx-dim);
+		font: inherit;
+		font-size: var(--t-xs);
+		cursor: pointer;
+	}
+	.kind button:hover {
+		color: var(--tx-hi);
+	}
+	.kind button:focus-visible {
+		outline: 2px solid var(--em-500);
+		outline-offset: 1px;
+	}
+	.kind button.is-on {
+		background: var(--em-wash);
+		color: var(--em-300);
+	}
+	@media (pointer: coarse) {
+		.kind button {
+			height: 32px;
+			padding: 0 12px;
+		}
 	}
 </style>
