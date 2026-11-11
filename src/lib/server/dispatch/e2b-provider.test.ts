@@ -17,6 +17,7 @@ import {
 	SESSION_METADATA,
 	MODEL_METADATA,
 	EFFORT_METADATA,
+	type E2bProviderDeps,
 	type SandboxCreateInput,
 	type SandboxDriver,
 	type SandboxNetwork,
@@ -296,7 +297,7 @@ function setup(overrides: { create_fails?: boolean; ralph?: FakeRalph } = {}) {
 	const logs: string[] = [];
 	const mint_github_token = vi.fn(async () => GITHUB_TOKEN);
 	const mint_tailscale_key = vi.fn(async () => 'tskey-auth-single-use');
-	const provider = createE2bProvider({
+	const deps: E2bProviderDeps = {
 		settings: SETTINGS,
 		label: 'Sand',
 		driver,
@@ -310,10 +311,13 @@ function setup(overrides: { create_fails?: boolean; ralph?: FakeRalph } = {}) {
 		timing: { poll_ms: 5, startup_ms: 500, settle_ms: 50, wait_ms: 5 },
 		...(overrides.ralph === undefined ? {} : { ralph_fetch: () => overrides.ralph!.fetch }),
 		log: (message) => logs.push(message)
-	});
+	};
+	const provider = createE2bProvider(deps);
 	providers.push({ claude });
 	return {
 		provider,
+		/** A new provider on the same sandboxes, as after a Beadsmith restart. */
+		restartServer: () => createE2bProvider(deps),
 		claude,
 		sandboxes,
 		states,
@@ -1168,6 +1172,59 @@ describe('E2B provider loops', () => {
 		};
 		expect((await provider.getRun('sbx1', 'r1')).status).toBe('running');
 		expect(logs.join('\n')).toContain('could not extend the run limit');
+	});
+
+	it("replaces a running loop's GitHub token at the egress before its hour runs out", async () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		try {
+			vi.setSystemTime(new Date('2026-11-11T10:00:00Z'));
+			const { provider, ralph, sandbox, name, mint_github_token, restartServer } = await launched();
+			expect(mint_github_token).toHaveBeenCalledTimes(1);
+			ralph.addRun({ name });
+			await provider.getRun('sbx1', 'r1');
+			vi.setSystemTime(new Date('2026-11-11T10:44:00Z'));
+			await provider.getRun('sbx1', 'r1');
+			// Still fresh: the egress keeps the launch token.
+			expect(sandbox.networks).toHaveLength(0);
+
+			mint_github_token.mockResolvedValueOnce('ghs_refreshed_token_000000000000');
+			vi.setSystemTime(new Date('2026-11-11T10:46:00Z'));
+			expect((await provider.getRun('sbx1', 'r1')).status).toBe('running');
+			expect(sandbox.networks).toHaveLength(1);
+			// Same scope as at launch: the one repository, write.
+			expect(mint_github_token).toHaveBeenLastCalledWith(
+				'https://github.com/example-org/beads-web',
+				true
+			);
+			expect(sandbox.networks[0].headers['api.github.com']).toEqual({
+				authorization: 'Bearer ghs_refreshed_token_000000000000'
+			});
+			await provider.getRun('sbx1', 'r1');
+			expect(sandbox.networks).toHaveLength(1);
+
+			// A failed refresh is retried on the next read.
+			mint_github_token.mockRejectedValueOnce(new Error('GitHub could not be reached.'));
+			vi.setSystemTime(new Date('2026-11-11T11:32:00Z'));
+			expect((await provider.getRun('sbx1', 'r1')).status).toBe('running');
+			expect(sandbox.networks).toHaveLength(1);
+			await provider.getRun('sbx1', 'r1');
+			expect(sandbox.networks).toHaveLength(2);
+
+			// After a Beadsmith restart nothing says how old the token is: mint now.
+			const restarted = restartServer();
+			await restarted.getRun('sbx1', 'r1');
+			expect(sandbox.networks).toHaveLength(3);
+			await restarted.getRun('sbx1', 'r1');
+			expect(sandbox.networks).toHaveLength(3);
+
+			// An ended loop is not refreshed.
+			ralph.addRun({ name, status: 'finished', alive: false, stopReason: 'max_iterations' });
+			vi.setSystemTime(new Date('2026-11-11T13:00:00Z'));
+			await restarted.getRun('sbx1', 'r1');
+			expect(sandbox.networks).toHaveLength(3);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('relays the loop terminal, not ralph serve', async () => {

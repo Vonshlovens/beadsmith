@@ -41,7 +41,8 @@
  * iterations, events and stop go to ralph's `/v1` as curl commands over the
  * process channel (`../e2b/ralph-transport.ts`). Each read that finds more
  * iterations finished gives the sandbox the full run limit again, so a loop
- * may outlast the limit as long as each iteration fits in it. When the loop ends, its
+ * may outlast the limit as long as each iteration fits in it; the same reads
+ * replace the egress's GitHub token before its hour runs out. When the loop ends, its
  * result is written to `result.json` and the sandbox gets a short timeout
  * after which E2B destroys it: a loop takes no follow-up, so nothing would
  * resume it. A restart in that window is run `r2` (and so on) in the same
@@ -184,6 +185,12 @@ const START_STALE_S = 300;
 const START_ACT_LIMIT_MS = (START_STALE_S - 60) * 1000;
 /** How long a stream waits for setup and the start before handing back to polling. */
 const STREAM_START_WAIT_MS = 15 * 60_000;
+/**
+ * GitHub installation tokens last an hour. A running loop's egress gets a
+ * new one this long after the last was minted, so the follower's next read
+ * (seconds apart) lands well before the old one expires.
+ */
+const GITHUB_TOKEN_REFRESH_MS = 45 * 60_000;
 /** Characters of the setup log kept for the server log when setup fails. */
 const FAILURE_TAIL_BYTES = 2_000;
 
@@ -490,6 +497,12 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 	const finished = new Map<string, AgentRunUpdate>();
 	/** Per running loop run: how many iterations had finished when its sandbox last got more time. */
 	const extended = new Map<string, number>();
+	/**
+	 * Per loop sandbox with a checkout: when the GitHub token now at its
+	 * egress was minted (taken before the request, so it errs early). Lost on
+	 * a server restart, which makes the next read of a running loop mint again.
+	 */
+	const github_minted = new Map<string, number>();
 	const sink = deps.log ?? ((message: string) => console.warn(message));
 	// E2B errors can echo request headers; strip credential shapes first.
 	const log = (message: string) => sink(sanitizeResultSummary(message, '') ?? message);
@@ -1128,6 +1141,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		for (const key of extended.keys()) {
 			if (key.startsWith(`${sandbox.id}/`)) extended.delete(key);
 		}
+		github_minted.delete(sandbox.id);
 		await sandbox.setTimeout(idle_ms).catch(() => undefined);
 	}
 
@@ -1157,6 +1171,30 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			extended.set(key, finished_count);
 		} catch (error) {
 			log(`Sand loop ${sandbox.id}: could not extend the run limit: ${String(error)}`);
+		}
+	}
+
+	/**
+	 * Keep a running loop's GitHub token fresh. The token minted at launch or
+	 * restart lasts an hour and a loop may run for many, so once it is
+	 * GITHUB_TOKEN_REFRESH_MS old the egress rules are replaced with a new
+	 * one of the same scope (one repository, write). The token stays at the
+	 * egress (ADR-0015 rule 6); the sandbox keeps its placeholder. A loop
+	 * this process has not minted for (Beadsmith restarted since) gets one
+	 * on its first read. A failed refresh is logged and tried again on the
+	 * next read; the old token still works until its hour is up.
+	 */
+	async function refreshLoopGithub(sandbox: SandboxRef, info: SandboxInfo): Promise<void> {
+		const repository = info.metadata.beadsmith_repository;
+		if (repository === undefined || repository === '') return;
+		const minted = github_minted.get(sandbox.id);
+		if (minted !== undefined && Date.now() - minted < GITHUB_TOKEN_REFRESH_MS) return;
+		const at = Date.now();
+		try {
+			await sandbox.updateNetwork(await networkFor(info.metadata));
+			github_minted.set(sandbox.id, at);
+		} catch (error) {
+			log(`Sand loop ${sandbox.id}: could not refresh the GitHub token: ${String(error)}`);
 		}
 	}
 
@@ -1242,6 +1280,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		run_id: string
 	): Promise<AgentLoopRestart> {
 		const base = `bdx-${input.loop.mode}-${randomUUID().slice(0, 8)}`;
+		const minted = Date.now();
 		// Every loop mode writes Beads or code, so its checkout can push.
 		const sandbox = await createSandbox({
 			name: input.name,
@@ -1260,6 +1299,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			log(`Sand loop ${sandbox.id}: setup could not start: ${String(error)}`);
 			throw new DispatchError('unavailable', `${deps.label} could not start the loop.`);
 		}
+		if (input.repository !== undefined) github_minted.set(sandbox.id, minted);
 		return { agent_id: sandbox.id, run_id };
 	}
 
@@ -1289,7 +1329,9 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			}
 		}
 		try {
+			const minted = Date.now();
 			await sandbox.updateNetwork(await networkFor(info.metadata));
+			github_minted.set(sandbox.id, minted);
 			await sandbox.setTimeout(max_run_ms);
 			await startLoopRun(sandbox, run_id, base, loop);
 		} catch (error) {
@@ -1324,6 +1366,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			if (observed.iterations !== undefined) {
 				await extendLoop(sandbox, run_id, observed.iterations.length);
 			}
+			await refreshLoopGithub(sandbox, info);
 			return { status: 'running', ...iterations };
 		}
 		await retireLoop(sandbox);

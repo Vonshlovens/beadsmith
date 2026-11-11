@@ -442,9 +442,14 @@ pinned version. The checkout must already be a ralph project
    `ralph serve` stops answering, the next read starts it again. Each read
    that finds ralph alive with more iterations finished than at the last
    extension gives the sandbox `BDX_E2B_MAX_RUN_MINUTES` again from now
-   (the first read after Beadsmith starts counts too). Beadsmith's
-   background follower keeps reading a loop until it ends, so this happens
-   with no browser open.
+   (the first read after Beadsmith starts counts too). GitHub installation
+   tokens last an hour, so a read of a running loop whose token is 45
+   minutes old mints a new one (same repository, same write scope) and
+   replaces the egress rules with it; the sandbox still sees only the
+   placeholder. Beadsmith keeps the mint time in memory, so the first read
+   after it restarts mints one too, and a refresh that fails is logged and
+   tried on the next read. Beadsmith's background follower keeps reading a
+   loop until it ends, so both happen with no browser open.
 4. When ralph's run ends, its stop reason (or, without one, the loop
    terminal's exit code) decides the mission's status, and the report's
    iteration count, duration and notes for a person become the summary. The
