@@ -1,11 +1,14 @@
-# Beadsmith desktop (prototype)
+# Beadsmith desktop
 
 A native desktop client for Beadsmith, built on
 [Rune](https://github.com/anomalyco/rune), a GPU-rendered Rust UI framework.
-It is a prototype for deciding whether a native port is worth carrying: it
-covers the web app's read path for one project at a time, and nothing else.
-The decision record is
-[ADR-0017](../specs/decisions/0017-native-desktop-prototype.md).
+It reads the same Dolt server as the web app, needs no deployed Beadsmith,
+and covers the web app's read path for one project at a time: it never
+writes. It is for the server's owner, since whoever holds the Dolt
+credential sees every project on the server. Version 0.1.0 is the first
+release; macOS is the supported platform, and Linux builds and runs from
+source. The decision record is
+[ADR-0017](../specs/decisions/0017-native-desktop-client.md).
 
 ![Beadsmith desktop, dark](docs/sample-dark.png)
 
@@ -54,7 +57,8 @@ The decision record is
   board, theme choice, window size and, on macOS, window position. See [What a relaunch remembers](#what-a-relaunch-remembers).
 - Keeps its connection: host, port and user in a settings file, the password
   in the macOS Keychain, set from a connection screen that can test them
-  first.
+  first, with optional TLS checked against the system's trusted roots. See
+  [TLS](#tls).
 
 It reads only. Dispatch (the web board's drag to an agent included),
 accounts, the console, backups, the Ready deck across projects, todos and
@@ -229,8 +233,8 @@ The list is `SHORTCUTS` in [`src/keys.rs`](src/keys.rs), where one function
 maps keys to commands and another runs them; a unit test fails if this table
 and that list disagree.
 
-On macOS the same commands are in the menu bar (the application menu, View,
-Go and Help), and Edit and Window are the system's standard ones, so `⌘W`,
+On macOS the same commands are in the menu bar (the application menu, View, Go,
+Issue and Help), and Edit and Window are the system's standard ones, so `⌘W`,
 `⌘M` and `⌘Q` behave as in any Mac app. Rune has no native menus on Linux or
 Windows; there `Ctrl+W` and `Ctrl+Q` are bound by the app itself.
 
@@ -503,22 +507,23 @@ cargo run -- --tree tree.json --scene filtered     # the element tree as JSON
 ```
 
 Scenes fill state directly, so they need no server. `--list-scenes` names
-them all: the data (`sample`, `filtered`, `ready`, and `sorted` for the widest
-sorted heading), the board (`board`,
-`board-ready` under a status tab and a sort, `board-filtered`,
-`board-loading`), every pane while it loads
+them all: the data (`sample`, `filtered`, `ready`, and `sorted` for the
+widest sorted heading), the board (`board`, `board-ready` under a status tab
+and a sort, `board-filtered`, `board-loading`), every pane while it loads
 (`loading`, `loading-issues`, `loading-issue`), the empty and failed states
 (`no-projects`, `empty-project`, `no-matches`, `issue-gone`, `unconfigured`,
 `unreachable`, `auth-rejected`, `credential-unavailable`, `tls-rejected`,
-`issues-failed`, `issue-failed`), a server read without TLS across a
-network (`unencrypted`), a failed refresh over loaded data (`stale`), the window
+`issues-failed`, `issue-failed`), a server read without TLS across a network
+(`unencrypted`), a failed refresh over loaded data (`stale`), the window
 re-reading by itself (`refreshing`) and its interval being chosen
-(`auto-refresh`), the
-connection screen (`connection` for a first launch, then `connection-*`),
-an issue being read from the keyboard (`reading`), one reached by
-following dependency links (`trail`, and `trail-gone` for a link to an issue
-that is not there), a theme chosen against the system's (`theme-light`,
-`theme-dark`) and the shortcuts list (`shortcuts`).
+(`auto-refresh`), the connection screen (`connection` for a first launch,
+then `connection-*`), an issue being read from the keyboard (`reading`), its
+dependencies grouped by type (`dependencies`), one reached by following
+dependency links (`trail`, and `trail-gone` for a link to an issue that is
+not there), the issue actions with and without a web address (`issue-link`,
+`issue-no-link`), a theme chosen against the system's (`theme-light`,
+`theme-dark`), the shortcuts list (`shortcuts`) and quick open (`quick-open`
+empty, then `quick-open-*` for an id, results, no match and a failed read).
 A headless run reads no environment, settings file
 or keychain, so an image depends on its scene alone. The screenshots above
 are `--snap docs/sample-dark.png --scene sample`, the same with

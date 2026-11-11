@@ -1,5 +1,5 @@
 //! Read-model types the desktop client shows. They mirror the web app's wire
-//! types in `src/lib/types.ts`, trimmed to what the prototype draws.
+//! types in `src/lib/types.ts`, trimmed to what the desktop app draws.
 
 /// Issue counts by lifecycle status, as `issueCounts` in
 /// `src/lib/server/dolt/client.ts` computes them.

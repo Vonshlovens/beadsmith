@@ -1,10 +1,10 @@
-# 0017. Native desktop prototype on Rune
+# 0017. Native desktop client on Rune
 
 Date: 2026-11-06
 
 ## Status
 
-proposed
+accepted (2026-11-11; proposed 2026-11-06 as a prototype)
 
 ## Context
 
@@ -30,7 +30,7 @@ the web app.
 
 ## Decision
 
-We will build a prototype native client in `desktop/`, a standalone Rust
+We will build a native client in `desktop/`, a standalone Rust
 crate on a pinned Rune revision, that reads Beads projects directly from one
 configured Dolt server with the web app's read contract
 ([0003](./0003-dolt-read-plane.md)): single parameterized `SELECT`/`SHOW`
@@ -45,8 +45,11 @@ override the file field by field, with the password file preferred over the
 raw value and the Keychain last. The password is held only in the Keychain
 and the driver's options.
 
-The prototype covers the project list, one project's issue table with
-status and text filters, and the issue detail.
+It covers the web app's read path, one project at a time: the project list,
+a project's issues as a table or a board under status (including Ready) and
+text filters, the issue detail with its dependency links, and quick open
+across projects. Each later addition is listed under Implementation notes
+with the read, if any, it adds.
 
 ## Consequences
 
@@ -120,6 +123,16 @@ window: it still needs a running server and gains nothing native.
 
 ## Implementation notes
 
+- Status: proposed as a prototype on 2026-11-06 to find out whether a
+  native port is worth carrying; accepted on 2026-11-11 with version 0.1.0,
+  once it covered the read path above, was bundled and released by its own
+  workflows, and the read contract and credential handling had held up
+  through those additions. Accepting it changed no boundary: the client
+  still reads only, through the statements listed here. The file was
+  renamed from `0017-native-desktop-prototype.md` at the same time. The
+  alternative above still says "more than a prototype should build": that
+  was the reasoning when the direct reader was chosen, and the trigger it
+  names (opening the client to anyone but the server's owner) still stands.
 - Code: [`desktop/`](../../desktop/README.md); the read plane is
   [`desktop/src/dolt.rs`](../../desktop/src/dolt.rs), ported from
   [`src/lib/server/dolt/client.ts`](../../src/lib/server/dolt/client.ts).

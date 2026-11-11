@@ -86,7 +86,7 @@ reality**. Search `src/` before treating a spec as implemented.
   checks, a NixOS VM test and the published GHCR image; the maintainer's host
   (`fleet/`) and its sops secrets live in this public repo
   ([ADR-0014](decisions/0014-public-repo-nix-and-fleet.md)).
-- Proposed, prototype only: a **native desktop client** on Rune in
+- A **native desktop client** on Rune in
   `desktop/` reads the same Dolt server directly with the web app's read
   contract and a SELECT-only account. It bypasses accounts and the project
   gate, so it is for the server's owner; it never scans workspaces or runs
@@ -95,7 +95,7 @@ reality**. Search `src/` before treating a spec as implemented.
   system's trusted roots. A script bundles it as an ad-hoc
   signed `Beadsmith.app`, locally or in a release workflow that attaches an
   unnotarized macOS zip to a GitHub Release on `desktop-v*` tags
-  ([ADR-0017](decisions/0017-native-desktop-prototype.md)).
+  ([ADR-0017](decisions/0017-native-desktop-client.md)).
 - **One Google IdP** when Cloudflare Access is used. Per-project
   catalog/membership is still the gate before projects are shared selectively;
   today every account sees every SQL-visible project
@@ -143,7 +143,7 @@ Follow the `architecture` skill at
 | [0013-owner-account-and-global-readers.md](decisions/0013-owner-account-and-global-readers.md) | [`scripts/ci/dolt-grants-smoke.sh`](../scripts/ci/dolt-grants-smoke.sh), [`docs/new-project.md`](../docs/new-project.md), [`fleet/hosts/beads/dolt.nix`](../fleet/hosts/beads/dolt.nix) (`beads-dolt-grants`) | Plain `bd init` creates projects; global readers; accounts scoped to projects for other agents |
 | [0015-scoped-agent-sandboxes.md](decisions/0015-scoped-agent-sandboxes.md) | [`fleet/hosts/forge/`](../fleet/hosts/forge/) (initial guest only) | Beads and repo sandboxes; admin terminal relay to sandboxes only; personal devices reach in through MCP |
 | [0016-first-mate-worker-runtime.md](decisions/0016-first-mate-worker-runtime.md) | [`fleet/hosts/forge/runtime.nix`](../fleet/hosts/forge/runtime.nix) | Persistent guest Claude Code, host model proxy and signed runner |
-| [0017-native-desktop-prototype.md](decisions/0017-native-desktop-prototype.md) | [`desktop/`](../desktop/README.md) | Proposed: native Rune client reading Dolt directly (prototype) |
+| [0017-native-desktop-client.md](decisions/0017-native-desktop-client.md) | [`desktop/`](../desktop/README.md) | Native Rune client reading Dolt directly with the web app's read contract; macOS bundle and release workflow |
 | [0018-sand-e2b-sandboxes.md](decisions/0018-sand-e2b-sandboxes.md) | [`src/lib/server/e2b/`](../src/lib/server/e2b/), [`src/lib/server/dispatch/e2b-provider.ts`](../src/lib/server/dispatch/e2b-provider.ts), [`src/lib/server/mate/e2b-runner.ts`](../src/lib/server/mate/e2b-runner.ts), [`sandbox/e2b/`](../sandbox/e2b/) | Sand: E2B sandboxes for missions and chats; several runners, picked in First Mate |
 | [0020-first-mate-crew-tools.md](decisions/0020-first-mate-crew-tools.md) | [`src/lib/server/crew/`](../src/lib/server/crew/) | Crew tools: one transport-free MCP tool module for First Mate chats (read tools, todo writes and mission launches as the chat's owner), relayed into Sand chats by [`src/lib/server/mate/crew-bridge.ts`](../src/lib/server/mate/crew-bridge.ts) |
 

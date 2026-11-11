@@ -846,16 +846,21 @@ fn tls_checkbox(s: &State, form: &Connection, k: &Kit) -> El {
                 .key("tls")
                 .description(note),
         )
+        // The indent is a wrapper's, not the text's own padding: wrapped text
+        // is measured at its box's full width, so padding on the text let a
+        // note that fits in 428pt but not in 400pt get one line's height and
+        // draw its second line over the field below.
         .child(
-            text(note)
-                .key("tls-note")
-                // The field hints' face, with room for a second line.
-                .font(k.ty.small.lh(15.0))
-                .color(k.c.text_muted)
-                .wrap()
-                .w_full()
-                .pl(28.0)
-                .a11y_hidden(),
+            col().w_full().pl(28.0).child(
+                text(note)
+                    .key("tls-note")
+                    // The field hints' face, with room for a second line.
+                    .font(k.ty.small.lh(15.0))
+                    .color(k.c.text_muted)
+                    .wrap()
+                    .w_full()
+                    .a11y_hidden(),
+            ),
         )
 }
 

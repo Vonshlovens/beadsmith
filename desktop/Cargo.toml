@@ -1,10 +1,10 @@
 [package]
 name = "beadsmith-desktop"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 license = "MIT"
 publish = false
-description = "Prototype native desktop client for Beadsmith, built on Rune."
+description = "Native desktop client for Beadsmith, built on Rune."
 
 # A standalone crate: not part of the pnpm project and not a member of any
 # other Cargo workspace.
