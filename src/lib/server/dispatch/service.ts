@@ -38,7 +38,7 @@ import {
 	MODELS_NOT_SUPPORTED_MESSAGE,
 	type AgentChoices
 } from './agent-choice.js';
-import { buildDispatchAgentName, buildDispatchPrompt } from './prompts.js';
+import { buildDispatchAgentName, buildDispatchPrompt, buildFollowUpPrompt } from './prompts.js';
 import {
 	deniedOperationMessage,
 	DISARMED_DISPATCH_MESSAGE,
@@ -1229,7 +1229,7 @@ export async function followUpDispatch(
 		throw new DispatchError('conflict', MISSION_NOT_LAUNCHED_MESSAGE);
 	}
 
-	const created = await createRun(current.agent_id, text);
+	const created = await createRun(current.agent_id, buildFollowUpPrompt(current, text));
 	const resumed = await store.startFollowUp(current.id, {
 		run_id: created.run_id,
 		status: 'launched'

@@ -1297,7 +1297,12 @@ describe('cancelDispatch and followUpDispatch', () => {
 			schedule_background: NO_BACKGROUND
 		});
 		expect(result?.status).toBe('launched');
-		expect(provider.createRun).toHaveBeenCalledWith('bc-steer', 'Also add tests.');
+		expect(provider.createRun).toHaveBeenCalledWith(
+			'bc-steer',
+			expect.stringContaining(
+				`<<<beads-web-followup-${id}>>>\nAlso add tests.\n<<<end-beads-web-followup-${id}>>>`
+			)
+		);
 		expect((await store.get(id))?.run_id).toBe('run-2');
 		expect(JSON.stringify(result)).not.toContain('secret notes');
 		expect(JSON.stringify(result)).not.toContain('Also add tests.');

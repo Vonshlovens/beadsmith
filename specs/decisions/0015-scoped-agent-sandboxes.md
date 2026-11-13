@@ -228,3 +228,9 @@ channel or the forge runner's SSH) and the relay (a console route keyed by
 chat or mission, watch by default, audited take-over). It covers the
 "`AgentProvider` over a terminal runtime" and "relay route" pieces above for
 Sand and the forge guest; the sandbox registry stays planned.
+
+Dispatch prompts fence every piece of user-authored text (issue title and
+description, File notes and hints, comment bodies, discuss and follow-up
+messages) between per-dispatch markers the text cannot contain, labelled as
+data or as a request ([contract](../../docs/contract.md#agent-dispatch)).
+This hardens the prompts; the sandbox's scope stays the boundary.

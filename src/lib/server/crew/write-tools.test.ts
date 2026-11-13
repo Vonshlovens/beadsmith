@@ -379,7 +379,13 @@ describe('mission tools', () => {
 			text: 'Also link the ADR'
 		});
 		expect(follow).toMatchObject({ launched: true, mission_id: discuss.mission_id });
-		expect(provider.createRun).toHaveBeenCalledWith('agent-1', 'Also link the ADR');
+		// The agent gets the message fenced as a request (docs/contract.md).
+		expect(provider.createRun).toHaveBeenCalledWith(
+			'agent-1',
+			expect.stringMatching(
+				/<<<beads-web-followup-[^>]+>>>\nAlso link the ADR\n<<<end-beads-web-followup-/
+			)
+		);
 
 		vi.mocked(provider.getRun).mockResolvedValue({ status: 'running' });
 		const cancel = await ok('cancel_mission', { mission_id: discuss.mission_id });
