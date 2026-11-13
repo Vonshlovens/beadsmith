@@ -193,6 +193,18 @@ A project without an entry cannot launch on Sand; its missions fail with a
 message saying so. Passwords must be at least 16 characters, and long random
 ones are the rule here because readers can see `mysql.user`.
 
+Everything Beadsmith reads back from a sandbox (summaries, the event
+stream, stored results, a failed setup's log tail) has the sandbox's Dolt
+password replaced by `[redacted]`. A sandbox records a fingerprint of the
+password it was issued (`beadsmith_dolt_fp` metadata), so after you rotate a
+password Beadsmith still redacts the old one: it reads it from the sandbox's
+own environment and uses it only if it matches the fingerprint, keeping it in
+memory. When neither works (the current password is unreadable or rotated, and the
+sandbox's answer does not match the fingerprint), Beadsmith fails closed: the mission shows its last
+saved status and no new output, the server logs `output withheld` once for
+that sandbox, and the output comes through, redacted, once the credential is
+readable again.
+
 ### 4. GitHub (dispatch with checkouts)
 
 Missions with a checkout (Tackle, and File or discuss when a checkout is
