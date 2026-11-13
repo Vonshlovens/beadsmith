@@ -54,7 +54,7 @@
  * the agent sees placeholders. The project's scoped Dolt account and a
  * single-use Tailscale key are the only credentials it holds.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { HcError, type HcClient, type HcTerminal } from '#lib/hc/client.js';
 import type { MissionEvent, MissionResultEvent, MissionResultStatus } from '#lib/mission-events.js';
 import { claudeCode, EFFORT_PATTERN, MODEL_PATTERN } from '#lib/agent-session/claude-code.js';
@@ -139,6 +139,29 @@ const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
 const DEFAULT_DOLT_LOCAL_PORT = '3306';
 /** Sandbox metadata key holding the CLI's session id. */
 export const SESSION_METADATA = 'beadsmith_session';
+
+/**
+ * Sandbox metadata: a fingerprint of the Dolt password the sandbox was
+ * launched with, so a read can tell whether the password Beadsmith has now
+ * is the one the sandbox holds (it is not after a rotation).
+ */
+export const DOLT_FINGERPRINT_METADATA = 'beadsmith_dolt_fp';
+
+/** Shown when a mission's output cannot be redacted, so it is withheld. */
+export const REDACTION_UNAVAILABLE_MESSAGE =
+	"Beadsmith cannot load this mission's Dolt credential to redact its output, so the output is withheld until it can.";
+
+/** Recovered issued passwords kept in memory; a bound, not a quota. */
+const ISSUED_PASSWORD_CACHE_LIMIT = 256;
+
+/**
+ * The fingerprint of a Dolt password. The passwords are generated and long,
+ * and the sandbox and E2B already hold the password itself, so a plain
+ * domain-separated SHA-256 reveals nothing they do not have.
+ */
+export function doltFingerprint(password: string): string {
+	return createHash('sha256').update(`beadsmith-dolt-redaction\0${password}`).digest('hex');
+}
 /**
  * Sandbox metadata keys holding the model and effort the mission was launched
  * with, so every relaunch of its CLI (a `--resume` after the terminal went)
@@ -624,15 +647,67 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		deps.read_dolt_account ??
 		((database: string) => readDoltAccount(settings.dolt_accounts_file, database));
 
-	/** The project's Dolt password, redacted from anything read back. Empty if unknown. */
-	async function redactionFor(info: SandboxInfo | undefined): Promise<string> {
-		const database = info?.metadata.beadsmith_database;
+	/** Issued passwords recovered from sandboxes after a rotation, by sandbox id. Memory only. */
+	const issued_passwords = new Map<string, string>();
+	/** Sandboxes whose withheld output was already logged, so a poll loop logs once. */
+	const withheld_logged = new Set<string>();
+
+	/**
+	 * The Dolt password this sandbox holds, to redact from anything read back
+	 * from it. Fails closed: when it cannot be known, this throws and the
+	 * caller publishes and persists nothing, so a follower keeps the mission
+	 * as it is and retries until the credential is readable again.
+	 *
+	 * The current account's password serves when its fingerprint matches the
+	 * one recorded at launch (or the sandbox predates fingerprints). After a
+	 * rotation, or when the account file is unreadable, the password the
+	 * sandbox was issued is read from its own environment (E2B gives create-time
+	 * envs to every command) and used only when it matches the fingerprint, so
+	 * the sandbox cannot steer redaction. It is kept in memory, never stored.
+	 */
+	async function redactionFor(info: SandboxInfo, sandbox: SandboxRef): Promise<string> {
+		const database = info.metadata.beadsmith_database;
+		// Launch always records the database; without one Beadsmith issued no password.
 		if (database === undefined) return '';
+		const fingerprint = info.metadata[DOLT_FINGERPRINT_METADATA];
+		let current: string | undefined;
 		try {
-			return (await doltAccount(database)).password;
+			current = (await doltAccount(database)).password;
 		} catch {
-			return '';
+			current = undefined;
 		}
+		if (
+			current !== undefined &&
+			(fingerprint === undefined || doltFingerprint(current) === fingerprint)
+		) {
+			return current;
+		}
+		if (fingerprint !== undefined) {
+			const known = issued_passwords.get(info.id);
+			if (known !== undefined) return known;
+			const issued = await sandbox
+				.exec('printenv BEADS_DOLT_PASSWORD')
+				.then(({ exit_code, stdout }) => (exit_code === 0 ? stdout.replace(/\n$/, '') : undefined))
+				.catch(() => undefined);
+			if (issued !== undefined && doltFingerprint(issued) === fingerprint) {
+				if (issued_passwords.size >= ISSUED_PASSWORD_CACHE_LIMIT) {
+					issued_passwords.delete(issued_passwords.keys().next().value!);
+				}
+				issued_passwords.set(info.id, issued);
+				withheld_logged.delete(info.id);
+				return issued;
+			}
+		}
+		if (!withheld_logged.has(info.id)) {
+			if (withheld_logged.size >= ISSUED_PASSWORD_CACHE_LIMIT) withheld_logged.clear();
+			withheld_logged.add(info.id);
+			const why =
+				current === undefined ? 'the Dolt account is unreadable' : 'the Dolt password changed';
+			log(
+				`Sand ${info.id}: output withheld: ${why} and the issued password could not be confirmed.`
+			);
+		}
+		throw new DispatchError('unavailable', REDACTION_UNAVAILABLE_MESSAGE);
 	}
 
 	async function networkFor(metadata: Record<string, string>): Promise<SandboxNetwork> {
@@ -712,7 +787,8 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			beadsmith_database: input.dolt_database,
 			beadsmith_repository: input.repository?.url ?? '',
 			beadsmith_write: input.write ? '1' : '0',
-			...input.metadata
+			...input.metadata,
+			[DOLT_FINGERPRINT_METADATA]: doltFingerprint(account.password)
 		};
 		const network = await networkFor(metadata);
 		let sandbox: SandboxRef;
@@ -1481,7 +1557,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		run_id: string,
 		name: string
 	): Promise<AgentRunUpdate> {
-		const redact = await redactionFor(info);
+		const redact = await redactionFor(info, sandbox);
 		const step = await advanceLoop(sandbox, run_id, redact);
 		if (step.done !== undefined) {
 			await retireLoop(sandbox);
@@ -1514,7 +1590,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 		on_event: (event: MissionEvent) => Promise<void>,
 		options: AgentStreamOptions
 	): Promise<AgentStreamOutcome> {
-		const redact = await redactionFor(info);
+		const redact = await redactionFor(info, sandbox);
 		const signal = options.signal;
 		const last =
 			options.last_event_id !== undefined && /^[0-9]{1,15}$/.test(options.last_event_id)
@@ -1702,7 +1778,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 				if (update.status !== 'running') finished.set(key, update);
 				return update;
 			}
-			const redact = await redactionFor(info);
+			const redact = await redactionFor(info, sandbox);
 			const step = await advance(sandbox, info, run_id, redact);
 			const done =
 				step.done ??
@@ -1806,7 +1882,7 @@ export function createE2bProvider(deps: E2bProviderDeps): AgentProvider {
 			if (loop !== undefined) {
 				return streamLoop(sandbox, info, run_id, loopRunName(loop, run_id), on_event, options);
 			}
-			const redact = await redactionFor(info);
+			const redact = await redactionFor(info, sandbox);
 			const signal = options.signal;
 			const seen = parseSessionEventId(options.last_event_id);
 

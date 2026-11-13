@@ -142,6 +142,13 @@ is undocumented.
 - Operator guide and every setting: [`docs/sand-e2b.md`](../../docs/sand-e2b.md).
   The current architecture bullet is in [`specs/README.md`](../README.md).
 
+Output read back from a mission sandbox is redacted with the Dolt password
+that sandbox was issued, confirmed against a fingerprint recorded at launch,
+and withheld when that password cannot be confirmed (fail closed; the
+[operator guide](../../docs/sand-e2b.md#3-dolt-accounts-dispatch) has the
+details). This applies the contract's secret-scrubbing invariant to rotated
+or unreadable credentials and changes no boundary.
+
 Unit tests cover these paths against fakes. The first live mission and chat
 are the acceptance check listed in the operator guide.
 

@@ -16,6 +16,9 @@ import {
 	SERVE_TERMINAL,
 	settledUpdate,
 	SESSION_METADATA,
+	DOLT_FINGERPRINT_METADATA,
+	doltFingerprint,
+	REDACTION_UNAVAILABLE_MESSAGE,
 	MODEL_METADATA,
 	EFFORT_METADATA,
 	type E2bProviderDeps,
@@ -129,6 +132,8 @@ class FakeSandbox implements SandboxRef {
 	timeouts: number[] = [];
 	carriers = 0;
 	killed = false;
+	/** The create-time envs, which E2B gives every command. */
+	envs: Record<string, string> = {};
 	/** What setup does when `beadsmith-run` starts. */
 	setup: Partial<FakeRun> = { ready: true };
 	/** Runs before each command; a test returns a promise to hold that command. */
@@ -163,6 +168,12 @@ class FakeSandbox implements SandboxRef {
 
 	async exec(command: string) {
 		await this.hold?.(command);
+		if (command === 'printenv BEADS_DOLT_PASSWORD') {
+			const value = this.envs.BEADS_DOLT_PASSWORD;
+			return value === undefined
+				? { exit_code: 1, stdout: '' }
+				: { exit_code: 0, stdout: `${value}\n` };
+		}
 		const run_of = (re: RegExp) => this.runs.get(re.exec(command)?.[1] ?? '');
 		if (/^d='[^']+\/(r[0-9]+)'; if \[ ! -d/.test(command)) {
 			const id = /runs\/(r[0-9]+)'/.exec(command)![1];
@@ -314,6 +325,7 @@ function setup(overrides: { create_fails?: boolean; ralph?: FakeRalph } = {}) {
 			if (overrides.create_fails) throw new Error(`quota exceeded for key ${ANTHROPIC_KEY}`);
 			created.push(input);
 			const sandbox = new FakeSandbox(`sbx${sandboxes.size + 1}`, claude);
+			sandbox.envs = { ...input.envs };
 			sandboxes.set(sandbox.id, sandbox);
 			states.set(sandbox.id, 'running');
 			metadata.set(sandbox.id, input.metadata);
@@ -342,6 +354,8 @@ function setup(overrides: { create_fails?: boolean; ralph?: FakeRalph } = {}) {
 		}
 	};
 	const logs: string[] = [];
+	/** The Dolt account file as Beadsmith reads it now; a test rotates or breaks it. */
+	const dolt = { password: DOLT_PASSWORD, readable: true };
 	const mint_github_token = vi.fn(async () => GITHUB_TOKEN);
 	const mint_tailscale_key = vi.fn(async () => 'tskey-auth-single-use');
 	const deps: E2bProviderDeps = {
@@ -352,8 +366,8 @@ function setup(overrides: { create_fails?: boolean; ralph?: FakeRalph } = {}) {
 		mint_tailscale_key,
 		mint_github_token,
 		read_dolt_account: async (database) => {
-			if (database !== 'beads_web') throw new Error('no account');
-			return { user: 'sbx_beads_web', password: DOLT_PASSWORD };
+			if (database !== 'beads_web' || !dolt.readable) throw new Error('no account');
+			return { user: 'sbx_beads_web', password: dolt.password };
 		},
 		timing: { poll_ms: 5, startup_ms: 500, settle_ms: 50, wait_ms: 5 },
 		...(overrides.ralph === undefined ? {} : { ralph_fetch: () => overrides.ralph!.fetch }),
@@ -372,7 +386,8 @@ function setup(overrides: { create_fails?: boolean; ralph?: FakeRalph } = {}) {
 		created,
 		mint_github_token,
 		mint_tailscale_key,
-		logs
+		logs,
+		dolt
 	};
 }
 
@@ -1669,5 +1684,94 @@ describe('E2B provider loops', () => {
 			again.push(e);
 		});
 		expect(again).toEqual([expect.objectContaining({ type: 'result', id: String(finished) })]);
+	});
+});
+
+describe('redaction fails closed', () => {
+	const ROTATED = 'rotated-dolt-password-1111';
+
+	/** A mission whose reply carries the password the sandbox was issued. */
+	async function leakyMission() {
+		const context = setup();
+		context.claude.auto = false;
+		context.claude.reply = `Done. Dolt said ${DOLT_PASSWORD}`;
+		await context.provider.launch(TACKLE);
+		expect(await context.provider.getRun('sbx1', 'r1')).toEqual({ status: 'running' });
+		return context;
+	}
+
+	it('records a fingerprint of the issued password, never the password', async () => {
+		const { provider, created } = setup();
+		await provider.launch(TACKLE);
+		expect(created[0].metadata[DOLT_FINGERPRINT_METADATA]).toBe(doltFingerprint(DOLT_PASSWORD));
+		expect(JSON.stringify(created[0].metadata)).not.toContain(DOLT_PASSWORD);
+	});
+
+	it('redacts the issued password after a rotation, read back from the sandbox', async () => {
+		const { provider, claude, dolt } = await leakyMission();
+		dolt.password = ROTATED;
+		claude.finish();
+		const update = await provider.getRun('sbx1', 'r1');
+		expect(update.status).toBe('succeeded');
+		expect(update.result_summary).toContain('[redacted]');
+		expect(update.result_summary).not.toContain(DOLT_PASSWORD);
+	});
+
+	it('redacts with the issued password when the account file is unreadable', async () => {
+		const { provider, claude, dolt } = await leakyMission();
+		dolt.readable = false;
+		claude.finish();
+		const update = await provider.getRun('sbx1', 'r1');
+		expect(update.result_summary).not.toContain(DOLT_PASSWORD);
+	});
+
+	it('withholds summaries and stored results until the password can be confirmed', async () => {
+		const { provider, claude, dolt, sandboxes, logs } = await leakyMission();
+		const sandbox = sandboxes.get('sbx1')!;
+		dolt.password = ROTATED;
+		// The sandbox's own answer does not match the fingerprint: it cannot steer redaction.
+		sandbox.envs.BEADS_DOLT_PASSWORD = 'something-else';
+		claude.finish();
+		await expect(provider.getRun('sbx1', 'r1')).rejects.toThrow(REDACTION_UNAVAILABLE_MESSAGE);
+		await expect(provider.getRun('sbx1', 'r1')).rejects.toThrow(REDACTION_UNAVAILABLE_MESSAGE);
+		expect(sandbox.file('r1', 'result.json')).toBeUndefined();
+		expect(logs.filter((line) => line.includes('output withheld'))).toHaveLength(1);
+		expect(logs.join('\n')).not.toContain(DOLT_PASSWORD);
+
+		// The credential becomes readable again: the result comes back redacted.
+		dolt.password = DOLT_PASSWORD;
+		const update = await provider.getRun('sbx1', 'r1');
+		expect(update.status).toBe('succeeded');
+		expect(update.result_summary).not.toContain(DOLT_PASSWORD);
+		expect(sandbox.file('r1', 'result.json')).not.toContain(DOLT_PASSWORD);
+	});
+
+	it('streams nothing while the password cannot be confirmed', async () => {
+		const { provider, claude, dolt, sandboxes } = await leakyMission();
+		dolt.readable = false;
+		delete sandboxes.get('sbx1')!.envs.BEADS_DOLT_PASSWORD;
+		claude.finish();
+		const events: MissionEvent[] = [];
+		await expect(
+			provider.streamMissionEvents!('sbx1', 'r1', async (event) => void events.push(event))
+		).rejects.toThrow(REDACTION_UNAVAILABLE_MESSAGE);
+		expect(events).toEqual([]);
+	});
+
+	it('does not log a failed setup tail until it can be redacted', async () => {
+		const { provider, sandboxes, logs, dolt } = setup();
+		await provider.launch(TACKLE);
+		const sandbox = sandboxes.get('sbx1')!;
+		sandbox.runs.set('r1', { ready: false, exit: 13 });
+		dolt.readable = false;
+		delete sandbox.envs.BEADS_DOLT_PASSWORD;
+		await expect(provider.getRun('sbx1', 'r1')).rejects.toThrow(REDACTION_UNAVAILABLE_MESSAGE);
+		expect(logs.some((line) => line.includes('setup exited'))).toBe(false);
+
+		dolt.readable = true;
+		await provider.getRun('sbx1', 'r1');
+		const tail = logs.find((line) => line.includes('setup exited 13'));
+		expect(tail).toContain('Dolt refused [redacted]');
+		expect(logs.join('\n')).not.toContain(DOLT_PASSWORD);
 	});
 });
