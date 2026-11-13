@@ -42,6 +42,7 @@ const MESSAGE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 /** Lowercase, as Beadsmith makes them: Claude Code names the transcript after it. */
 const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SCOPE_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
+const DISCARD_FAILED_MESSAGE = "The chat's agent state could not be removed. Try again.";
 /** Ids the runner gives each open terminal attach. */
 export const ATTACH_ID_PATTERN = /^ta_[a-f0-9]{32}$/;
 const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/;
@@ -52,6 +53,12 @@ const MAX_CELLS = 1000;
 export interface RunnerCoreOptions {
 	store: ChatStore;
 	connect: ConnectAgent;
+	/**
+	 * Remove what a deleted chat left where its agent ran (the forge guest's
+	 * per-chat core and home, ADR-0023). Throws when it could not; the chat is
+	 * then kept so the delete can be retried.
+	 */
+	discard?: (session_id: string) => Promise<void>;
 	/** Live agent CLIs at once; idle ones are stopped to make room. */
 	max_live_sessions?: number;
 	now?: () => Date;
@@ -289,12 +296,26 @@ export function createRunnerCore(options: RunnerCoreOptions) {
 				throw error;
 			}
 		},
-		/** Stop the session and forget the chat. */
+		/**
+		 * Stop the session, discard the chat's state where its agent ran, and
+		 * forget the chat. A discard that fails keeps the chat (503) so
+		 * Beadsmith's delete can be retried.
+		 */
 		deleteChat(chat_id: string): Promise<void> {
 			requireChat(chat_id);
 			return mutate(async () => {
 				await sessions.get(chat_id)?.stop();
 				sessions.delete(chat_id);
+				const session_id = options.store.get(chat_id).meta?.session_id;
+				if (session_id !== undefined && options.discard !== undefined) {
+					try {
+						await options.discard(session_id);
+					} catch (error) {
+						const detail = error instanceof Error ? error.message : String(error);
+						options.agent?.log?.(`chat ${chat_id}: could not discard its state: ${detail}`);
+						throw new RunnerFault(503, DISCARD_FAILED_MESSAGE);
+					}
+				}
 				options.store.remove(chat_id);
 			});
 		},

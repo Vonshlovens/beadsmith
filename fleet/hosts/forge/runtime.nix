@@ -93,14 +93,15 @@ in {
       MATE_RUNNER_LISTEN = "127.0.0.1:8787";
       MATE_RUNNER_SECRET_FILE = "%d/mate-runner-secret";
       MATE_RUNNER_STATE_DIR = "/var/lib/mate-runner/chats";
-      MATE_AGENT_SSH = "agent@${net.guestAddress}";
+      # Root, but the guest forces this key to its mate-chat helper, which
+      # connects to one chat's core as that chat's user (guests/mate.nix).
+      MATE_AGENT_SSH = "root@${net.guestAddress}";
       MATE_AGENT_SSH_KEY = "%d/agent-key";
       MATE_AGENT_KNOWN_HOSTS = toString knownHosts;
+      # The same paths in every chat: each sees its own home there.
       MATE_AGENT_WORKDIR = "/var/lib/agent/home/work";
       MATE_AGENT_CLAUDE_CONFIG = "/var/lib/agent/home/.claude";
       MATE_AGENT_CLAUDE = "/run/current-system/sw/bin/mate-claude";
-      # The guest's hc (guests/mate.nix); its core runs as a user service there.
-      MATE_AGENT_HC = "/run/current-system/sw/bin/hc";
     };
     serviceConfig = {
       ExecStart = "${node}/bin/node --import ${source}/scripts/ts-resolve.mjs ${source}/scripts/mate-runner.ts";

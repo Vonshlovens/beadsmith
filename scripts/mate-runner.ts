@@ -19,12 +19,14 @@
  *                             transcripts live (required with SSH; default ~/.claude)
  *   MATE_AGENT_CLAUDE         Claude Code executable the terminal runs (default: claude)
  *   MATE_AGENT_HC             hc executable (default: hc)
- * The runner reaches that machine's hc core with `hc connect`, over SSH
- * (production):
- *   MATE_AGENT_SSH            user@host of the guest
+ * The runner reaches each chat's hc core over SSH (production), where the
+ * guest's `mate-chat` helper runs every chat as a Unix identity of its own
+ * (ADR-0023) and MATE_AGENT_HC is not used:
+ *   MATE_AGENT_SSH            user@host of the guest (the key may run only the helper)
  *   MATE_AGENT_SSH_KEY        private key file
  *   MATE_AGENT_KNOWN_HOSTS    known_hosts file pinning the guest
- * or, with MATE_AGENT_LOCAL=1, on this machine (development).
+ * or, with MATE_AGENT_LOCAL=1, with `hc connect` on this machine
+ * (development: one core and one user for every chat).
  */
 
 import { readFileSync } from 'node:fs';
@@ -33,7 +35,13 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { ChatStore } from '../src/lib/mate-runner/event-log.js';
 import { createRunnerHandler } from '../src/lib/mate-runner/server.js';
-import { localConnector, sshConnector, type AgentPlace } from '../src/lib/mate-runner/spawn.js';
+import {
+	localConnector,
+	sshConnector,
+	sshDiscarder,
+	type AgentPlace,
+	type SshAgentConfig
+} from '../src/lib/mate-runner/spawn.js';
 import type { ConnectAgent } from '../src/lib/mate-runner/session.js';
 
 function required(name: string): string {
@@ -68,20 +76,22 @@ const place: AgentPlace = {
 	claude: process.env.MATE_AGENT_CLAUDE?.trim() || 'claude',
 	hc: process.env.MATE_AGENT_HC?.trim() || 'hc'
 };
-const connect: ConnectAgent = local
-	? localConnector(place)
-	: sshConnector({
+const ssh: SshAgentConfig | undefined = local
+	? undefined
+	: {
 			...place,
 			target: required('MATE_AGENT_SSH'),
 			identity_file: required('MATE_AGENT_SSH_KEY'),
 			known_hosts_file: required('MATE_AGENT_KNOWN_HOSTS')
-		});
+		};
+const connect: ConnectAgent = ssh === undefined ? localConnector(place) : sshConnector(ssh);
 
 const [host, port] = (process.env.MATE_RUNNER_LISTEN ?? '127.0.0.1:8787').split(/:(?=\d+$)/);
 const handler = createRunnerHandler({
 	secret,
 	store: new ChatStore(process.env.MATE_RUNNER_STATE_DIR ?? './mate-runner-state'),
 	connect,
+	...(ssh === undefined ? {} : { discard: sshDiscarder(ssh) }),
 	max_live_sessions: Number(process.env.MATE_RUNNER_MAX_SESSIONS ?? 3),
 	agent: { log: (message) => console.warn(`mate-runner: ${message}`) }
 });

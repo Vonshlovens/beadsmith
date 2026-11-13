@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { scopePrompt, shellQuote, sshArgs } from './spawn.js';
 
 const CONFIG = {
-	target: 'agent@10.100.0.2',
+	target: 'root@10.100.0.2',
 	identity_file: '/k',
 	known_hosts_file: '/h',
 	workdir: '/w d',
 	config_dir: '/home/agent/.claude',
-	claude: 'mate-claude',
-	hc: "/opt/it's/hc"
+	claude: 'mate-claude'
 };
+const SESSION = '6f1c1f4e-0b1a-4c3d-9e8f-0123456789ab';
 
 describe('spawn', () => {
 	it('names the database a scoped chat is about', () => {
@@ -17,13 +17,23 @@ describe('spawn', () => {
 		expect(scopePrompt('beads_web')).toContain('"beads_web"');
 	});
 
-	it('runs hc connect in the guest with its host key pinned, and nothing else', () => {
+	it('quotes a word for a POSIX shell', () => {
 		expect(shellQuote("it's")).toBe(`'it'\\''s'`);
-		const args = sshArgs(CONFIG);
+	});
+
+	it("asks the guest helper for one chat's core, with its host key pinned, and nothing else", () => {
+		const args = sshArgs(CONFIG, 'connect', SESSION);
 		expect(args).toContain('StrictHostKeyChecking=yes');
 		expect(args).toContain('UserKnownHostsFile=/h');
-		expect(args.slice(-3)).toEqual(['agent@10.100.0.2', '--', `exec '/opt/it'\\''s/hc' connect`]);
+		expect(args.slice(-3)).toEqual(['root@10.100.0.2', '--', `connect ${SESSION}`]);
+		expect(sshArgs(CONFIG, 'discard', SESSION).at(-1)).toBe(`discard ${SESSION}`);
 		// The CLI, its prompt and the scope travel over hc, never on this command line.
 		expect(args.join(' ')).not.toContain('mate-claude');
+	});
+
+	it('refuses a session id the guest helper would not accept', () => {
+		for (const bad of ['', 'x; rm -rf /', SESSION.toUpperCase(), `${SESSION} extra`]) {
+			expect(() => sshArgs(CONFIG, 'connect', bad)).toThrow();
+		}
 	});
 });

@@ -1,5 +1,5 @@
 // Harmless live-test fixture for fleet/hosts/forge/guest-lifecycle.test.mjs,
-// installed only by the operator procedure in docs/operations/host-forge.md.
+// installed by that test into each chat it starts (docs/operations/host-forge.md).
 // It stands in for an agent CLI in an hc terminal: it resolves tools by name
 // (the terminal must have the system PATH), then starts two generations of
 // descendants in its own session, all ignoring SIGTERM and SIGHUP, so that
