@@ -45,6 +45,38 @@ export const FRAME_MAX_CHARS = 256 * 1024;
 /** Relay restarts per chat process before the bridge gives up. */
 export const RELAY_MAX_RESTARTS = 5;
 const RELAY_RESTART_DELAY_MS = 1_000;
+/**
+ * Bounds on one chat's crew requests. Everything from the sandbox is
+ * untrusted, so a prompt-injected or compromised agent may write requests
+ * straight to its relay; these keep one chat from flooding shared SQLite,
+ * Dolt and host memory. They apply to every request (reads and todo writes
+ * too), on top of each tool's own limits such as the mission-launch limiter.
+ * A request past a bound gets a short JSON-RPC error, never a queue slot.
+ */
+export interface CrewBridgeLimits {
+	/** Requests being handled at once. */
+	max_active: number;
+	/** Admitted requests waiting for a handler. */
+	max_queued: number;
+	/** Requests admitted in a burst (token bucket size). */
+	burst: number;
+	/** Requests admitted per second after a burst (refill rate). */
+	per_second: number;
+	/** Reply bytes waiting on a slow or stalled relay; replies past this are dropped. */
+	max_outbox_chars: number;
+}
+
+export const CREW_BRIDGE_LIMITS: CrewBridgeLimits = {
+	max_active: 4,
+	max_queued: 32,
+	burst: 60,
+	per_second: 10,
+	max_outbox_chars: 1024 * 1024
+};
+
+/** The refusal a request past a bound gets. */
+export const CREW_BUSY_MESSAGE = 'Crew tools are busy in this chat. Try again in a moment.';
+
 /** Stderr kept for the server log when a process exits badly (inside the 4,000-character log line). */
 export const STDERR_TAIL_CHARS = 2_000;
 
@@ -348,20 +380,106 @@ export async function startCrewBridge(options: {
 	deps: CrewBridgeDeps;
 	log: (message: string) => void;
 	restart_delay_ms?: number;
+	limits?: Partial<CrewBridgeLimits>;
+	/** Milliseconds clock for the admission rate; tests pass a fixed one. */
+	now?: () => number;
 }): Promise<CrewBridge> {
 	const { sandbox, session_id, deps, log } = options;
 	const label = sessionLabel(session_id);
 	const restart_delay_ms = options.restart_delay_ms ?? RELAY_RESTART_DELAY_MS;
+	const limits: CrewBridgeLimits = { ...CREW_BRIDGE_LIMITS, ...options.limits };
+	const now = options.now ?? Date.now;
 	let stopped = false;
 	let restarts = 0;
 	let command: InteractiveCommand | undefined;
-	let writes: Promise<void> = Promise.resolve();
+
+	// Replies go out in order through one writer. The outbox is bounded in
+	// characters, so a relay that stops reading cannot grow it without limit.
+	const outbox: { target: InteractiveCommand; frame: string }[] = [];
+	let outbox_chars = 0;
+	let flushing = false;
+	let dropped_replies = 0;
 
 	function reply(target: InteractiveCommand, conn: number, message: unknown): void {
 		const frame = `${JSON.stringify({ conn, line: JSON.stringify(message) })}\n`;
-		writes = writes
-			.then(() => target.sendStdin(frame))
-			.catch(() => log(`crew bridge ${label}: a reply could not reach the relay`));
+		if (outbox_chars + frame.length > limits.max_outbox_chars) {
+			if (dropped_replies % 100 === 0) {
+				log(`crew bridge ${label}: the relay is not reading; dropped a reply`);
+			}
+			dropped_replies += 1;
+			return;
+		}
+		outbox.push({ target, frame });
+		outbox_chars += frame.length;
+		void flush();
+	}
+
+	async function flush(): Promise<void> {
+		if (flushing) return;
+		flushing = true;
+		try {
+			for (let next = outbox.shift(); next !== undefined; next = outbox.shift()) {
+				try {
+					await next.target.sendStdin(next.frame);
+				} catch {
+					log(`crew bridge ${label}: a reply could not reach the relay`);
+				} finally {
+					outbox_chars -= next.frame.length;
+				}
+			}
+		} finally {
+			flushing = false;
+		}
+	}
+
+	// Admission: a token bucket for the rate, then a handler slot or a bounded queue.
+	let tokens = limits.burst;
+	let refilled_at = now();
+	let active = 0;
+	const waiting: { target: InteractiveCommand; frame: RelayFrame }[] = [];
+	let refused = 0;
+
+	function refuse(target: InteractiveCommand, frame: RelayFrame, why: string): void {
+		if (refused % 100 === 0) {
+			log(`crew bridge ${label}: refused a crew request (${why}; ${refused + 1} so far)`);
+		}
+		refused += 1;
+		const id = requestId(frame.line);
+		if (id === undefined) return;
+		reply(target, frame.conn, {
+			jsonrpc: '2.0',
+			id,
+			error: { code: -32000, message: CREW_BUSY_MESSAGE }
+		});
+	}
+
+	function admit(target: InteractiveCommand, frame: RelayFrame): void {
+		const at = now();
+		tokens = Math.min(limits.burst, tokens + ((at - refilled_at) / 1000) * limits.per_second);
+		refilled_at = at;
+		if (tokens < 1) {
+			refuse(target, frame, 'rate');
+			return;
+		}
+		tokens -= 1;
+		if (active < limits.max_active) {
+			run(target, frame);
+		} else if (waiting.length < limits.max_queued) {
+			waiting.push({ target, frame });
+		} else {
+			refuse(target, frame, 'queue full');
+		}
+	}
+
+	function run(target: InteractiveCommand, frame: RelayFrame): void {
+		active += 1;
+		void answer(target, frame)
+			.catch(() => log(`crew bridge ${label}: a crew request failed`))
+			.finally(() => {
+				active -= 1;
+				const next = waiting.shift();
+				if (next !== undefined && !stopped) run(next.target, next.frame);
+			});
 	}
 
 	async function answer(target: InteractiveCommand, frame: RelayFrame): Promise<void> {
@@ -385,7 +503,7 @@ export async function startCrewBridge(options: {
 		let current: InteractiveCommand | undefined;
 		const reader = new FrameReader(
 			(frame) => {
-				if (current !== undefined) void answer(current, frame);
+				if (current !== undefined && !stopped) admit(current, frame);
 			},
 			(reason) => log(`crew bridge ${label}: dropped a relay frame (${reason})`)
 		);
@@ -428,6 +546,7 @@ export async function startCrewBridge(options: {
 		stop() {
 			if (stopped) return;
 			stopped = true;
+			waiting.length = 0;
 			void command?.kill().catch(() => undefined);
 		}
 	};

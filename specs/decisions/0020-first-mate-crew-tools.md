@@ -151,6 +151,13 @@ connection. Beadsmith accepts at most 256 KiB per frame, validates the shape
 strictly, and drops and logs anything else. The caller is resolved on every
 frame from the session id (`MateStore.crewCaller`: the chat, its owner, the
 owner's current role, refused when the owner is banned or the chat is gone).
+Every request, reads and todo writes included, passes one admission per
+chat (`CREW_BRIDGE_LIMITS` in `crew-bridge.ts`): a token bucket (60 at once,
+then 10 a second), at most 4 handled at a time and 32 waiting, and anything
+past those gets a JSON-RPC "busy" error. Replies leave through one writer
+with at most 1 MiB waiting, so a relay that stops reading loses replies rather
+than growing memory. Refusals and dropped replies are logged in batches, not
+one line each. The launch limit below still applies on top.
 The relay is restarted up to five times per Claude Code process and killed
 with it. `AgentLaunch.mcp_config` adds `--mcp-config` to the shared
 `claudeArgs`. E2B create and connect errors and a 2,000-character stderr
