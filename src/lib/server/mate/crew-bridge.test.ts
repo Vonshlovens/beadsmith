@@ -5,12 +5,14 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { createCrewMcpHandler } from '../crew/mcp.js';
-import { defineTool, type CrewContext } from '../crew/registry.js';
+import { defineTool, type CrewContext, type CrewTool } from '../crew/registry.js';
 import type { InteractiveCommand, SandboxRef } from '../e2b/sandbox.js';
 import {
 	CREW_MCP_CONFIG_PATH,
 	CREW_RELAY_PATH,
 	CREW_SOCKET_PATH,
+	CREW_BRIDGE_LIMITS,
+	CREW_BUSY_MESSAGE,
 	crewMcpConfig,
 	FRAME_MAX_CHARS,
 	FrameReader,
@@ -336,5 +338,127 @@ describe('relay script', () => {
 		serve.stdin.write(`${JSON.stringify({ conn: 999, line: 'lost' })}\n`);
 		await until(() => replies.length === 1);
 		expect(replies).toEqual(['{"jsonrpc":"2.0","id":1}']);
+	});
+});
+
+describe('crew request limits', () => {
+	/** A read tool that holds every call until released, counting how many run at once. */
+	function heldTool() {
+		const state = { running: 0, peak: 0, started: 0, release: () => undefined as void };
+		let gate = Promise.withResolvers<void>();
+		state.release = () => {
+			gate.resolve();
+			gate = Promise.withResolvers<void>();
+		};
+		const tool = defineTool({
+			name: 'list_todos',
+			description: 'A read that waits.',
+			input: z.object({}),
+			async handler() {
+				state.started += 1;
+				state.running += 1;
+				state.peak = Math.max(state.peak, state.running);
+				await gate.promise;
+				state.running -= 1;
+				return { ok: true };
+			}
+		});
+		return { tool, state };
+	}
+
+	async function bridgeWith(tool: CrewTool, extra = {}) {
+		const { sandbox, relays } = fakeSandbox();
+		const logs: string[] = [];
+		const clock = { ms: 0 };
+		const bridge = await startCrewBridge({
+			sandbox,
+			session_id: SESSION,
+			deps: {
+				handler: createCrewMcpHandler({
+					tools: tool === whoami ? [whoami] : [tool, whoami],
+					log: () => undefined
+				}),
+				context: async () => CTX
+			},
+			log: (message) => logs.push(message),
+			now: () => clock.ms,
+			...extra
+		});
+		return { bridge, relay: relays[0], logs, clock };
+	}
+
+	function send(relay: FakeRelay, from: number, count: number, name = 'list_todos') {
+		for (let id = from; id < from + count; id += 1) {
+			relay.out(`${JSON.stringify({ conn: 1, line: call(id, name) })}\n`);
+		}
+	}
+
+	function busy(relay: FakeRelay) {
+		return relay
+			.replies()
+			.filter(
+				(r) => (r.message.error as { message?: string } | undefined)?.message === CREW_BUSY_MESSAGE
+			);
+	}
+
+	it('keeps a burst of 1,000 requests inside the handler and queue bounds', async () => {
+		const { tool, state } = heldTool();
+		const { relay, logs } = await bridgeWith(tool);
+		const { max_active, max_queued } = CREW_BRIDGE_LIMITS;
+
+		send(relay, 1, 1000);
+		await until(() => state.started === max_active);
+		await until(() => relay.replies().length === 1000 - max_active - max_queued);
+		expect(busy(relay)).toHaveLength(1000 - max_active - max_queued);
+		expect(state.peak).toBe(max_active);
+
+		// Released, the queued requests run, never more than the bound at once.
+		while (state.started < max_active + max_queued || state.running > 0) {
+			state.release();
+			await new Promise((resolve) => setTimeout(resolve, 1));
+		}
+		await until(() => relay.replies().length === 1000);
+		expect(state.started).toBe(max_active + max_queued);
+		expect(state.peak).toBe(max_active);
+		// Every request got exactly one answer.
+		expect(new Set(relay.replies().map((r) => r.message.id)).size).toBe(1000);
+		// Refusals are logged, not one line each.
+		expect(logs.filter((line) => line.includes('refused a crew request')).length).toBeLessThan(15);
+	});
+
+	it('admits at the refill rate once the burst is spent', async () => {
+		const { tool, state } = heldTool();
+		const { relay, clock } = await bridgeWith(tool, {
+			limits: { burst: 5, per_second: 2, max_active: 100, max_queued: 0 }
+		});
+		send(relay, 1, 8);
+		await until(() => relay.replies().length === 3 && state.started === 5);
+		clock.ms = 1000;
+		send(relay, 100, 3);
+		await until(() => relay.replies().length === 4 && state.started === 7);
+		expect(busy(relay)).toHaveLength(4);
+		state.release();
+	});
+
+	it('bounds replies to a relay that stops reading and keeps handlers free', async () => {
+		const { relay: stalled_relay, logs } = await (async () => {
+			const context = await bridgeWith(whoami, {
+				limits: { max_outbox_chars: 2_000 }
+			});
+			// Every write hangs.
+			context.relay.sendStdin = () => new Promise<void>(() => undefined);
+			return context;
+		})();
+		send(stalled_relay, 1, 50, 'whoami');
+		await until(() => logs.some((line) => line.includes('the relay is not reading')));
+		expect(logs.filter((line) => line.includes('the relay is not reading'))).toHaveLength(1);
+
+		// Another chat's bridge is unaffected.
+		const { tool, state } = heldTool();
+		const other = await bridgeWith(tool);
+		send(other.relay, 1, 1, 'whoami');
+		await until(() => other.relay.replies().length === 1);
+		expect(other.relay.replies()[0].message).toMatchObject({ id: 1, result: {} });
+		expect(state.started).toBe(0);
 	});
 });
