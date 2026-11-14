@@ -16,7 +16,6 @@
 import { randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { EFFORT_PATTERN, MODEL_PATTERN } from '../agent-session/claude-code.js';
-import { SESSION_LABEL } from '../agent-session/session.js';
 import { encodeMissionEvent, type MissionEvent } from '../mission-events.js';
 import {
 	attachHcTerminal,
@@ -29,6 +28,7 @@ import {
 import { CHAT_ID_PATTERN, type ChatStore } from './event-log.js';
 import {
 	ChatAgent,
+	isChatTerminal,
 	type AgentConnection,
 	type ChatAgentOptions,
 	type ConnectAgent
@@ -280,7 +280,7 @@ export function createRunnerCore(options: RunnerCoreOptions) {
 			try {
 				const relay = await attachHcTerminal(
 					connection.client,
-					(live) => live.find((terminal) => terminal.labels[SESSION_LABEL] === session_id),
+					(live) => live.find((terminal) => isChatTerminal(terminal.labels, session_id)),
 					request
 				);
 				void relay.ended.then(release);

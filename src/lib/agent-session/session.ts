@@ -38,7 +38,7 @@
 import { HcError, type HcClient, type HcNotification, type HcSubscription } from '../hc/client.js';
 import type { MissionEvent, MissionResultStatus } from '../mission-events.js';
 import { sanitizeResultSummary } from '../server/dispatch/sanitize.js';
-import type { AgentHarness, HarnessLaunch, TranscriptMapper } from './claude-code.js';
+import type { AgentHarness, HarnessLaunch, TranscriptMapper, TurnFacts } from './claude-code.js';
 
 /** The label every session terminal carries, valued with the CLI's session id. */
 export const SESSION_LABEL = 'beadsmith-session';
@@ -151,6 +151,7 @@ export class AgentSession {
 	readonly #after: { line: number; index: number } | undefined;
 
 	#mapper: TranscriptMapper;
+	#last_turn: TurnFacts | undefined;
 	#client: HcClient | undefined;
 	#subscription: HcSubscription | undefined;
 	#terminal: string | undefined;
@@ -190,6 +191,14 @@ export class AgentSession {
 			this.#last_line = this.#after.line;
 			if (this.#after.index >= SYNTHETIC_INDEX) this.#next_synthetic = this.#after.index + 1;
 		}
+	}
+
+	/**
+	 * Facts of the turn that ended last, set before its `result` is emitted,
+	 * so an `onEvent` handler can read them. Undefined before any turn ends.
+	 */
+	get last_turn(): Readonly<TurnFacts> | undefined {
+		return this.#last_turn;
 	}
 
 	get state(): SessionState {
@@ -672,6 +681,7 @@ export class AgentSession {
 
 	#emitResult(status: MissionResultStatus): void {
 		const facts = this.#mapper.turn;
+		this.#last_turn = { ...facts };
 		const text = sanitizeResultSummary(facts.last_text, this.#redact);
 		this.#emitSynthetic({
 			type: 'result',

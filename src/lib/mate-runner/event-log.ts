@@ -36,6 +36,13 @@ export interface ChatMeta {
 	effort?: string;
 	/** Messages accepted whose turn has not ended (queued or running). */
 	pending?: number;
+	/**
+	 * The chat's context window (ADR-0024 rule 7): 0 or absent is the first
+	 * CLI session, `session_id` itself; each slide starts the next one.
+	 */
+	window?: number;
+	/** The carry-over note the last window wrote for the current one. */
+	carry_over?: string;
 	created_at: string;
 }
 

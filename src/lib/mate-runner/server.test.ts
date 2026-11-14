@@ -14,7 +14,16 @@ import { FakeClaude } from '#lib/test/fake-claude.js';
 import type { FakeTerminal } from '#lib/test/fake-hc.js';
 import { ChatStore } from './event-log.js';
 import { createRunnerHandler } from './server.js';
-import { CHAT_LABEL } from './session.js';
+import {
+	CARRY_OVER_MAX,
+	CARRY_OVER_PROMPT,
+	CHAT_LABEL,
+	CHAT_SESSION_LABEL,
+	carryOverNote,
+	isChatTerminal,
+	windowPrompt,
+	windowSessionId
+} from './session.js';
 import { signRequest } from './signature.js';
 
 const SECRET = 's'.repeat(40);
@@ -216,7 +225,11 @@ describe('mate runner', () => {
 		expect(t.argv).not.toContain('--model');
 		expect(t.argv).not.toContain('--effort');
 		expect(t.cwd).toBe(WORKDIR);
-		expect(t.labels).toEqual({ [CHAT_LABEL]: 'chat1', [SESSION_LABEL]: SESSION });
+		expect(t.labels).toEqual({
+			[CHAT_LABEL]: 'chat1',
+			[CHAT_SESSION_LABEL]: SESSION,
+			[SESSION_LABEL]: SESSION
+		});
 		// The prompt is pasted into the running CLI, never put on its command line.
 		expect(t.sent).toEqual(['hello']);
 		expect(t.argv.join(' ')).not.toContain('hello');
@@ -671,5 +684,157 @@ describe('terminal attach', () => {
 		await expect.poll(() => watch.frames.length).toBeGreaterThan(0);
 		await handler.close();
 		await expect.poll(() => watch.ended()).toBe(true);
+	});
+});
+
+describe('sliding context window (ADR-0024 rule 7)', () => {
+	const NOTE = 'In flight: the backup check. Pointers: beads-web-1.';
+	const WINDOW_1 = windowSessionId(SESSION, 1);
+
+	/** `big` turns end with a long context; the carry-over turn answers with NOTE, or hangs. */
+	function slidingFake(carry_over: 'note' | 'hang' | 'empty' = 'note'): void {
+		fake.onMessage = (t, text) => {
+			if (text === CARRY_OVER_PROMPT) {
+				if (carry_over === 'hang') return;
+				if (carry_over === 'note') fake.say(NOTE, t);
+				fake.endTurn(t);
+				return;
+			}
+			if (text.endsWith('hang')) return;
+			fake.write(
+				{
+					type: 'assistant',
+					message: {
+						content: [{ type: 'text', text: `echo: ${text}` }],
+						usage: text.startsWith('big')
+							? {
+									input_tokens: 5,
+									cache_read_input_tokens: 99_000,
+									cache_creation_input_tokens: 995
+								}
+							: { input_tokens: 5, cache_read_input_tokens: 2_000 }
+					}
+				},
+				t
+			);
+			fake.endTurn(t);
+		};
+	}
+
+	const meta = () => new ChatStore(dir).get('chat1').meta;
+
+	it('derives window session ids and bounds the note', () => {
+		expect(windowSessionId(SESSION, 0)).toBe(SESSION);
+		expect(WINDOW_1).toMatch(
+			/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+		);
+		expect(WINDOW_1).not.toBe(windowSessionId(SESSION, 2));
+		expect(windowSessionId(SESSION, 1)).toBe(WINDOW_1);
+		expect(carryOverNote('  a\r\nb\u0007c  ')).toBe('a\nbc');
+		expect(carryOverNote(' \n ')).toBeUndefined();
+		expect(carryOverNote('x'.repeat(CARRY_OVER_MAX + 50))).toHaveLength(CARRY_OVER_MAX);
+		expect(windowPrompt({ scope: null })).toBeUndefined();
+		expect(windowPrompt({ scope: null, carry_over: NOTE })).toContain(
+			`<carry-over-note>\n${NOTE}\n</carry-over-note>`
+		);
+		expect(isChatTerminal({ [SESSION_LABEL]: SESSION }, SESSION)).toBe(true);
+		expect(
+			isChatTerminal({ [CHAT_SESSION_LABEL]: SESSION, [SESSION_LABEL]: WINDOW_1 }, SESSION)
+		).toBe(true);
+		expect(isChatTerminal({ [SESSION_LABEL]: WINDOW_1 }, SESSION)).toBe(false);
+	});
+
+	it('stays in its window while the context is small', async () => {
+		slidingFake();
+		await post('chat1', 'small', 'm1');
+		await readEvents('chat1', 3);
+		await post('chat1', 'small again', 'm2');
+		await readEvents('chat1', 6);
+		expect(terminalOf().sent).toEqual(['small', 'small again']);
+		expect(meta()?.window).toBeUndefined();
+	});
+
+	it('writes a carry-over note past the threshold and opens the next window from it', async () => {
+		slidingFake();
+		await post('chat1', 'big one', 'm1');
+		await readEvents('chat1', 3);
+		await until(() => meta()?.window === 1);
+		expect(meta()?.carry_over).toBe(NOTE);
+		const old = [...fake.core.terminals.values()].find((t) => t.labels[SESSION_LABEL] === SESSION)!;
+		expect(old.sent).toEqual(['big one', CARRY_OVER_PROMPT]);
+		await until(() => old.state === 'finished');
+
+		await post('chat1', 'next', 'm2');
+		const events = await readEvents('chat1', 7);
+		// One continuous chat: the maintenance turn is not in it, a short line marks the new window.
+		expect(events.slice(3).map((e) => e.type)).toEqual(['user', 'thinking', 'assistant', 'result']);
+		expect(events[4]).toMatchObject({ text: expect.stringMatching(/carry-over note/) });
+		expect(events.some((e) => e.text === NOTE)).toBe(false);
+
+		const next = terminalOf(WINDOW_1);
+		expect(next.sent).toEqual(['next']);
+		expect(next.argv).toContain('--session-id');
+		expect(next.labels).toMatchObject({ [CHAT_LABEL]: 'chat1', [CHAT_SESSION_LABEL]: SESSION });
+		const system = next.argv[next.argv.indexOf('--append-system-prompt') + 1];
+		expect(system).toContain('"beads-web"');
+		expect(system).toContain(NOTE);
+		// Exactly one carry-over turn was asked for.
+		expect(
+			[...fake.core.terminals.values()]
+				.flatMap((t) => t.sent)
+				.filter((m) => m === CARRY_OVER_PROMPT)
+		).toHaveLength(1);
+	});
+
+	it('starts from the latest note after a runner restart, and resumes the small window after that', async () => {
+		slidingFake();
+		await post('chat1', 'big one', 'm1');
+		await readEvents('chat1', 3);
+		await until(() => meta()?.window === 1);
+		await shutdown(true);
+		await start();
+		await post('chat1', 'after restart', 'm2');
+		// The new-window line is not repeated by a runner that did not slide.
+		expect((await readEvents('chat1', 6)).at(-1)).toMatchObject({ text: 'echo: after restart' });
+		const fresh = terminalOf(WINDOW_1);
+		expect(fresh.argv).toContain('--session-id');
+		expect(fresh.argv.join(' ')).toContain(NOTE);
+
+		await shutdown(true);
+		await start();
+		await post('chat1', 'again', 'm3');
+		expect((await readEvents('chat1', 9)).at(-1)).toMatchObject({ text: 'echo: again' });
+		const resumed = terminalOf(WINDOW_1);
+		expect(resumed.argv).toContain('--resume');
+		expect(resumed.argv.join(' ')).toContain(NOTE);
+	});
+
+	it('keeps the window when the carry-over turn is interrupted, dropping queued messages', async () => {
+		slidingFake('hang');
+		await post('chat1', 'big one', 'm1');
+		await readEvents('chat1', 3);
+		await until(() => terminalOf().sent.length === 2);
+		await post('chat1', 'waiting', 'm2');
+		expect((await interrupt('chat1')).status).toBeLessThan(300);
+		const events = await readEvents('chat1', 5);
+		expect(events[4]).toMatchObject({ type: 'result', status: 'cancelled' });
+		expect(meta()?.window).toBeUndefined();
+		expect(meta()?.carry_over).toBeUndefined();
+		expect(meta()?.pending).toBe(0);
+
+		await post('chat1', 'small', 'm3');
+		expect((await readEvents('chat1', 8)).at(-1)).toMatchObject({ text: 'echo: small' });
+		expect(terminalOf().sent).toEqual(['big one', CARRY_OVER_PROMPT, 'small']);
+	});
+
+	it('keeps the window when the agent writes no note', async () => {
+		slidingFake('empty');
+		await post('chat1', 'big one', 'm1');
+		await readEvents('chat1', 3);
+		await until(() => terminalOf().sent.length === 2);
+		await post('chat1', 'small', 'm2');
+		expect((await readEvents('chat1', 6)).at(-1)).toMatchObject({ text: 'echo: small' });
+		expect(meta()?.window).toBeUndefined();
+		expect(terminalOf().sent).toEqual(['big one', CARRY_OVER_PROMPT, 'small']);
 	});
 });

@@ -172,7 +172,15 @@ table `mate_meta_files`) and its `meta_list`, `meta_read`, `meta_write`,
 `meta_move` and `meta_delete` crew tools
 ([`src/lib/server/crew/meta-tools.ts`](../../src/lib/server/crew/meta-tools.ts));
 `meta_read` returns the file as plain text (`CrewText`) rather than JSON, so
-it is not cut field by field. Not yet: per-turn recall, sliding windows and
+it is not cut field by field. Sliding windows are in the runner core
+([`src/lib/mate-runner/session.ts`](../../src/lib/mate-runner/session.ts)):
+the harness reads live context size from the transcript's usage, the chat's
+meta keeps `window` and `carry_over`, each window's CLI session id is
+derived from the chat's, and terminals carry `beadsmith-chat-session` so
+the relay finds any window's CLI. The maintenance turn stays out of the
+chat log, and the next turn shows one `thinking` line instead, since
+contract v1 has no maintenance event. Recalled memory joins the note in
+the system prompt when per-turn recall ships. Not yet: per-turn recall and
 the owner's page. Expected places for the rest: a store beside
 [`src/lib/server/mate/store.ts`](../../src/lib/server/mate/store.ts); tools
 in [`src/lib/server/crew/`](../../src/lib/server/crew/); recall in the turn
