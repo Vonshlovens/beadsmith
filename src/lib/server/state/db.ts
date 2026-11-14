@@ -16,6 +16,7 @@ import { AUTH_SCHEMA_SQL } from '../auth/store.js';
 import { createTodoStore, TODO_SCHEMA_SQL, type TodoStore } from '../todos/store.js';
 import { createMateStore, MATE_SCHEMA_SQL, type MateStore } from '../mate/store.js';
 import { createMemoryStore, MEMORY_SCHEMA_SQL, type MemoryStore } from '../mate/memory-store.js';
+import { createMetaStore, META_SCHEMA_SQL, type MetaStore } from '../mate/meta-store.js';
 import {
 	createTerminalRelayAuditStore,
 	TERMINAL_RELAY_SCHEMA_SQL,
@@ -85,6 +86,7 @@ export const STATE_SCHEMA_SQL: string[] = [
 	...TODO_SCHEMA_SQL,
 	...MATE_SCHEMA_SQL,
 	...MEMORY_SCHEMA_SQL,
+	...META_SCHEMA_SQL,
 	...AUTH_SCHEMA_SQL,
 	...TERMINAL_RELAY_SCHEMA_SQL,
 	...AUTOMATION_SCHEMA_SQL
@@ -217,6 +219,7 @@ let backup_promise: Promise<BackupStore> | undefined;
 let todo_promise: Promise<TodoStore> | undefined;
 let mate_promise: Promise<MateStore> | undefined;
 let memory_promise: Promise<MemoryStore> | undefined;
+let meta_promise: Promise<MetaStore> | undefined;
 let relay_audit_promise: Promise<TerminalRelayAuditStore> | undefined;
 let automation_promise: Promise<AutomationStore> | undefined;
 let state_ok = false;
@@ -242,6 +245,7 @@ async function openStateClient(): Promise<Client> {
 			todo_promise = undefined;
 			mate_promise = undefined;
 			memory_promise = undefined;
+			meta_promise = undefined;
 			relay_audit_promise = undefined;
 			automation_promise = undefined;
 			throw error;
@@ -327,6 +331,14 @@ export async function getMemoryStore(): Promise<MemoryStore> {
 	return memory_promise;
 }
 
+/** Open (once) First Mate's meta folder store on the same database (ADR-0024). */
+export async function getMetaStore(): Promise<MetaStore> {
+	if (meta_promise === undefined) {
+		meta_promise = openStateClient().then((client) => createMetaStore(client));
+	}
+	return meta_promise;
+}
+
 /** Open (once) the terminal relay's audit store on the same database (ADR-0021). */
 export async function getTerminalRelayAuditStore(): Promise<TerminalRelayAuditStore> {
 	if (relay_audit_promise === undefined) {
@@ -361,6 +373,7 @@ export function setStateStore(store: StateStore | undefined): void {
 		todo_promise = undefined;
 		mate_promise = undefined;
 		memory_promise = undefined;
+		meta_promise = undefined;
 		relay_audit_promise = undefined;
 		automation_promise = undefined;
 		state_ok = false;

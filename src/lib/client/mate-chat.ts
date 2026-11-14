@@ -337,7 +337,12 @@ const CREW_TOOL_VERBS: Record<string, readonly [running: string, done: string]> 
 	cancel_mission: ['Asking to cancel a mission', 'Asked to cancel a mission'],
 	remember: ['Remembering something', 'Remembered something'],
 	recall: ['Recalling memories', 'Recalled memories'],
-	forget: ['Forgetting a memory', 'Forgot a memory']
+	forget: ['Forgetting a memory', 'Forgot a memory'],
+	meta_list: ['Listing notes', 'Listed notes'],
+	meta_read: ['Reading a note', 'Read a note'],
+	meta_write: ['Writing a note', 'Wrote a note'],
+	meta_move: ['Moving a note', 'Moved a note'],
+	meta_delete: ['Deleting a note', 'Deleted a note']
 };
 
 /** Crew tools whose call can start a mission this chat owns. */
