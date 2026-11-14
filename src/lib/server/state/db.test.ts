@@ -38,6 +38,12 @@ describe('initStateSchema', () => {
 			'mate_chats',
 			'mate_crew_calls',
 			'mate_events',
+			'mate_memories',
+			'mate_memories_fts',
+			'mate_memories_fts_config',
+			'mate_memories_fts_data',
+			'mate_memories_fts_docsize',
+			'mate_memories_fts_idx',
 			'settings',
 			'tackle_repository_maps',
 			'terminal_relay_sessions',
@@ -48,7 +54,7 @@ describe('initStateSchema', () => {
 	});
 
 	it('declares the application, todo, account, relay audit and automation tables and indexes', () => {
-		expect(STATE_SCHEMA_SQL).toHaveLength(28);
+		expect(STATE_SCHEMA_SQL).toHaveLength(34);
 	});
 
 	it('adds run result columns to an existing table', async () => {

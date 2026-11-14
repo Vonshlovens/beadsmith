@@ -417,3 +417,28 @@ export type FileCheckoutMapRow = typeof fileCheckoutMaps.$inferSelect;
 export type DispatchProjectAllowRow = typeof dispatchProjectAllows.$inferSelect;
 export type DispatchRequestRow = typeof dispatchRequests.$inferSelect;
 export type BackupRunRow = typeof backupRuns.$inferSelect;
+
+/**
+ * First Mate's memories (ADR-0024): short facts per owner account, one scope
+ * each (`owner`, `project:<id>`, `topic:<slug>`), upserted by key. Keep in
+ * step with `MEMORY_SCHEMA_SQL` in `mate/memory-store.ts`, which also creates
+ * the FTS5 index `mate_memories_fts` and the triggers that maintain it.
+ */
+export const mateMemories = sqliteTable(
+	'mate_memories',
+	{
+		id: integer('id').primaryKey(),
+		ownerId: text('owner_id').notNull(),
+		key: text('key').notNull(),
+		scope: text('scope').notNull(),
+		body: text('body').notNull(),
+		sourceChatId: text('source_chat_id'),
+		createdAt: text('created_at').notNull(),
+		updatedAt: text('updated_at').notNull(),
+		lastRecalledAt: text('last_recalled_at')
+	},
+	(table) => [
+		unique('mate_memories_owner_key').on(table.ownerId, table.key),
+		index('mate_memories_owner_scope').on(table.ownerId, table.scope, table.updatedAt)
+	]
+);

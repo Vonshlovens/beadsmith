@@ -11,6 +11,7 @@ import type { AccountRole, Permission } from '../auth/roles.js';
 import type { ReadDeps } from '../read-model.js';
 import type { DispatchDeps } from '../dispatch/service.js';
 import type { TodoStore } from '../todos/store.js';
+import type { MemoryStore } from '../mate/memory-store.js';
 import type { Project } from '#lib/types.js';
 import type { LaunchLimiter } from './launch-limit.js';
 
@@ -44,6 +45,8 @@ export interface CrewDeps {
 	read?: ReadDeps;
 	dispatch?: DispatchDeps;
 	todos?: () => Promise<TodoStore>;
+	/** The owner's First Mate memories (ADR-0024). */
+	memories?: () => Promise<MemoryStore>;
 	/** Per-chat cap on mission launches; defaults to the env-configured one. */
 	launch_limiter?: LaunchLimiter;
 }
