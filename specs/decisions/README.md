@@ -30,3 +30,4 @@ edit an ADR on every conversation — see `.agents/skills/architecture/SKILL.md`
 | [0020](./0020-first-mate-crew-tools.md) | First Mate crew tools: one transport-free MCP tool module, relayed into Sand chats over the E2B process channel |
 | [0021](./0021-hc-terminal-runtime.md) | Every agent runs as an interactive CLI in an hc terminal inside its sandbox; admins can watch or take over through an audited relay |
 | [0022](./0022-underclass-model-gateway.md) | Underclass is the model gateway behind forge's key-injecting filter; Sand keeps egress injection; the console reads Underclass's admin API server-side |
+| [0023](./0023-forge-chat-isolation.md) | Each forge First Mate chat runs as its own Unix identity with a private home and its own hc core; the runner's key may only connect to or discard a chat |

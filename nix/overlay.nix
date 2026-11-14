@@ -12,6 +12,8 @@
 #   beadsmith-trufflehog  trufflehog, for scripts/public-scan.sh
 #   beadsmith-hc          hc (herdr-core), the agent terminal server in the
 #                         forge guest (ADR-0021), from nix/herdr-core.json
+#   beadsmith-claude-code Claude Code in the forge guest, the release Sand's
+#                         template installs (sandbox/e2b/build-template.ts)
 #
 # pnpm, Dolt and bd are taken from their upstream releases because nixpkgs
 # 26.05 lags (pnpm 12.9.0, dolt 1.86.6, beads 1.0.3). Exit: when nixpkgs
@@ -202,4 +204,19 @@ in
       '';
       meta.mainProgram = "hc";
     };
+
+  # Claude Code for the forge guest: nixpkgs' package (unfree; the host
+  # allows it by name) at the release Sand's template installs
+  # (CLAUDE_CODE_VERSION in sandbox/e2b/build-template.ts). The session core
+  # waits for the CLI's OSC 7501 status (ADR-0021), which nixpkgs 26.05's
+  # 2.1.223 does not report, so a chat never reaches its prompt with it. The
+  # checksum is the linux-x64 entry of the release's manifest.json at
+  # https://downloads.claude.ai/claude-code-releases/<version>/manifest.json.
+  # Move it with the template's version.
+  beadsmith-claude-code = prev.claude-code.override {
+    manifest = {
+      version = "2.1.311";
+      platforms.linux-x64.checksum = "86dc1fcc69498159eaf15f446613e847010f9036bfbbdffd4c49350be8489ada";
+    };
+  };
 }

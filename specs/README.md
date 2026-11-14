@@ -46,7 +46,10 @@ reality**. Search `src/` before treating a spec as implemented.
   `mate`, on the fleet host forge. Model and signing credentials stay on the
   host, behind a key-injecting proxy that admits only the Anthropic message
   API; the guest has no Beads or repository access yet
-  ([ADR-0016](decisions/0016-first-mate-worker-runtime.md)).
+  ([ADR-0016](decisions/0016-first-mate-worker-runtime.md)). Each chat runs
+  there as its own Unix identity, with a private home and its own hc core,
+  so one chat's agent cannot reach another's transcripts, files or
+  processes ([ADR-0023](decisions/0023-forge-chat-isolation.md)).
 - **Sand** runs missions and First Mate chats in hosted E2B sandboxes, one
   Firecracker microVM per mission or chat, beside the self-hosted runners.
   First Mate's **Runs on** picker chooses where new work goes; each mission
@@ -74,9 +77,10 @@ reality**. Search `src/` before treating a spec as implemented.
   ([ADR-0021](decisions/0021-hc-terminal-runtime.md)). Sand missions and
   First Mate chats (on both runners) run this way today, and the relay
   serves Sand missions and chats and forge chats, where admins open it from
-  the thread's or chat's terminal view. The forge guest runs hc as its
-  agent's user service; the forge runner serves the relay over its signed
-  contract, attaching over its own SSH `hc connect`.
+  the thread's or chat's terminal view. The forge guest runs one hc core
+  per chat, as that chat's user (ADR-0023); the forge runner serves the
+  relay over its signed contract, attaching over its own SSH to the chat's
+  core.
 - **ralph loops are missions**. A `loop`
   dispatch runs [ralph](https://github.com/Vonshlovens/von-ralph) in the
   mission's hc terminal on Sand or forge (pinned by commit, never in the app

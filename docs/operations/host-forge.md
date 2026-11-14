@@ -142,69 +142,76 @@ After `nixos-rebuild switch` on forge, with the grant in place:
 
 ## Guest lifecycle smoke test
 
-Each First Mate chat is interactive Claude Code in a terminal of the guest's
-hc core ([ADR-0021](../../specs/decisions/0021-hc-terminal-runtime.md)). The
-core runs as `hc-core.service`, a user service of the guest's `agent` account
-that starts at boot (the account lingers), so a chat's CLI lives in that
-service's cgroup and not in the runner's SSH session. The runner reaches it
-with `ssh agent@<guest> hc connect`. Ending a chat (delete, idle eviction,
-runner shutdown) kills its terminal, which ends the CLI and everything in its
-session even when it ignores SIGTERM; a descendant that detaches into a
-session of its own lives until `hc-core.service` stops. `agent-claude-first-run`
-merges Claude Code's onboarding, folder trust and bypass-permissions answers
-into the agent's state on each boot, so a launch never stops at a dialog.
+Each First Mate chat is interactive Claude Code in a terminal of an hc core
+([ADR-0021](../../specs/decisions/0021-hc-terminal-runtime.md)), and each
+chat has a core of its own, as a Unix identity of its own
+([ADR-0023](../../specs/decisions/0023-forge-chat-isolation.md)). The core
+runs in `mate-chat@<instance>.service`, where the instance is the first 24
+hex digits of the SHA-256 of the chat's CLI session id; its user is
+`mc-<instance>`, allocated by systemd while the unit runs (`DynamicUser=`).
+The chat's home is the unit's state directory,
+`/var/lib/private/mate-chats/<instance>` on the guest's `chats` volume
+(owned by `nobody` on disk; systemd maps it to the chat's user inside its
+unit), with the working directory `work` under it. Inside the unit,
+`/var/lib/private` holds that one home: the chat sees no other chat's home
+and no other chat's processes. The unit's setup step merges Claude Code's
+onboarding, folder trust and bypass-permissions answers into the chat's
+home on each start, so a launch never stops at a dialog.
 
-After deploying a guest with hc for the first time, restart it
-(`sudo systemctl restart microvm@mate`, preserving its volume) and confirm the
-core runs before sending a chat:
+The runner's key logs in as root but may only run the guest's `mate-chat`
+helper: `connect <session id>` starts the chat's unit and runs `hc connect`
+as the chat's user; `discard <session id>` stops it and removes its home.
+Ending a chat's CLI (idle eviction, runner shutdown) kills its terminal,
+which ends the CLI and everything in its session even when it ignores
+SIGTERM; a descendant that detaches into a session of its own lives until
+the chat's unit stops. Deleting a chat discards it.
+
+After deploying this guest for the first time, restart it
+(`sudo systemctl restart microvm@mate`, preserving its volume; the new
+`chats.img` is created on that start). Chats from before have their
+transcripts in the old shared home, which no chat sees: they start fresh
+sessions on their next message. Once nothing there is wanted, remove it with
+`sudo mate-ssh 'rm -rf /var/lib/agent/home'`.
+
+To see the chats' units, and one chat's terminals as its user (`I` is the
+instance):
 
 ```sh
-sudo mate-ssh 'systemctl --user -M agent@ is-active hc-core.service'
-```
-
-To look at the agent's terminals, run hc as the agent the way the runner
-does, with the runner's key and the pinned host key:
-
-```sh
-sudo ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
-  -o UserKnownHostsFile=/var/lib/microvm-keys/known_hosts \
-  -i /var/lib/mate-runner/ssh/agent_ed25519 agent@10.100.0.2 hc ls
+sudo mate-ssh 'systemctl list-units "mate-chat@*"'
+sudo mate-ssh 'I=<instance>; setpriv --reuid=$(id -u mc-$I) --regid=$(id -g mc-$I) --clear-groups env HOME=/run/mate-chat/$I XDG_RUNTIME_DIR=/run/mate-chat/$I hc ls'
 ```
 
 `fleet/hosts/forge/guest-lifecycle.test.mjs` runs against the deployed guest
 over the runner's SSH channel. It uses no model credentials and does not
-change the production runner. It checks that terminals run under
-`hc-core.service` with the system PATH (the fixture resolves `git`, `curl`,
-`rg`, `ls` and `bash` by name), that killing a terminal ends its program and
-two generations of descendants that ignore SIGTERM and SIGHUP while another
-terminal survives, that a terminal outlives an abrupt kill of the SSH client
-and is found again by label over a new connection, and that Claude Code
-(`mate-claude`) reaches its prompt in a terminal with no first-run dialog and
-ends when killed. Delete, eviction, shutdown and SIGTERM in the runner all end
-a chat with that terminal kill; their logic is unit-tested against a fake hc
-in `src/lib/mate-runner/`.
+change the production runner; it starts two test chats, installs its
+fixture into the first, and discards both at the end. It checks that a
+chat's terminals run in its own `mate-chat@` unit, as its own user, with
+the system PATH (the fixture resolves `git`, `curl`, `rg`, `ls` and `bash`
+by name); that killing a terminal ends its program and two generations of
+descendants that ignore SIGTERM and SIGHUP while another terminal survives;
+that a terminal outlives an abrupt kill of the SSH client and is found
+again by label over a new connection; that the second chat cannot list,
+read or write the first chat's home, reach its core's socket, see its
+processes in `/proc` or signal them, or see the guest's other state; that
+Claude Code (`mate-claude`) reaches its prompt in a terminal with no
+first-run dialog and ends when killed; that a chat's home survives a
+restart of its unit and belongs to its user afterwards; and that discarding
+one chat stops it and removes its home while the other keeps running.
+Delete, eviction, shutdown and SIGTERM in the runner are unit-tested
+against a fake hc in `src/lib/mate-runner/`.
 
-From the host checkout, install the fixture using `sudo mate-ssh`:
-
-```sh
-sudo mate-ssh 'cat > /var/lib/agent/home/work/lifecycle-fake.mjs; chown agent:users /var/lib/agent/home/work/lifecycle-fake.mjs' < fleet/hosts/forge/guests/lifecycle-fake.mjs
-```
-
-Run with the pinned Node executable used by `mate-runner.service`, as root
-(the existing host SSH identity is required):
+Run it from the host checkout with the pinned Node executable used by
+`mate-runner.service`, as root (it uses the runner's SSH key and
+`mate-ssh`):
 
 ```sh
 sudo node --import ./scripts/ts-resolve.mjs fleet/hosts/forge/guest-lifecycle.test.mjs
 ```
 
 Substitute the service's absolute Node path if Node is not on the host PATH.
-Each check prints `PASS`. The test removes its terminals and PID manifests.
-Afterwards remove the fixture:
+Each check prints `PASS`.
 
-```sh
-sudo mate-ssh 'rm -f /var/lib/agent/home/work/lifecycle-fake.mjs'
-```
-
-This verifies the guest's process lifecycle without an enrolled subscription.
+This verifies the guest's process lifecycle and chat isolation without an
+enrolled subscription.
 A model reply, interrupt and session resume still need the operator check in
 [first-mate.md](../first-mate.md#how-the-runner-runs-a-chat).

@@ -424,23 +424,32 @@ terminal, driven by the session core
 
 The forge runner's settings (environment of `mate-runner.service`):
 
-| Setting                    | Meaning                                                                              |
-| -------------------------- | ------------------------------------------------------------------------------------ |
-| `MATE_AGENT_SSH`           | `user@host` of the guest; with `MATE_AGENT_SSH_KEY` and `MATE_AGENT_KNOWN_HOSTS`     |
-| `MATE_AGENT_WORKDIR`       | Absolute working directory of the agent in the guest                                 |
-| `MATE_AGENT_CLAUDE_CONFIG` | Absolute Claude Code config directory there (`~/.claude`); transcripts live under it |
-| `MATE_AGENT_CLAUDE`        | The Claude Code executable the terminal runs (default `claude`)                      |
-| `MATE_AGENT_HC`            | The hc executable in the guest (default `hc`)                                        |
-| `MATE_AGENT_LOCAL=1`       | Development: run `hc connect` on this machine instead of over SSH                    |
+| Setting                    | Meaning                                                                                                                       |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `MATE_AGENT_SSH`           | `user@host` of the guest; with `MATE_AGENT_SSH_KEY` and `MATE_AGENT_KNOWN_HOSTS`                                              |
+| `MATE_AGENT_CHAT_HOMES`    | Absolute guest directory of chats' homes; a chat's is `<it>/<instance>`, with `work` and `.claude` (its transcripts) under it |
+| `MATE_AGENT_CLAUDE`        | The Claude Code executable the terminal runs (default `claude`)                                                               |
+| `MATE_AGENT_WORKDIR`       | Development only: the working directory (default: the current one)                                                            |
+| `MATE_AGENT_CLAUDE_CONFIG` | Development only: Claude Code's config directory (default `~/.claude`)                                                        |
+| `MATE_AGENT_HC`            | Development only: the local hc executable (default `hc`)                                                                      |
+| `MATE_AGENT_LOCAL=1`       | Development: run `hc connect` on this machine instead of over SSH                                                             |
 
-The guest runs its hc core as the `hc-core` user service of its agent
-account, so chats' CLIs outlive the runner's SSH sessions
-([host-forge.md](operations/host-forge.md#guest-lifecycle-smoke-test)).
+In the guest every chat runs as a Unix identity of its own
+([ADR-0023](../specs/decisions/0023-forge-chat-isolation.md)): a
+`mate-chat@` unit with a private home (`<MATE_AGENT_CHAT_HOMES>/<instance>`,
+where the instance is the first 24 hex digits of the SHA-256 of its
+session id) and its own hc core, so a chat's CLI outlives the runner's SSH sessions and
+cannot reach another chat's transcripts, files or processes. The runner's
+key may only ask the guest's `mate-chat` helper to `connect` to one chat's
+core (starting it first) or `discard` a chat. Deleting a chat discards it:
+its core and everything it started stop and its home is removed; when that
+fails the runner answers 503 and keeps the chat, so the delete can be
+retried ([host-forge.md](operations/host-forge.md#guest-lifecycle-smoke-test)).
 
 Operator check after deploying the guest (not yet run; unit tests cover the
 runner against a fake hc core, and the guest lifecycle smoke test covers the
 guest's core without a model): open a First Mate chat on the forge runner
-and send a message. In the guest, `hc ls` (as the agent, see
+and send a message. In the guest, `hc ls` (as the chat, see
 [host-forge.md](operations/host-forge.md#guest-lifecycle-smoke-test))
 lists one live terminal labelled
 `beadsmith-chat=<chat id>` running Claude Code in the working directory.
@@ -461,7 +470,7 @@ route with a forge chat in
 1. As an admin, open a forge chat that has answered a message. The
    **Terminal** strip shows under the header; **Watch** shows Claude
    Code's screen. In the guest, `hc ls` still lists one live terminal for
-   the chat, and the runner host has one more `ssh … hc connect` while
+   the chat, and the runner host has one more `ssh … connect <session>` while
    the view is open, gone a few seconds after closing it.
 2. **Take over…**, type `/help` and Enter: Claude Code shows its help in
    the view. **Hand back** returns to watching. Send a chat message

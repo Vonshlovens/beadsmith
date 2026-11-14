@@ -304,6 +304,10 @@ Shipped:
   the same mode; a refusal or an exited program does not. State, SSE
   parsing and ordered input are `src/lib/client/terminal-relay.ts`.
 
+- (Amended by [0023](./0023-forge-chat-isolation.md): the forge guest now
+  runs one hc core per chat, in a `mate-chat@` unit as that chat's own Unix
+  user, and the runner reaches it through the guest's `mate-chat` helper;
+  the shared `agent` account and `hc-core.service` below are gone.)
 - The forge guest's hc (`fleet/hosts/forge/guests/mate.nix`): the
   overlay's `beadsmith-hc` from the shared pin, and one core per guest as
   `hc-core.service`, a user service of the lingering `agent` account,

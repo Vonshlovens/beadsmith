@@ -20,7 +20,9 @@
   # guest, for `sudo mate-ssh`.
   controlKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB/zT5gwEHkOSaLALyOE2y76kEZwM2W2+gxTV5GL+Hhv forge-microvm-control-mate";
   # Public half of /var/lib/mate-runner/ssh/agent_ed25519 on forge: the
-  # unprivileged `agent` user, for the First Mate runner.
+  # First Mate runner's key, which the guest forces to its `mate-chat`
+  # helper (guests/mate.nix): it reaches one chat's core at a time, as that
+  # chat's own user.
   runnerKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPvBipoO/Jl56KPoyxqsOpG7xauWEOvslAWgHm+gUcbI forge-mate-runner";
   # The guest's SSH host key, which lives on its volume. Both host-side
   # clients pin it. Resetting the volume makes a new one: copy it from

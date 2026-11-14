@@ -38,7 +38,10 @@ chats sharing the guest user. A deliberately hostile process that controls that
 user's service manager is outside this cleanup guarantee. (Superseded by
 [0021](0021-hc-terminal-runtime.md): the CLI runs in a terminal of one hc
 core, a user service in the guest, and ending a chat kills its terminal;
-the per-launch transient service and supervisor are gone.)
+the per-launch transient service and supervisor are gone. Superseded again
+by [0023](0023-forge-chat-isolation.md): each chat now runs as its own Unix
+identity with a private home and its own hc core, which is a security
+boundary between chats.)
 
 The runner binds loopback and accepts contract-v1 HMAC requests. Tailnet HTTPS
 is the external transport; TLS certificate enablement is an operational gate.
