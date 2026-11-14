@@ -33,15 +33,20 @@ deleting a chat must remove what it left behind.
    of its own in the guest, `mate-chat@<instance>.service`, whose instance is
    the first 24 hex digits of the SHA-256 of the chat's CLI session id. The
    unit uses `DynamicUser=`: its user `mc-<instance>` exists only while the
-   unit runs, and systemd chowns the chat's state to whatever UID it gets
-   next, so state outlives the UID. Per chat rather than per owner: the
+   unit runs. systemd keeps the chat's state owned by `nobody` on disk and
+   maps it to whatever UID the unit gets (an ID-mapped mount), so state
+   outlives the UID. Per chat rather than per owner: the
    guest learns no Beadsmith account, the contract is unchanged, and two
    chats of the same admin are kept apart too.
-2. **A private home at a fixed path.** The chat's home is its
-   `StateDirectory`, under systemd's root-only `/var/lib/private`, on a
-   guest volume of its own. Inside the unit it is bound at
-   `/var/lib/agent/home`, the path every chat uses, so the runner's working
-   and config directories stay the same for every chat. The rest of the
+2. **A private home.** The chat's home is its `StateDirectory`,
+   `/var/lib/private/mate-chats/<instance>`, under systemd's root-only
+   `/var/lib/private`, on a guest volume of its own. Inside the unit,
+   `/var/lib/private` holds that one home and nothing else. The runner
+   computes the path from the session id (`MATE_AGENT_CHAT_HOMES`): the
+   working directory is `work` under it and Claude Code's config `.claude`.
+   It is the home's real path, with no bind or symlink: systemd's ID mapping
+   applies only there, and Claude Code files a transcript under the real
+   path of its working directory, which the runner must match. The rest of the
    guest's state volume is hidden behind an empty read-only tmpfs. The unit
    also has its own `/tmp`, sees only its own processes in `/proc`
    (`ProtectProc=invisible`), has no capabilities, and gets the usual
@@ -74,6 +79,10 @@ deleting a chat must remove what it left behind.
   (the model filter and public egress) and resources; a guest escape or a
   kernel bug crosses this boundary, as it would any shared-kernel one.
   Memory and task limits per chat are not set yet.
+- The guest's Claude Code must report its status to hc (OSC 7501), as
+  ADR-0021's session core waits on it; nixpkgs 26.05's release does not, so
+  the guest runs the release Sand's template installs
+  (`beadsmith-claude-code` in `nix/overlay.nix`).
 - The runner can still reach every chat: it is the trusted party that
   drives them, as before. Its key no longer gives a shell.
 - Idle chats keep a running hc core until they are deleted or the guest
@@ -87,7 +96,7 @@ deleting a chat must remove what it left behind.
   0021 per chat, a second chat probing the first (read, write, socket,
   `/proc`, signal), a restart keeping a chat's home, and discard
   ([host-forge.md](../../docs/operations/host-forge.md#guest-lifecycle-smoke-test)).
-  There is no NixOS VM test of the guest.
+  It passed on forge on 2026-11-14. There is no NixOS VM test of the guest.
 
 ## Implementation
 
@@ -95,7 +104,10 @@ deleting a chat must remove what it left behind.
   `mate-chat` helper, the `chats` volume at `/var/lib/private`, root's
   forced runner key).
 - Host: `fleet/hosts/forge/runtime.nix` (`MATE_AGENT_SSH` is `root@` the
-  guest; `MATE_AGENT_HC` is no longer used on forge).
+  guest, `MATE_AGENT_CHAT_HOMES` replaces `MATE_AGENT_WORKDIR` and
+  `MATE_AGENT_CLAUDE_CONFIG`; `MATE_AGENT_HC` is no longer used on forge).
+  The runner's Nix source bundle now includes the terminal relay module it
+  imports.
 - Runner: `src/lib/mate-runner/spawn.ts` (`sshArgs`, `sshConnector`,
   `sshDiscarder`), `src/lib/mate-runner/server.ts` (`discard` on delete),
   `scripts/mate-runner.ts`.

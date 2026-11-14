@@ -424,19 +424,21 @@ terminal, driven by the session core
 
 The forge runner's settings (environment of `mate-runner.service`):
 
-| Setting                    | Meaning                                                                              |
-| -------------------------- | ------------------------------------------------------------------------------------ |
-| `MATE_AGENT_SSH`           | `user@host` of the guest; with `MATE_AGENT_SSH_KEY` and `MATE_AGENT_KNOWN_HOSTS`     |
-| `MATE_AGENT_WORKDIR`       | Absolute working directory of the agent in the guest (the same for every chat)       |
-| `MATE_AGENT_CLAUDE_CONFIG` | Absolute Claude Code config directory there (`~/.claude`); transcripts live under it |
-| `MATE_AGENT_CLAUDE`        | The Claude Code executable the terminal runs (default `claude`)                      |
-| `MATE_AGENT_HC`            | Development only: the local hc executable (default `hc`)                             |
-| `MATE_AGENT_LOCAL=1`       | Development: run `hc connect` on this machine instead of over SSH                    |
+| Setting                    | Meaning                                                                                                                       |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `MATE_AGENT_SSH`           | `user@host` of the guest; with `MATE_AGENT_SSH_KEY` and `MATE_AGENT_KNOWN_HOSTS`                                              |
+| `MATE_AGENT_CHAT_HOMES`    | Absolute guest directory of chats' homes; a chat's is `<it>/<instance>`, with `work` and `.claude` (its transcripts) under it |
+| `MATE_AGENT_CLAUDE`        | The Claude Code executable the terminal runs (default `claude`)                                                               |
+| `MATE_AGENT_WORKDIR`       | Development only: the working directory (default: the current one)                                                            |
+| `MATE_AGENT_CLAUDE_CONFIG` | Development only: Claude Code's config directory (default `~/.claude`)                                                        |
+| `MATE_AGENT_HC`            | Development only: the local hc executable (default `hc`)                                                                      |
+| `MATE_AGENT_LOCAL=1`       | Development: run `hc connect` on this machine instead of over SSH                                                             |
 
 In the guest every chat runs as a Unix identity of its own
 ([ADR-0023](../specs/decisions/0023-forge-chat-isolation.md)): a
-`mate-chat@` unit with a private home, seen at the same path by every chat,
-and its own hc core, so a chat's CLI outlives the runner's SSH sessions and
+`mate-chat@` unit with a private home (`<MATE_AGENT_CHAT_HOMES>/<instance>`,
+where the instance is the first 24 hex digits of the SHA-256 of its
+session id) and its own hc core, so a chat's CLI outlives the runner's SSH sessions and
 cannot reach another chat's transcripts, files or processes. The runner's
 key may only ask the guest's `mate-chat` helper to `connect` to one chat's
 core (starting it first) or `discard` a chat. Deleting a chat discards it:

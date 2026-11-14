@@ -150,9 +150,11 @@ runs in `mate-chat@<instance>.service`, where the instance is the first 24
 hex digits of the SHA-256 of the chat's CLI session id; its user is
 `mc-<instance>`, allocated by systemd while the unit runs (`DynamicUser=`).
 The chat's home is the unit's state directory,
-`/var/lib/private/mate-chats/<instance>` on the guest's `chats` volume, and
-the chat sees it at `/var/lib/agent/home`; it sees no other chat's home and
-no other chat's processes. The unit's setup step merges Claude Code's
+`/var/lib/private/mate-chats/<instance>` on the guest's `chats` volume
+(owned by `nobody` on disk; systemd maps it to the chat's user inside its
+unit), with the working directory `work` under it. Inside the unit,
+`/var/lib/private` holds that one home: the chat sees no other chat's home
+and no other chat's processes. The unit's setup step merges Claude Code's
 onboarding, folder trust and bypass-permissions answers into the chat's
 home on each start, so a launch never stops at a dialog.
 
