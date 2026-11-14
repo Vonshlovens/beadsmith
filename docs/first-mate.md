@@ -118,6 +118,7 @@ they refuse a click, with the same message.
 | Read     | `list_projects`, `ready_work`, `list_issues`, `show_issue`, `list_missions`, `show_mission`, `list_todos` | Answers from the read model, missions and todos. Results are compact and bounded. |
 | Todos    | `create_todo`, `update_todo`, `complete_todo`, `route_todo`                                               | Changes the owner's todo list directly; `route_todo` files a todo with a mission. |
 | Missions | `file_issue`, `comment_issue`, `tackle_issue`, `discuss_issue`, `follow_up_mission`, `cancel_mission`     | Starts, continues or stops a mission on the default dispatch provider.            |
+| Memory   | `remember`, `recall`, `forget`                                                                            | The owner's memory, kept across chats ([below](#memory)).                         |
 
 Beads itself only changes through missions: First Mate files and comments by
 starting a File or comment mission, whose agent runs `bd` in a sandbox of its
@@ -150,6 +151,27 @@ what Beadsmith answered, read when you first open it, and a refused call
 the line. Those are Beadsmith's own answers, kept per chat for its owner;
 the agent's other tools keep only their name and status.
 
+### Memory
+
+First Mate keeps a memory for the admin who owns the chat
+([ADR-0024](../specs/decisions/0024-first-mate-memory-and-context.md)). A
+memory is one short fact under a key, with one scope: `owner` (about the
+admin), `project:<id>` or `topic:<slug>`. `remember` saves one, replacing
+whatever was under that key; `recall` searches by words (best match first)
+or lists the newest, optionally in one scope; `forget` deletes one key. First
+Mate saves memories on its own judgment, without asking. Memories belong to
+the account, not the chat: deleting a chat keeps them, and every chat of
+that admin, on any runner with crew tools, sees the same memory. No other
+account's chat can read them.
+
+Limits (the ADR's Limits table): 500 characters per memory, keys of up to
+64 lowercase letters, digits and single dashes, 500 memories per account of
+which at most 40 are `owner`-scoped, and 25 per recall. A write over a
+limit is refused with a message saying what to do; nothing is cut.
+
+Not yet shipped: memories added to each turn automatically, the meta
+folder, the sliding context window and a page to review and edit memories.
+
 Mission tools need dispatch configured (`BDX_DISPATCH_PROVIDER`); without it
 they answer with the reason, and the read and todo tools still work. Chats on
 the `remote` runner have no crew tools yet: the forge guest keeps its own
@@ -157,7 +179,7 @@ setup until it gets a transport for the same tool module.
 
 ## What Beadsmith stores
 
-Three tables in `state.db` ([ADR-0004](../specs/decisions/0004-service-local-sqlite.md)):
+Four tables in `state.db` ([ADR-0004](../specs/decisions/0004-service-local-sqlite.md)):
 
 - `mate_chats`: id (`mc_` + 24 hex), owner account id, title, scope (a
   project id, or null for every project), the chat runner (`remote` or `e2b`;
@@ -176,6 +198,10 @@ Three tables in `state.db` ([ADR-0004](../specs/decisions/0004-service-local-sql
   Claude Code's tool use id: tool, arguments as JSON (cut at 4,000
   characters), the text the agent was given (cut at 8,000), whether it was an
   error, and the mission a launch named. The newest 200 per chat are kept.
+- `mate_memories`: First Mate's memories, per owner account: key (unique
+  per owner), scope, body, the chat that last wrote it, and created,
+  updated and last-recalled times, with an FTS5 index (`mate_memories_fts`)
+  for recall. Deleting a chat leaves them.
 
 The runner is the durable log of a chat. Beadsmith's copy lets a chat open
 without the runner and catch up from where it left off.

@@ -334,7 +334,10 @@ const CREW_TOOL_VERBS: Record<string, readonly [running: string, done: string]> 
 	tackle_issue: ['Requesting a Tackle mission', 'Requested a Tackle mission'],
 	discuss_issue: ['Requesting a Discuss mission', 'Requested a Discuss mission'],
 	follow_up_mission: ['Sending a follow-up', 'Asked for a follow-up'],
-	cancel_mission: ['Asking to cancel a mission', 'Asked to cancel a mission']
+	cancel_mission: ['Asking to cancel a mission', 'Asked to cancel a mission'],
+	remember: ['Remembering something', 'Remembered something'],
+	recall: ['Recalling memories', 'Recalled memories'],
+	forget: ['Forgetting a memory', 'Forgot a memory']
 };
 
 /** Crew tools whose call can start a mission this chat owns. */

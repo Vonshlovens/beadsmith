@@ -122,6 +122,13 @@ reality**. Search `src/` before treating a spec as implemented.
   relayed over a signed HTTP + SSE contract as the sanitized MissionEvent
   union ([`docs/first-mate.md`](../docs/first-mate.md)). Without a runner it
   answers with a placeholder.
+- Accepted, being implemented: First Mate's **memory and meta folder**
+  belong to Beadsmith, per owner, in `state.db`, reached through crew
+  tools, so they outlive chats, sandboxes and the choice of runner; recall
+  adds only relevant, bounded memories to each turn; the runner core slides
+  each chat's context with an agent-written carry-over note instead of
+  resuming an ever-growing transcript. Work stays in Beads
+  ([ADR-0024](decisions/0024-first-mate-memory-and-context.md)).
 - Deployment is **one root `compose.yaml` + `.env`** (bridge with token,
   or host network on loopback), GHCR images, Dolt always separate.
   Tailscale is for Cloud Agent VMs, not the app image
@@ -193,6 +200,7 @@ Follow the `architecture` skill at
 | [0020-first-mate-crew-tools.md](decisions/0020-first-mate-crew-tools.md) | [`src/lib/server/crew/`](../src/lib/server/crew/) | Crew tools: one transport-free MCP tool module for First Mate chats (read tools, todo writes and mission launches as the chat's owner), relayed into Sand chats by [`src/lib/server/mate/crew-bridge.ts`](../src/lib/server/mate/crew-bridge.ts) |
 | [0021-hc-terminal-runtime.md](decisions/0021-hc-terminal-runtime.md) | Partly: the hc client is in [`src/lib/hc/`](../src/lib/hc/), the session core in [`src/lib/agent-session/`](../src/lib/agent-session/), and Sand missions ([`src/lib/server/dispatch/e2b-provider.ts`](../src/lib/server/dispatch/e2b-provider.ts)) and First Mate chats ([`src/lib/mate-runner/`](../src/lib/mate-runner/)) run on it; the admin relay for Sand is in [`src/lib/server/terminal-relay/`](../src/lib/server/terminal-relay/); the forge guest's hc core is a user service in [`fleet/hosts/forge/guests/mate.nix`](../fleet/hosts/forge/guests/mate.nix); forge chats relay through the mate runner's terminal attach ([`src/lib/mate-runner/server.ts`](../src/lib/mate-runner/server.ts)) | hc terminal runtime for every agent: `hc connect` over the sandbox's own channel, transcript-derived MissionEvents, admin relay with audited attach and take-over |
 | [0022-underclass-model-gateway.md](decisions/0022-underclass-model-gateway.md) | [`fleet/hosts/forge/runtime.nix`](../fleet/hosts/forge/runtime.nix), [`fleet/hosts/forge/model-proxy.mjs`](../fleet/hosts/forge/model-proxy.mjs), [`src/lib/server/underclass/client.ts`](../src/lib/server/underclass/client.ts), [`src/routes/console/model-pool/`](../src/routes/console/model-pool/) | Underclass pool on forge behind the guest filter; admin console reads its API and runs four account actions server-side |
+| [0024-first-mate-memory-and-context.md](decisions/0024-first-mate-memory-and-context.md) | Partly: [`src/lib/server/mate/memory-store.ts`](../src/lib/server/mate/memory-store.ts), [`src/lib/server/crew/memory-tools.ts`](../src/lib/server/crew/memory-tools.ts) | First Mate memory, meta folder and sliding context, runner-agnostic |
 
 ## UI map
 
