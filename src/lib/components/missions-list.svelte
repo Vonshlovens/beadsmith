@@ -11,9 +11,16 @@
 	import RepeatIcon from 'phosphor-svelte/lib/RepeatIcon';
 	import IssueId from '#lib/components/issue-id.svelte';
 	import MissionStatus from '#lib/components/mission-status.svelte';
-	import { formatElapsed, isBusyStatus, isSafeRunUrl, missionVerb } from '#lib/client/agent.js';
+	import {
+		formatElapsed,
+		isBusyStatus,
+		isFollowedMission,
+		isSafeRunUrl,
+		missionVerb
+	} from '#lib/client/agent.js';
 	import { threadHref } from '#lib/client/first-mate.js';
-	import { relativeShort } from '#lib/client/format.js';
+	import { absoluteStamp, relativeShort } from '#lib/client/format.js';
+	import { statusSnapshot } from '#lib/client/projects.svelte.js';
 	import { app_state } from '#lib/client/stores.svelte.js';
 	import type { Mission } from '#lib/types.js';
 
@@ -24,6 +31,8 @@
 	}
 
 	let { missions, show_project = false, compact = false }: Props = $props();
+
+	const dispatch = $derived(statusSnapshot()?.dispatch ?? null);
 
 	function openInDialog(mission: Mission) {
 		if (mission.issue_id === undefined) {
@@ -48,10 +57,12 @@
 							mission
 						)}</span
 					>
-					<MissionStatus status={mission.status} />
+					<MissionStatus status={mission.status} live={isFollowedMission(mission, dispatch)} />
 					<span class="spacer"></span>
 					<span class="faint">{mission.actor}</span>
-					<span class="faint mono-num">{relativeShort(mission.updated_at)}</span>
+					<span class="faint mono-num" {@attach tip(absoluteStamp(mission.updated_at))}
+						>{relativeShort(mission.updated_at)}</span
+					>
 				</button>
 				{#if mission.error_message}
 					<p class="err">{mission.error_message}</p>
@@ -67,7 +78,12 @@
 					<span class="verb">
 						{#if mission.loop}<RepeatIcon size={12} aria-hidden="true" />{/if}{missionVerb(mission)}
 					</span>
-					<span class="f-st"><MissionStatus status={mission.status} /></span>
+					<span class="f-st"
+						><MissionStatus
+							status={mission.status}
+							live={isFollowedMission(mission, dispatch)}
+						/></span
+					>
 					<span class="f-ti">
 						{#if mission.issue_id}<IssueId id={mission.issue_id} abbreviate />{/if}
 						<span class="f-title">{mission.title ?? ''}</span>
@@ -87,11 +103,11 @@
 				<span class="f-dur mono-num" {@attach tip('Run time')}
 					>{mission.duration_ms === undefined ? '' : formatElapsed(mission.duration_ms)}</span
 				>
-				<span class="f-when mono-num" {@attach tip(mission.updated_at)}
+				<span class="f-when mono-num" {@attach tip(`Updated ${absoluteStamp(mission.updated_at)}`)}
 					>{relativeShort(mission.updated_at)}</span
 				>
 				<span class="f-links">
-					{#if mission.git_pr_url}
+					{#if isSafeRunUrl(mission.git_pr_url)}
 						<a
 							class="btn btn-sm btn-ghost btn-icon"
 							href={mission.git_pr_url}
@@ -144,7 +160,8 @@
 		cursor: pointer;
 		text-align: left;
 	}
-	.c-row:hover {
+	.c-row:hover,
+	.c-row:focus-visible {
 		background: var(--s3);
 		border-color: var(--line);
 	}
@@ -237,10 +254,17 @@
 		justify-content: flex-end;
 		min-width: 52px;
 	}
+	/* Two lines of the reason in the row; the thread has all of it. */
 	.f-err {
+		display: -webkit-box;
 		grid-column: 1 / -1;
 		margin: 0;
 		padding: 0;
+		overflow: hidden;
+		overflow-wrap: anywhere;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
 	}
 	.fleet:not(:has(.f-proj)) .f-row {
 		grid-template-columns: minmax(0, 1fr) minmax(0, 12em) 4em 3em auto;

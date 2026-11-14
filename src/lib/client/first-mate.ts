@@ -483,11 +483,17 @@ export function defaultCommands(ctx: FirstMateContext): FirstMateCommand[] {
 		);
 	}
 	if (ctx.is_admin) {
-		commands.push(go('go-todos', 'Todos', '/todos', ['todos', 'agenda', 'home', 'tasks'], 'g t'));
+		commands.push(go('go-todos', 'Todos', '/todos', ['todos', 'agenda', 'tasks'], 'g t'));
 	}
 	if (!ctx.on_first_mate_page) {
 		commands.push(
-			go('go-first-mate', 'First Mate', FIRST_MATE_PATH, ['first mate', 'chat', 'ask'], 'g f')
+			go(
+				'go-first-mate',
+				'First Mate',
+				FIRST_MATE_PATH,
+				['first mate', 'chat', 'ask', 'home'],
+				'g f'
+			)
 		);
 	}
 	commands.push(

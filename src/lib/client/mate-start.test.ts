@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
 	missionsNeedingYou,
 	runsOnNote,
+	startMode,
 	startSuggestions,
+	topReady,
+	topTodos,
+	workerSummary,
 	type StartContext,
 	type StartMission
 } from './mate-start.js';
@@ -132,5 +136,86 @@ describe('runsOnNote', () => {
 			sand_offered: true
 		});
 		expect(runsOnNote('remote', [runners[0]!])?.sand_offered).toBe(false);
+	});
+});
+
+describe('topTodos', () => {
+	const now = new Date(2026, 10, 13, 12);
+	const item = (id: string, priority: number, due_at: string | null, status = 'open' as const) => ({
+		id,
+		priority,
+		due_at,
+		status,
+		routed_project_id: null
+	});
+
+	it('keeps open todos, most urgent first', () => {
+		const out = topTodos(
+			[
+				item('later', 2, null),
+				item('overdue', 2, '2026-11-10'),
+				item('done', 0, '2026-11-10', 'done' as 'open'),
+				item('p0', 0, null),
+				item('p4', 4, null)
+			],
+			now
+		);
+		expect(out.map((todo) => todo.id)).toEqual(['overdue', 'p0', 'later']);
+	});
+
+	it('honours the limit', () => {
+		expect(topTodos([item('a', 1, null), item('b', 1, null)], now, 1)).toHaveLength(1);
+	});
+});
+
+describe('topReady', () => {
+	it("lists the scope's issues first when it has any", () => {
+		const out = topReady([ready('a'), ready('b'), ready('b')], 'b');
+		expect(out.map((issue) => issue.project_id)).toEqual(['b', 'b']);
+	});
+
+	it("falls back to the deck's order when the scope has none", () => {
+		const out = topReady([ready('a'), ready('b'), ready('c'), ready('d')], 'z');
+		expect(out.map((issue) => issue.project_id)).toEqual(['a', 'b', 'c']);
+	});
+});
+
+describe('workerSummary', () => {
+	it('lists working missions, then the ones that need you', () => {
+		const summary = workerSummary([
+			mission({ issue_id: 'x-1', status: 'failed' }),
+			mission({ issue_id: 'x-2', status: 'running' }),
+			mission({ issue_id: 'x-3', status: 'succeeded' }),
+			mission({ issue_id: 'x-4', status: 'queued' })
+		]);
+		expect(summary.working).toBe(2);
+		expect(summary.needs_you).toBe(1);
+		expect(summary.rows.map((row) => row.issue_id)).toEqual(['x-2', 'x-4', 'x-1']);
+	});
+
+	it('leaves out a failure someone already retried', () => {
+		const summary = workerSummary([
+			mission({ issue_id: 'x-1', status: 'succeeded', updated_at: '2026-11-09T11:00:00Z' }),
+			mission({ issue_id: 'x-1', status: 'failed', updated_at: '2026-11-09T09:00:00Z' })
+		]);
+		expect(summary).toEqual({ working: 0, needs_you: 0, rows: [] });
+	});
+});
+
+describe('startMode', () => {
+	const base = { loaded: true, has_status: true, admin_only: false, connected: true };
+
+	it('waits for status before saying anything', () => {
+		expect(startMode({ ...base, loaded: false })).toBe('loading');
+	});
+
+	it('reports a failed status read instead of "not connected"', () => {
+		expect(startMode({ ...base, has_status: false, connected: false })).toBe('error');
+	});
+
+	it('tells members, then placeholder admins, apart from a working chat', () => {
+		expect(startMode({ ...base, admin_only: true })).toBe('members');
+		expect(startMode({ ...base, connected: false })).toBe('placeholder');
+		expect(startMode(base)).toBe('chat');
 	});
 });

@@ -1,17 +1,12 @@
 /**
  * Where `/` lands. The project catalogue used to be the home page; it moved to
- * `/projects` so the first screen is your own work: the todo list for admins,
- * First Mate for everyone else until every account has its own todos.
+ * `/projects`, and the first screen is now First Mate for every account: its
+ * start screen offers a new chat next to your todos, ready issues, recent
+ * chats and running workers, so it is a way into all of your own work.
  */
 
 /** The project catalogue. */
 export const PROJECTS_PATH = '/projects';
 
-/**
- * The page `/` redirects to.
- *
- * @param role - The signed-in account's role, or undefined when signed out.
- */
-export function homePath(role: string | null | undefined): string {
-	return role === 'admin' ? '/todos' : '/first-mate';
-}
+/** The page `/` redirects to. */
+export const HOME_PATH = '/first-mate';

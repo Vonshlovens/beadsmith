@@ -226,6 +226,54 @@ export function reduceMissionEvents(events: readonly MissionEvent[]): MissionEve
 	return reduced;
 }
 
+/**
+ * A run of consecutive tool calls, shown as one line instead of one row each.
+ * The First Mate chat summarises the same runs (`toolRunSummary` in
+ * client/mate-chat.ts), so the two read alike.
+ */
+export interface MissionToolGroup {
+	type: 'tool_group';
+	calls: MissionToolCallEvent[];
+}
+
+export type MissionStreamItem = Exclude<MissionEvent, MissionToolCallEvent> | MissionToolGroup;
+
+/**
+ * The stream as the thread shows it: reduced (see `reduceMissionEvents`),
+ * then each run of consecutive tool calls folded into one group, so a long
+ * run reads as what the agent said with its tool work in between. Items
+ * only grow or append, so a position is a stable key.
+ */
+export function groupMissionEvents(events: readonly MissionEvent[]): MissionStreamItem[] {
+	const items: MissionStreamItem[] = [];
+	let calls: MissionToolCallEvent[] = [];
+	for (const event of reduceMissionEvents(events)) {
+		if (event.type === 'tool_call') {
+			calls.push(event);
+			continue;
+		}
+		if (calls.length > 0) {
+			items.push({ type: 'tool_group', calls });
+			calls = [];
+		}
+		items.push(event);
+	}
+	if (calls.length > 0) {
+		items.push({ type: 'tool_group', calls });
+	}
+	return items;
+}
+
+/**
+ * Whether a stream the proxy closed with `done` is over for good. It is when
+ * the run's result arrived, or the proxy answered for itself (not launched,
+ * stream expired: reconnecting would get the same answer). Otherwise the
+ * runner's side dropped mid-run and the browser should reconnect.
+ */
+export function missionStreamEnded(seen: { got_result: boolean; got_answer: boolean }): boolean {
+	return seen.got_result || seen.got_answer;
+}
+
 export function missionStreamPath(project_id: string, request_id: string): string {
 	return `/api/projects/${encodeURIComponent(project_id)}/dispatch/${encodeURIComponent(request_id)}/stream`;
 }

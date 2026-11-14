@@ -11,8 +11,13 @@
  * workers; on the operator's own runner (the forge guest) it has no crew
  * tools, so only questions about Beads are offered there. Without a runner,
  * replies are placeholders and nothing is suggested from data.
+ *
+ * The start screen is also the app's home, so it lists the viewer's work
+ * (top todos, ready issues, running and failed workers) whether or not a chat
+ * can answer: those rows link to the work itself and need no runner.
  */
 import type { MateRunnerId, MateRunnerInfo } from '#lib/mate.js';
+import { compareByUrgency, type UrgencyInput } from '#lib/todos/urgency.js';
 import type { DispatchStatus } from '#lib/types.js';
 
 /** The ready issue fields the builder reads. */
@@ -92,7 +97,12 @@ function readyFocus(
  * picked it up. Missions without an issue (a File mission) count alone.
  */
 export function missionsNeedingYou(missions: readonly StartMission[]): number {
-	const latest = new Map<string, StartMission>();
+	return failedLatest(missions).length;
+}
+
+/** The missions behind {@link missionsNeedingYou}, in the order given. */
+function failedLatest<T extends StartMission>(missions: readonly T[]): T[] {
+	const latest = new Map<string, T>();
 	missions.forEach((mission, index) => {
 		const key =
 			mission.issue_id === undefined
@@ -103,7 +113,103 @@ export function missionsNeedingYou(missions: readonly StartMission[]): number {
 			latest.set(key, mission);
 		}
 	});
-	return [...latest.values()].filter((mission) => mission.status === 'failed').length;
+	const failed = new Set([...latest.values()].filter((mission) => mission.status === 'failed'));
+	return missions.filter((mission) => failed.has(mission));
+}
+
+const BUSY: ReadonlySet<DispatchStatus> = new Set(['queued', 'launching', 'launched', 'running']);
+
+/** How many rows each home panel lists before pointing at its page. */
+export const HOME_ROWS = 3;
+
+/**
+ * The open todos to show first on the home screen: most urgent first, as
+ * the Todos page orders them.
+ *
+ * @param todos - Todos in any order and status.
+ * @param now - Reference time, fixed once per render.
+ * @param limit - How many to keep.
+ */
+export function topTodos<T extends StartTodo & UrgencyInput>(
+	todos: readonly T[],
+	now: Date,
+	limit = HOME_ROWS
+): T[] {
+	return todos
+		.filter((todo) => todo.status === 'open')
+		.sort(compareByUrgency(now))
+		.slice(0, limit);
+}
+
+/**
+ * The ready issues to show first: the chat's scope first when it has any,
+ * otherwise the Ready deck's own order (by priority).
+ *
+ * @param ready - Ready issues across projects, as the deck lists them.
+ * @param scope - The chosen project, or null for every project.
+ * @param limit - How many to keep.
+ */
+export function topReady<T extends StartReadyIssue>(
+	ready: readonly T[],
+	scope: string | null,
+	limit = HOME_ROWS
+): T[] {
+	const scoped = scope === null ? [] : ready.filter((issue) => issue.project_id === scope);
+	return (scoped.length > 0 ? scoped : ready).slice(0, limit);
+}
+
+export interface WorkerSummary<T> {
+	/** Missions an agent is still working on. */
+	working: number;
+	/** Issues whose latest mission failed ({@link missionsNeedingYou}). */
+	needs_you: number;
+	/** Working missions, then failed ones, in the order given. */
+	rows: T[];
+}
+
+/**
+ * What the home screen says about repo workers: what is running and what
+ * stopped and needs a person. Finished missions are left to the rail and the
+ * Missions page.
+ *
+ * @param missions - Missions, newest first, as the list returns them.
+ * @param limit - How many rows to keep.
+ */
+export function workerSummary<T extends StartMission>(
+	missions: readonly T[],
+	limit = HOME_ROWS
+): WorkerSummary<T> {
+	const busy = missions.filter((mission) => BUSY.has(mission.status));
+	const failed = failedLatest(missions);
+	return {
+		working: busy.length,
+		needs_you: failed.length,
+		rows: [...busy, ...failed].slice(0, limit)
+	};
+}
+
+/**
+ * What the start screen can offer, from what has loaded:
+ *
+ * - `loading`: status has not answered yet.
+ * - `error`: status could not be read; the chat may or may not work.
+ * - `members`: the viewer cannot chat with First Mate.
+ * - `placeholder`: an admin, but no runner answers; replies are placeholders.
+ * - `chat`: an admin with a runner.
+ */
+export type StartMode = 'loading' | 'error' | 'members' | 'placeholder' | 'chat';
+
+export function startMode(state: {
+	loaded: boolean;
+	/** Status was read (null when the read failed). */
+	has_status: boolean;
+	admin_only: boolean;
+	connected: boolean;
+}): StartMode {
+	if (!state.loaded) return 'loading';
+	if (!state.has_status) return 'error';
+	if (state.admin_only) return 'members';
+	return state.connected ? 'chat' : 'placeholder';
 }
 
 /**

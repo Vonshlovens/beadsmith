@@ -61,7 +61,16 @@
 	const is_admin = $derived(viewer?.role === 'admin');
 
 	const sections = $derived.by((): NavSection[] => {
-		const mine: NavItem[] = [];
+		// First Mate leads: it is where `/` lands (src/lib/client/home.ts).
+		const mine: NavItem[] = [
+			{
+				href: '/first-mate',
+				label: 'First Mate',
+				icon: SteeringWheelIcon,
+				active: path === '/first-mate',
+				keys: 'g f'
+			}
+		];
 		if (is_admin) {
 			mine.push({
 				href: '/todos',
@@ -72,13 +81,6 @@
 			});
 		}
 		mine.push(
-			{
-				href: '/first-mate',
-				label: 'First Mate',
-				icon: SteeringWheelIcon,
-				active: path === '/first-mate',
-				keys: 'g f'
-			},
 			{
 				href: '/ready',
 				label: 'Ready',

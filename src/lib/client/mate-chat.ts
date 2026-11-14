@@ -402,6 +402,74 @@ export function touchesMissions(events: readonly MateEvent[]): boolean {
 }
 
 /**
+ * A run of the agent's own tool calls longer than this folds into a one-line
+ * summary: a long turn can make hundreds of calls, and a wall of chips hides
+ * the reply around it.
+ */
+export const TOOL_RUN_FOLD = 6;
+
+export interface ToolRunSummary {
+	/** Calls by tool name, most used first (ties keep first-use order). */
+	counts: { name: string; count: number }[];
+	/** The call still running, if any: what the agent is doing now. */
+	running?: string;
+	failed: number;
+	stopped: number;
+}
+
+/**
+ * Summarise a run of tool calls for its folded line.
+ *
+ * @param items - The run's calls, in order, with their latest status.
+ */
+export function toolRunSummary(
+	items: readonly { name: string; status: MissionToolCallStatus | 'stopped' }[]
+): ToolRunSummary {
+	const counts = new Map<string, number>();
+	let running: string | undefined;
+	let failed = 0;
+	let stopped = 0;
+	for (const item of items) {
+		counts.set(item.name, (counts.get(item.name) ?? 0) + 1);
+		if (item.status === 'running') running = item.name;
+		else if (item.status === 'failed') failed += 1;
+		else if (item.status === 'stopped') stopped += 1;
+	}
+	// Map keeps insertion order and sort is stable, so ties stay in first use.
+	const sorted = [...counts].map(([name, count]) => ({ name, count }));
+	sorted.sort((a, b) => b.count - a.count);
+	return { counts: sorted, ...(running === undefined ? {} : { running }), failed, stopped };
+}
+
+/**
+ * How long a dropped live stream may take to come back before the chat says
+ * so. The server asks EventSource to reconnect after 3 seconds, and closes
+ * the stream whenever the runner's side ends, so most drops heal unseen.
+ */
+export const STREAM_GRACE_MS = 8_000;
+
+/**
+ * How long a reopened stream must stay up before the chat counts it as
+ * recovered. A runner failure opens the stream and closes it again at once;
+ * clearing the notice on every open would make it flicker.
+ */
+export const STREAM_SETTLE_MS = 3_000;
+
+/** Waits before each of Beadsmith's own reconnects, after EventSource gave up. */
+const STREAM_RETRY_MS: readonly number[] = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
+
+/**
+ * How long to wait before reconnecting a stream that EventSource closed for
+ * good (an error status from the server or a proxy, which it does not retry).
+ *
+ * @param attempt - Reconnects already tried since the stream was last up.
+ * @returns The delay, or undefined when recovery should stop and ask.
+ */
+export function streamRetryDelay(attempt: number): number | undefined {
+	return STREAM_RETRY_MS[attempt];
+}
+
+/**
  * Indent JSON text for reading; text that is not whole JSON (a result cut
  * to fit, an error sentence) is returned as it is.
  *

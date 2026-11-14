@@ -10,6 +10,7 @@ vi.mock('#lib/client/projects.svelte.js', () => ({ statusSnapshot: () => null })
 // identities here; rendering/reactive scheduling still needs browser QA.
 vi.stubGlobal('$state', <T>(value: T) => value);
 const { mate_chats: chats, CHAT_MISSION_POLL_MS } = await import('./mate-chat.svelte.js');
+const { STREAM_GRACE_MS, STREAM_SETTLE_MS, streamRetryDelay } = await import('./mate-chat.js');
 
 class FakeSource {
 	static CLOSED = 2;
@@ -18,10 +19,13 @@ class FakeSource {
 	onmessage: ((event: { data: string }) => void) | null = null;
 	onerror: (() => void) | null = null;
 	onopen: (() => void) | null = null;
-	constructor() {
+	listeners: Record<string, (event: { data: string }) => void> = {};
+	constructor(readonly url: string) {
 		FakeSource.instances.push(this);
 	}
-	addEventListener() {}
+	addEventListener(type: string, listener: (event: { data: string }) => void) {
+		this.listeners[type] = listener;
+	}
 	close() {
 		this.readyState = 2;
 	}
@@ -199,14 +203,125 @@ it('keeps the transcript while reconnecting and after a failed refresh', async (
 	expect(chats.opening).toBe(false);
 });
 
-it('reports transient stream loss and clears the notice when connected', async () => {
+it('says nothing about a drop that heals within the grace period', async () => {
+	vi.useFakeTimers();
+	try {
+		await chats.open(chat.id);
+		const source = FakeSource.instances[0]!;
+		source.readyState = 0;
+		source.onerror!();
+		expect(chats.stream_error).toBeNull();
+		await vi.advanceTimersByTimeAsync(STREAM_GRACE_MS / 2);
+		source.readyState = 1;
+		source.onopen!();
+		await vi.advanceTimersByTimeAsync(STREAM_GRACE_MS * 2);
+		expect(chats.stream_error).toBeNull();
+		expect(chats.stream_lost).toBe(false);
+	} finally {
+		vi.useRealTimers();
+	}
+});
+
+it('reports a lasting drop, and clears it once the stream has stayed up', async () => {
+	vi.useFakeTimers();
+	try {
+		await chats.open(chat.id);
+		const source = FakeSource.instances[0]!;
+		source.readyState = 0;
+		source.onerror!();
+		await vi.advanceTimersByTimeAsync(STREAM_GRACE_MS);
+		expect(chats.stream_error).toContain('Reconnecting');
+		source.onopen!();
+		// An open that fails again at once must not flicker the notice away.
+		await vi.advanceTimersByTimeAsync(STREAM_SETTLE_MS / 2);
+		expect(chats.stream_error).toContain('Reconnecting');
+		await vi.advanceTimersByTimeAsync(STREAM_SETTLE_MS);
+		expect(chats.stream_error).toBeNull();
+	} finally {
+		vi.useRealTimers();
+	}
+});
+
+it('keeps the runner’s reason when its stream closes after a runner error', async () => {
+	vi.useFakeTimers();
+	try {
+		await chats.open(chat.id);
+		const source = FakeSource.instances[0]!;
+		source.listeners.runner_error!({ data: JSON.stringify({ message: 'The runner is busy.' }) });
+		source.readyState = 0;
+		source.onerror!();
+		await vi.advanceTimersByTimeAsync(STREAM_GRACE_MS);
+		expect(chats.stream_error).toBe('The runner is busy. Retrying…');
+	} finally {
+		vi.useRealTimers();
+	}
+});
+
+it('reconnects a stream EventSource gave up on, from the last event, with backoff', async () => {
+	vi.useFakeTimers();
+	try {
+		await chats.open(chat.id);
+		const source = FakeSource.instances[0]!;
+		source.onmessage!({ data: JSON.stringify({ type: 'assistant', id: 'e1', text: 'hi' }) });
+		source.close();
+		source.onerror!();
+		expect(FakeSource.instances).toHaveLength(1);
+		await vi.advanceTimersByTimeAsync(streamRetryDelay(0)!);
+		expect(FakeSource.instances).toHaveLength(2);
+		expect(FakeSource.instances[1]!.url).toContain('after=e1');
+		// A message from the new stream ends the drop before anyone was told.
+		FakeSource.instances[1]!.onmessage!({
+			data: JSON.stringify({ type: 'assistant', id: 'e2', text: 'back' })
+		});
+		await vi.advanceTimersByTimeAsync(STREAM_GRACE_MS * 2);
+		expect(chats.stream_error).toBeNull();
+		expect(chats.events.map((event) => event.id)).toEqual(['e1', 'e2']);
+	} finally {
+		vi.useRealTimers();
+	}
+});
+
+it('asks for a manual reconnect only after its own retries run out', async () => {
+	vi.useFakeTimers();
+	try {
+		await chats.open(chat.id);
+		let attempts = 0;
+		while (streamRetryDelay(attempts) !== undefined) {
+			const source = FakeSource.instances.at(-1)!;
+			source.close();
+			source.onerror!();
+			expect(chats.stream_lost).toBe(false);
+			await vi.advanceTimersByTimeAsync(streamRetryDelay(attempts)!);
+			attempts += 1;
+		}
+		expect(FakeSource.instances).toHaveLength(attempts + 1);
+		const last = FakeSource.instances.at(-1)!;
+		last.close();
+		last.onerror!();
+		expect(chats.stream_lost).toBe(true);
+		expect(chats.stream_error).toContain('Lost the live connection');
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(FakeSource.instances).toHaveLength(attempts + 1);
+		await chats.open(chat.id);
+		expect(chats.stream_lost).toBe(false);
+		expect(chats.stream_error).toBeNull();
+		expect(FakeSource.instances).toHaveLength(attempts + 2);
+	} finally {
+		vi.useRealTimers();
+	}
+});
+
+it('takes a failed message back into the composer, after any draft', async () => {
 	await chats.open(chat.id);
-	const source = FakeSource.instances[0]!;
-	source.readyState = 0;
-	source.onerror!();
-	expect(chats.stream_error).toContain('Reconnecting');
-	source.onopen!();
-	expect(chats.stream_error).toBeNull();
+	vi.spyOn(api, 'sendMateMessage').mockRejectedValue(new Error('offline'));
+	await chats.send(chat.id, 'first try', 'failed');
+	chats.recall(chat.id, chats.pending[0]!);
+	expect(chats.pending).toEqual([]);
+	expect(chats.drafts[chat.id]).toBe('first try');
+	await chats.send(chat.id, 'again', 'failed-2');
+	chats.drafts[chat.id] = 'half typed  ';
+	chats.recall(chat.id, chats.pending[0]!);
+	expect(chats.drafts[chat.id]).toBe('half typed\n\nagain');
 });
 
 it('keeps saved scope on failure without treating it as a failed transcript load', async () => {

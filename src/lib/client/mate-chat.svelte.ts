@@ -2,7 +2,10 @@
  * The signed-in admin's First Mate chats, kept on the server
  * (`/api/mate/chats`, docs/first-mate.md). The open chat follows its event
  * stream with EventSource, which resumes from the last event id on its own
- * after a drop. Without a runner the server answers with a placeholder, and
+ * after a drop; when it gives up (an error status), the store reconnects
+ * from the last event itself, with backoff. A drop is only reported once it
+ * has lasted, and asks for a manual reconnect only after those retries ran
+ * out. Without a runner the server answers with a placeholder, and
  * members get no chats at all: First Mate is admin-only for now.
  *
  * Chats from the localStorage era (`bdui:first-mate-chats`) are not imported;
@@ -19,6 +22,9 @@ import {
 	chatTitle,
 	isWorking,
 	mergeEvents,
+	STREAM_GRACE_MS,
+	STREAM_SETTLE_MS,
+	streamRetryDelay,
 	touchesCrewCalls,
 	touchesMissions
 } from '#lib/client/mate-chat.js';
@@ -84,8 +90,13 @@ class MateChats {
 		if (this.open_id) this.pending_by_chat[this.open_id] = items;
 	}
 	open_error = $state<string | null>(null);
-	/** The live stream is down; EventSource keeps retrying. */
+	/**
+	 * The live stream has been down past the grace period: what to tell the
+	 * reader. Null while it is up, or during a drop that may still heal.
+	 */
 	stream_error = $state<string | null>(null);
+	/** Automatic reconnects ran out; only a manual reconnect will try again. */
+	stream_lost = $state(false);
 	interrupting = $state(false);
 
 	/** Missions the open chat's crew tools launched (ADR-0020 rule 5). */
@@ -115,6 +126,22 @@ class MateChats {
 	#mission_poll: ReturnType<typeof setInterval> | null = null;
 	#source: EventSource | null = null;
 	#loading: Promise<void> | null = null;
+	/** Shows the drop notice if the stream is not back in time. */
+	#grace_timer: ReturnType<typeof setTimeout> | null = null;
+	/** Confirms a reopened stream once it has stayed up. */
+	#settle_timer: ReturnType<typeof setTimeout> | null = null;
+	/** Beadsmith's own reconnect, after EventSource closed for good. */
+	#retry_timer: ReturnType<typeof setTimeout> | null = null;
+	#retry_attempt = 0;
+	/** The runner's own explanation of the last drop, when it sent one. */
+	#runner_message: string | null = null;
+
+	constructor() {
+		// Coming back online is the likeliest moment a wait can be skipped.
+		if (typeof window !== 'undefined') {
+			window.addEventListener('online', () => this.#reconnectNow());
+		}
+	}
 
 	get connected(): boolean {
 		return this.status?.connected === true;
@@ -204,10 +231,14 @@ class MateChats {
 		this.#generation += 1;
 		this.#source?.close();
 		this.#source = null;
+		this.#clearStreamTimers();
+		this.#retry_attempt = 0;
+		this.#runner_message = null;
 		this.open_id = null;
 		this.events = [];
 		this.open_error = null;
 		this.stream_error = null;
+		this.stream_lost = false;
 		this.interrupting = false;
 		this.interrupt_requested = false;
 		this.action_error = null;
@@ -422,6 +453,22 @@ class MateChats {
 		this.pending = this.pending.filter((p) => p.message_id !== item.message_id);
 	}
 
+	/**
+	 * Take a failed message back into the composer to change it. It joins any
+	 * draft already there rather than replacing it, and is sent as a new
+	 * message: the runner never saw the old one.
+	 *
+	 * @param id - Chat id.
+	 * @param item - A pending message whose send failed.
+	 */
+	recall(id: string, item: PendingMessage) {
+		const draft = (this.drafts[id] ?? '').trimEnd();
+		this.drafts[id] = draft === '' ? item.text : `${draft}\n\n${item.text}`;
+		this.pending_by_chat[id] = (this.pending_by_chat[id] ?? []).filter(
+			(p) => p.message_id !== item.message_id
+		);
+	}
+
 	/** Stop the agent's current turn. */
 	async interrupt(id: string) {
 		if (this.interrupting || this.interrupt_requested) return;
@@ -482,6 +529,10 @@ class MateChats {
 	}
 
 	#follow(id: string) {
+		if (this.#retry_timer !== null) clearTimeout(this.#retry_timer);
+		this.#retry_timer = null;
+		// Resume after the newest event this browser holds; the server replays
+		// the rest, and mergeEvents drops anything seen twice.
 		const last = this.events.at(-1)?.id;
 		const query = last === undefined ? '' : `?${new URLSearchParams({ after: last })}`;
 		const source = new EventSource(`/api/mate/chats/${encodeURIComponent(id)}/events${query}`);
@@ -489,10 +540,16 @@ class MateChats {
 		this.#source = source;
 		source.onopen = () => {
 			if (this.#source !== source) return;
-			this.stream_error = null;
+			if (this.#settle_timer !== null) clearTimeout(this.#settle_timer);
+			this.#settle_timer = setTimeout(() => {
+				this.#settle_timer = null;
+				if (this.#source === source) this.#streamUp();
+			}, STREAM_SETTLE_MS);
 		};
 		source.onmessage = (message: MessageEvent<string>) => {
 			if (this.#source !== source) return;
+			// An event is proof the stream works, whatever the settle timer says.
+			this.#streamUp();
 			let data: unknown;
 			try {
 				data = JSON.parse(message.data);
@@ -514,16 +571,85 @@ class MateChats {
 			} catch {
 				// Keep the generic message.
 			}
-			this.stream_error = `${text} Retrying…`;
+			// The stream closes right after this frame; its error reports it.
+			this.#runner_message = text;
 		});
 		source.onerror = () => {
 			if (this.#source !== source) return;
-			if (source.readyState === EventSource.CLOSED) {
-				this.stream_error = 'The live chat stream closed. Reconnect to catch up.';
-			} else {
-				this.stream_error = 'Connection lost. Reconnecting automatically…';
+			this.#streamDown();
+			if (source.readyState !== EventSource.CLOSED) return; // EventSource retries itself.
+			source.close();
+			const delay = streamRetryDelay(this.#retry_attempt);
+			if (delay === undefined) {
+				this.#giveUp();
+				return;
 			}
+			this.#retry_attempt += 1;
+			this.#retry_timer = setTimeout(() => {
+				this.#retry_timer = null;
+				if (this.#source === source && this.open_id === id) this.#follow(id);
+			}, delay);
 		};
+	}
+
+	/** What the reader is told while the stream is down and still retrying. */
+	#downText(): string {
+		return this.#runner_message === null
+			? 'Reconnecting to the live chat…'
+			: `${this.#runner_message} Retrying…`;
+	}
+
+	/** The stream dropped: say so only if it stays down past the grace period. */
+	#streamDown() {
+		if (this.#settle_timer !== null) clearTimeout(this.#settle_timer);
+		this.#settle_timer = null;
+		if (this.stream_lost) return;
+		if (this.stream_error !== null) {
+			this.stream_error = this.#downText();
+			return;
+		}
+		this.#grace_timer ??= setTimeout(() => {
+			this.#grace_timer = null;
+			if (!this.stream_lost) this.stream_error = this.#downText();
+		}, STREAM_GRACE_MS);
+	}
+
+	#streamUp() {
+		if (this.#settle_timer !== null) clearTimeout(this.#settle_timer);
+		if (this.#grace_timer !== null) clearTimeout(this.#grace_timer);
+		this.#settle_timer = null;
+		this.#grace_timer = null;
+		this.#retry_attempt = 0;
+		this.#runner_message = null;
+		this.stream_error = null;
+		this.stream_lost = false;
+	}
+
+	#giveUp() {
+		if (this.#grace_timer !== null) clearTimeout(this.#grace_timer);
+		this.#grace_timer = null;
+		this.stream_lost = true;
+		this.stream_error = this.#runner_message ?? 'Lost the live connection to this chat.';
+	}
+
+	#clearStreamTimers() {
+		for (const timer of [this.#grace_timer, this.#settle_timer, this.#retry_timer]) {
+			if (timer !== null) clearTimeout(timer);
+		}
+		this.#grace_timer = null;
+		this.#settle_timer = null;
+		this.#retry_timer = null;
+	}
+
+	/** Skip a backoff wait, or try again after giving up, when the network returns. */
+	#reconnectNow() {
+		const id = this.open_id;
+		if (id === null || !this.connected) return;
+		if (this.#retry_timer === null && !this.stream_lost) return;
+		this.#retry_attempt = 0;
+		if (this.stream_lost) this.stream_error = this.#downText();
+		this.stream_lost = false;
+		this.#follow(id);
 	}
 
 	#add(incoming: MateEvent[]) {

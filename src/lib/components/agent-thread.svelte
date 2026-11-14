@@ -12,11 +12,17 @@
 	 * from the same footer. Admins get
 	 * the agent's live terminal above it too, on runners that relay one
 	 * (ADR-0021).
+	 *
+	 * The transcript follows new output while the reader is at the bottom and
+	 * stops when they scroll back, as a First Mate chat does. It is not a live
+	 * region (the stream would be read out delta by delta); a status line
+	 * announces each status change instead.
 	 */
 	import { tip } from '#lib/client/tooltip.js';
-	import { untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import ArrowClockwiseIcon from 'phosphor-svelte/lib/ArrowClockwiseIcon';
+	import ArrowDownIcon from 'phosphor-svelte/lib/ArrowDownIcon';
 	import ArrowSquareOutIcon from 'phosphor-svelte/lib/ArrowSquareOutIcon';
 	import GitPullRequestIcon from 'phosphor-svelte/lib/GitPullRequestIcon';
 	import SkipForwardIcon from 'phosphor-svelte/lib/SkipForwardIcon';
@@ -25,7 +31,7 @@
 	import LoopIterations from '#lib/components/loop-iterations.svelte';
 	import MarkdownBody from '#lib/components/markdown-body.svelte';
 	import MissionLiveStream from '#lib/components/mission-live-stream.svelte';
-	import MissionStatus from '#lib/components/mission-status.svelte';
+	import MissionStatus, { missionStatusLabel } from '#lib/components/mission-status.svelte';
 	import TerminalView from '#lib/components/terminal-view.svelte';
 	import { api, errorMessage } from '#lib/client/api.js';
 	import {
@@ -136,6 +142,18 @@
 			mission?.agent_id !== undefined
 	);
 	const run_url = $derived(isSafeRunUrl(mission?.agent_url) ? mission?.agent_url : undefined);
+	const pr_url = $derived(isSafeRunUrl(mission?.git_pr_url) ? mission?.git_pr_url : undefined);
+	/** The working row's word: the stored status, never more (design standards 9). */
+	const phase = $derived(mission === undefined ? 'queued' : missionStatusLabel(mission.status));
+	/** A run that failed before any agent started has no thread to continue. */
+	const never_started = $derived(
+		loaded && mission?.status === 'failed' && mission.agent_id === undefined
+	);
+	/** Follow new output only while the reader is at the bottom. */
+	let follow_latest = $state(true);
+	/** Read out when the status changes, so a screen reader hears progress without the deltas. */
+	let announcement = $state('');
+	let announced: string | undefined;
 
 	async function refresh(signal?: AbortSignal) {
 		try {
@@ -191,6 +209,7 @@
 	$effect(() => {
 		void request_id;
 		restart_limit = '';
+		follow_latest = true;
 		const ac = new AbortController();
 		loaded = false;
 		turns = [];
@@ -234,13 +253,69 @@
 		}
 	});
 
-	// Keep the newest turn in view.
+	// Keep the newest output in view while following: new turns, the live
+	// stream growing, a reply reflowing, the window resizing. Scrolling up
+	// stops following until the reader comes back down or jumps.
 	$effect(() => {
-		void turns.length;
-		void busy;
-		requestAnimationFrame(() => {
-			list_el?.scrollTo({ top: list_el.scrollHeight });
+		const el = list_el;
+		if (!el) {
+			return;
+		}
+		const observer = new ResizeObserver(() => {
+			if (follow_latest) {
+				el.scrollTo({ top: el.scrollHeight });
+			}
 		});
+		observer.observe(el);
+		if (el.firstElementChild) {
+			observer.observe(el.firstElementChild);
+		}
+		return () => observer.disconnect();
+	});
+
+	let last_top = 0;
+
+	function trackScroll() {
+		if (!list_el) {
+			return;
+		}
+		const top = list_el.scrollTop;
+		const gap = list_el.scrollHeight - top - list_el.clientHeight;
+		// Any move up is the reader leaving, however small: waiting for the
+		// threshold lets the next streamed line snap a slow drag back down.
+		// (A gap this small is the list shrinking, not a scroll.)
+		follow_latest = !(gap >= 64 || (top < last_top - 1 && gap > 4));
+		last_top = top;
+	}
+
+	function jumpToLatest() {
+		follow_latest = true;
+		list_el?.scrollTo({ top: list_el.scrollHeight });
+	}
+
+	// Announce status changes after the first load, not the status it opened on.
+	$effect(() => {
+		const current = mission;
+		if (current === undefined || !loaded) {
+			return;
+		}
+		const key = `${current.id}:${current.status}`;
+		if (announced === key) {
+			return;
+		}
+		const first = announced === undefined || !announced.startsWith(`${current.id}:`);
+		announced = key;
+		if (first) {
+			return;
+		}
+		const parts = [`${missionVerb(current)} ${missionStatusLabel(current.status)}.`];
+		if (current.status === 'failed' && current.error_message) {
+			parts.push(current.error_message);
+		}
+		if (isSafeRunUrl(current.git_pr_url) && !isBusyStatus(current.status)) {
+			parts.push('It has a pull request.');
+		}
+		announcement = parts.join(' ');
 	});
 
 	$effect(() => {
@@ -272,6 +347,7 @@
 				run_generation += 1;
 				onupdated?.(result.request);
 			}
+			void tick().then(jumpToLatest);
 			await refresh();
 		} catch (error) {
 			toast.error(is_loop ? 'Could not steer the loop' : 'Could not send the message', {
@@ -364,7 +440,7 @@
 	{#if show_header && mission}
 		<header class="th-hd">
 			<span class="verb">{missionVerb(mission)}</span>
-			<MissionStatus status={mission.status} />
+			<MissionStatus status={mission.status} live={isFollowedMission(mission, dispatch)} />
 			{#if mission.duration_ms !== undefined && !busy}
 				<span class="faint mono-num" {@attach tip('Run time')}
 					>{formatElapsed(mission.duration_ms)}</span
@@ -374,16 +450,9 @@
 				<span class="faint choice" {@attach tip('Model · effort')}>{choice_line}</span>
 			{/if}
 			<span class="spacer"></span>
-			{#if mission.git_pr_url}
-				<a
-					class="btn btn-sm btn-ghost btn-icon"
-					href={mission.git_pr_url}
-					target="_blank"
-					rel="noopener noreferrer"
-					aria-label="Open the pull request"
-					{@attach tip('Pull request')}
-				>
-					<GitPullRequestIcon size={14} />
+			{#if pr_url}
+				<a class="btn btn-sm btn-ghost pr" href={pr_url} target="_blank" rel="noopener noreferrer">
+					<GitPullRequestIcon size={13} aria-hidden="true" />Pull request
 				</a>
 			{/if}
 			{#if run_url}
@@ -423,8 +492,10 @@
 		/>
 	{/if}
 
-	<div class="turns" bind:this={list_el}>
-		<ol class="chat-log" aria-live="polite">
+	<p class="sr-only" role="status">{announcement}</p>
+
+	<div class="turns" bind:this={list_el} onscroll={trackScroll}>
+		<ol class="chat-log">
 			{#each turns as turn (turn.seq)}
 				<li
 					class="chat-msg"
@@ -437,7 +508,7 @@
 							<span class="st" {@attach tip('A note for the next iteration')}>steer</span>
 						{/if}
 						{#if turn.status && turn.status !== 'succeeded'}
-							<span class="st">{turn.status}</span>
+							<span class="st">{missionStatusLabel(turn.status)}</span>
 						{/if}
 						<time datetime={turn.created_at} {@attach tip(absoluteStamp(turn.created_at))}
 							>{relativeShort(turn.created_at)}</time
@@ -454,8 +525,10 @@
 				<li class="chat-msg">
 					<div class="chat-role">
 						<span>Agent</span>
-						<span class="st">working</span>
-						<span class="when mono-num">{formatElapsed(Math.max(0, now - started_at))}</span>
+						<span class="st">{phase}</span>
+						<span class="when mono-num" {@attach tip('Time since this run was asked for')}
+							>{formatElapsed(Math.max(0, now - started_at))}</span
+						>
 					</div>
 					{#if live && mission}
 						{#key run_generation}
@@ -465,17 +538,45 @@
 						{/key}
 					{:else}
 						<p class="chat-body is-dim">
-							<span class="chat-dots" aria-hidden="true"><i></i><i></i><i></i></span>The reply
-							appears here when the run finishes.
+							<span class="chat-dots" aria-hidden="true"><i></i><i></i><i></i></span
+							>{mission?.status === 'queued'
+								? 'Waiting to start.'
+								: mission?.status === 'launching'
+									? 'Asking the runner to start the agent.'
+									: 'The reply appears here when the run finishes.'}
 						</p>
 					{/if}
 				</li>
 			{/if}
-			{#if loaded && turns.length === 0 && !busy}
+			{#if never_started && mission}
+				<li class="chat-event">
+					No agent started, so this thread cannot continue.
+					{#if mission.issue_id}
+						<a
+							href="/p/{encodeURIComponent(mission.project_id)}/i/{encodeURIComponent(
+								mission.issue_id
+							)}">Open {mission.issue_id}</a
+						> to launch again.
+					{:else}
+						<a href="/p/{encodeURIComponent(mission.project_id)}">Open the project</a> to launch again.
+					{/if}
+				</li>
+			{:else if loaded && turns.length === 0 && !busy}
 				<li class="chat-event">No messages yet.</li>
 			{/if}
 		</ol>
 	</div>
+
+	{#if !follow_latest}
+		<div class="older">
+			<span class="older-lbl"
+				>{busy ? 'The agent is still working below' : 'Viewing earlier messages'}</span
+			>
+			<button class="btn btn-sm btn-ghost" type="button" onclick={jumpToLatest}>
+				Jump to latest <ArrowDownIcon size={12} aria-hidden="true" />
+			</button>
+		</div>
+	{/if}
 
 	<ChatComposer
 		bind:value={text}
@@ -569,6 +670,7 @@
 	}
 	.th-hd {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		gap: var(--s-2);
 		min-height: 28px;
@@ -594,9 +696,35 @@
 		overflow-y: auto;
 		padding-bottom: var(--s-3);
 	}
+	.pr {
+		gap: 5px;
+	}
 	.live {
-		max-height: 320px;
-		overflow-y: auto;
+		min-width: 0;
+	}
+	/* The First Mate chat's "viewing older messages" bar, so both read alike. */
+	.older {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--s-2);
+		padding: 2px 2px 2px var(--s-3);
+		border-radius: var(--r-2);
+		background: var(--s3);
+		font-size: var(--t-xs);
+		color: var(--tx-mid);
+	}
+	.older-lbl {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	@media (pointer: coarse) {
+		.pr,
+		.older .btn {
+			min-height: 44px;
+		}
 	}
 	.err {
 		font-size: var(--t-xs);

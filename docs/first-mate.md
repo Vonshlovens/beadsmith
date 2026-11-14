@@ -29,6 +29,14 @@ before.
 Without a runner, admins still get stored chats, and each message gets a
 placeholder reply saying no model is connected.
 
+`/first-mate` is also where `/` lands for every account, so its start screen
+is a home page. Under the composer it lists your own work, each panel linking
+to its full page: your most urgent todos (admins), ready issues, workers
+that are running or whose last run failed, and on narrow screens your recent
+chats. Ready issues load for every role, so a member, or an admin on a host
+with no runner, still gets a useful page: members see the panels without a
+composer.
+
 ## Configuration
 
 | Setting                       | Meaning                                                                                       |
@@ -202,7 +210,11 @@ The events stream first replays stored events after `Last-Event-ID` (or
 event, stores each new event and forwards it. Each frame is
 `id: <event id>` and `data: <MissionEvent JSON plus at>`. A runner failure is
 an `event: runner_error` frame with `{ message }`, after which the stream
-closes and EventSource reconnects. Closing the browser closes only this
+closes and EventSource reconnects. The browser recovers from a dropped stream
+by itself: a drop shorter than a few seconds shows nothing, and when
+EventSource gives up (an error status from a proxy, say) the page reopens
+the stream after the last event it holds, backing off for about a minute
+before it asks you to reconnect by hand. Closing the browser closes only this
 relay: the session keeps working on the runner, and the next open catches up.
 Beadsmith learns what the agent said only while some browser has the chat
 open; the runner keeps the rest until then.
