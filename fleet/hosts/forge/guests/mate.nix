@@ -209,7 +209,7 @@ in
       export DISABLE_TELEMETRY=1 DISABLE_ERROR_REPORTING=1
       export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1
       unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
-      exec ${claude-code}/bin/claude "$@"
+      exec ${beadsmith-claude-code}/bin/claude "$@"
     '')
   ];
 
