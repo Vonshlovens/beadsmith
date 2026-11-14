@@ -53,6 +53,12 @@ export interface TurnFacts {
 	last_text?: string;
 	/** The model request failed (Claude Code's API error message). */
 	api_error: boolean;
+	/**
+	 * Live context size after the turn's latest model request, in tokens:
+	 * input plus cache read plus cache creation of its last assistant
+	 * message. Absent when the transcript recorded no usage.
+	 */
+	context_tokens?: number;
 }
 
 /** Maps transcript lines to events and keeps the current turn's facts. */
@@ -101,6 +107,21 @@ function absolute(value: string, what: string): string {
 		throw new Error(`${what} must be an absolute path`);
 	}
 	return value;
+}
+
+function tokenCount(value: unknown): number {
+	return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+/** The live context of one assistant line's request, or undefined without usage. */
+export function contextTokens(message: unknown): number | undefined {
+	if (!isRecord(message) || !isRecord(message.usage)) return undefined;
+	const usage = message.usage;
+	const total =
+		tokenCount(usage.input_tokens) +
+		tokenCount(usage.cache_read_input_tokens) +
+		tokenCount(usage.cache_creation_input_tokens);
+	return total > 0 ? total : undefined;
 }
 
 function toolName(value: unknown): string {
@@ -152,6 +173,8 @@ class ClaudeTranscriptMapper implements TranscriptMapper {
 
 		if (entry.type === 'assistant') {
 			if (entry.isApiErrorMessage === true) this.#turn.api_error = true;
+			const tokens = contextTokens(entry.message);
+			if (tokens !== undefined) this.#turn.context_tokens = tokens;
 			for (const block of blocks) {
 				if (block.type === 'text') {
 					const text = this.#text(block.text);

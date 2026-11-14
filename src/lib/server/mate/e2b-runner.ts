@@ -20,8 +20,8 @@
 import { encodeMissionEvent, type MissionEvent } from '#lib/mission-events.js';
 import { ChatStore } from '#lib/mate-runner/event-log.js';
 import { createRunnerCore, RunnerFault, type RunnerCore } from '#lib/mate-runner/server.js';
-import type { ConnectAgent } from '#lib/mate-runner/session.js';
-import { SESSION_LABEL, type SessionTiming } from '#lib/agent-session/session.js';
+import { isChatTerminal, type ConnectAgent } from '#lib/mate-runner/session.js';
+import type { SessionTiming } from '#lib/agent-session/session.js';
 import type { HcClient } from '#lib/hc/client.js';
 import type { E2bMateSettings } from '../env.js';
 import { createCrewMcpHandler } from '../crew/mcp.js';
@@ -164,8 +164,11 @@ export function e2bConnector(deps: Required<E2bMateDeps>): ConnectAgent {
 			await prepareChatSandbox(sandbox);
 			// hc connect starts the core on first use, with the sandbox's environment.
 			client = await connect_hc(sandbox);
-			for (const terminal of await client.list({ labels: { [SESSION_LABEL]: session_id } })) {
-				if (terminal.state === 'live') await client.kill(terminal.address);
+			// Every window's CLI of this chat (ADR-0024 rule 7), and one from before windows.
+			for (const terminal of await client.list({})) {
+				if (terminal.state === 'live' && isChatTerminal(terminal.labels, session_id)) {
+					await client.kill(terminal.address);
+				}
 			}
 			await sandbox.exec(stopRelayCommand());
 			// Without the relay the chat still talks; its crew tool calls fail
@@ -346,7 +349,7 @@ export function createE2bMateRunner(deps: E2bMateDeps): MateRunner & { close(): 
 					idle_ms: deps.settings.idle_minutes * 60_000
 				},
 				found.id,
-				(live) => live.find((terminal) => terminal.labels[SESSION_LABEL] === owned),
+				(live) => live.find((terminal) => isChatTerminal(terminal.labels, owned)),
 				request
 			);
 		},

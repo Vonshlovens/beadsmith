@@ -187,8 +187,9 @@ Paths are relative, `/`-separated parts of letters, digits, `.`, `_` and
 and 1,000,000 characters per account. A write over a limit is refused.
 
 Not yet shipped: memories and the folder's index added to each turn
-automatically, the sliding context window and a page to review and edit
-memories and files.
+automatically, and a page to review and edit memories and files. The
+context window slides on its own; see
+[Sliding context window](#sliding-context-window).
 
 Mission tools need dispatch configured (`BDX_DISPATCH_PROVIDER`); without it
 they answer with the reason, and the read and todo tools still work. Chats on
@@ -480,6 +481,35 @@ terminal, driven by the session core
   empty sandbox starts the session fresh). A turn whose CLI exits or whose
   channel is lost ends with an error and a `failed` result. Shutdown and
   eviction end the CLI; a runner that crashed finds it still running.
+
+### Sliding context window
+
+A chat's agent context does not grow forever
+([ADR-0024](../specs/decisions/0024-first-mate-memory-and-context.md)
+rule 7). Each chat runs in windows, one CLI session each. When a turn ends
+with 100,000 or more live context tokens (input, cache read and cache
+creation of the turn's last model request, from the usage in Claude
+Code's transcript), the runner sends a turn of its own asking the agent
+for a **carry-over note**: what is in flight, what was decided, open
+threads, and pointers to beads, missions, meta files and memory keys. The
+runner keeps the note (at most 8,000 characters) in the chat's meta file,
+ends that CLI and starts the next message in a new CLI session with the
+note in its appended system prompt, after the chat's scope.
+
+- Window 0 is the chat's `session_id`; window _n_ runs under a session id
+  derived from it and _n_. The chat's home, sandbox and terminal relay
+  still follow the chat's `session_id`: every window's terminal carries
+  `beadsmith-chat-session=<session_id>` beside `beadsmith-session`.
+- The carry-over turn is not in the chat log. A message sent during it
+  waits as usual; the next turn opens with one `thinking` line saying the
+  context was renewed. The contract and Beadsmith's chat log do not
+  change.
+- A restart, eviction or new sandbox starts the current window: from its
+  own transcript when it has one (it is short), otherwise fresh from the
+  note.
+- Stop during the carry-over turn cancels it and drops waiting messages;
+  so does a lost channel. An empty reply leaves the window as it is too.
+  The next long turn asks again.
 
 The forge runner's settings (environment of `mate-runner.service`):
 

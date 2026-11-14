@@ -193,3 +193,31 @@ describe('transcript mapper', () => {
 		expect(mapper.turn.api_error).toBe(true);
 	});
 });
+
+describe('live context size', () => {
+	it('keeps the latest assistant request’s input, cache read and cache creation', () => {
+		const mapper = claudeCode.mapper('');
+		const usage = (input: number, read: number, created: number) =>
+			line({
+				type: 'assistant',
+				message: {
+					content: [{ type: 'text', text: 'hi' }],
+					usage: {
+						input_tokens: input,
+						cache_read_input_tokens: read,
+						cache_creation_input_tokens: created,
+						output_tokens: 999
+					}
+				}
+			});
+		mapper.map(usage(10, 1_000, 5), 1);
+		expect(mapper.turn.context_tokens).toBe(1_015);
+		mapper.map(usage(3, 120_000, 2_000), 2);
+		expect(mapper.turn.context_tokens).toBe(122_003);
+		// A subagent's requests are its own context, not this one.
+		mapper.map(JSON.stringify({ ...JSON.parse(usage(1, 500_000, 0)), isSidechain: true }), 3);
+		expect(mapper.turn.context_tokens).toBe(122_003);
+		mapper.beginTurn();
+		expect(mapper.turn.context_tokens).toBeUndefined();
+	});
+});
