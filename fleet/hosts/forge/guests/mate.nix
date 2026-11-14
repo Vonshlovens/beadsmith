@@ -15,9 +15,13 @@ let
   # StateDirectory under /var/lib/private (root:root 0700), so that is a
   # volume of its own.
   privateMount = "/var/lib/private";
-  # Every chat sees its own home at this one path (ADR-0023), so the runner's
-  # working and config directories are the same for every chat.
-  home = "${stateMount}/home";
+  # Each chat's home is <chatHomes>/<instance> (ADR-0023), the path the
+  # runner uses too (MATE_AGENT_CHAT_HOMES in ../runtime.nix). systemd
+  # keeps it owned by `nobody` on disk and maps it to the chat's user inside
+  # the chat's unit, where /var/lib/private holds only that chat's home. No
+  # bind or symlink: Claude Code files a transcript under its working
+  # directory's real path, which the runner computes.
+  chatHomes = "${privateMount}/mate-chats";
   # The runner's only command (its key is forced to it): `connect <session>`
   # starts the chat's unit and speaks hc's protocol to its core as the chat's
   # user; `discard <session>` stops the unit and removes its home.
@@ -67,15 +71,16 @@ let
       esac
     '';
   };
-  # The chat workdir trusted and onboarded, as the E2B template does for its
-  # own directories (claudeFirstRunFiles in src/lib/server/e2b/image.ts).
+  # Claude Code onboarded, as the E2B template does
+  # (claudeFirstRunFiles in src/lib/server/e2b/image.ts); the chat's workdir
+  # is trusted by mate-chat-setup, which knows its path.
   claudeState = {
     hasCompletedOnboarding = true;
     theme = "dark";
-    projects."${home}/work" = {
-      hasTrustDialogAccepted = true;
-      hasCompletedProjectOnboarding = true;
-    };
+  };
+  claudeProject = {
+    hasTrustDialogAccepted = true;
+    hasCompletedProjectOnboarding = true;
   };
 in
 {
@@ -198,7 +203,7 @@ in
     # Claude Code with the model gateway and a placeholder token, the real
     # credential added on the host (ADR-0015 rule 6).
     (writeShellScriptBin "mate-claude" ''
-      export HOME=${home}
+      # HOME is the chat's home, from its unit (mate-chat@ below).
       export ANTHROPIC_BASE_URL=http://${net.hostAddress}:${toString net.modelProxyPort}
       export CLAUDE_CODE_OAUTH_TOKEN=guest-placeholder
       export DISABLE_TELEMETRY=1 DISABLE_ERROR_REPORTING=1
@@ -212,14 +217,13 @@ in
   # that core starts, as a Unix identity of its own. The instance is the
   # first 24 hex digits of the SHA-256 of the chat's CLI session id
   # (mate-chat, below); the user is `mc-<instance>`, allocated by systemd
-  # while the unit runs (DynamicUser), and its files are chowned to whatever
-  # UID it gets next time, so a chat resumes after a restart.
+  # while the unit runs (DynamicUser), and its home is mapped to whatever
+  # UID it gets, so a chat resumes after a restart.
   #
-  # The chat's home is its StateDirectory, bound at the one path every chat
-  # uses. The rest of the volume (other chats, the old shared home, the SSH
-  # host key) is hidden behind an empty read-only tmpfs; other chats'
-  # directories are also 0700 under another UID and behind systemd's 0700
-  # /var/lib/private. /proc shows only the chat's own processes, /tmp is its
+  # The chat's home is its StateDirectory, <chatHomes>/<instance>. Inside the
+  # unit /var/lib/private shows only that one home; outside it, it is
+  # root-only (0700). The guest's state volume (the old shared home, the SSH
+  # host key) is hidden behind an empty read-only tmpfs. /proc shows only the chat's own processes, /tmp is its
   # own, and a different UID cannot signal another chat's processes or reach
   # its core's socket in /run/mate-chat/<instance> (0700).
   #
@@ -234,7 +238,7 @@ in
       privateMount
     ];
     environment = {
-      HOME = home;
+      HOME = "${chatHomes}/%i";
       # Where hc puts its socket; mate-chat connects through the same one.
       XDG_RUNTIME_DIR = "/run/mate-chat/%i";
     };
@@ -246,7 +250,6 @@ in
       RuntimeDirectory = "mate-chat/%i";
       RuntimeDirectoryMode = "0700";
       TemporaryFileSystem = "${stateMount}:ro";
-      BindPaths = [ "${privateMount}/mate-chats/%i:${home}" ];
       UMask = "0077";
       ProtectProc = "invisible";
       ProtectHostname = true;
@@ -263,7 +266,7 @@ in
       # as the E2B sandbox uses it (sandbox/e2b/beadsmith-run).
       Type = "oneshot";
       RemainAfterExit = true;
-      WorkingDirectory = "${home}";
+      WorkingDirectory = "${chatHomes}/%i";
       # Claude Code's first-run dialogs (onboarding, folder trust for the
       # chat workdir, the bypass-permissions warning) answered before any
       # launch: the runner fails a launch that is `blocked` before its first
@@ -273,18 +276,21 @@ in
       # parent, and nothing but the runner should type into the agent.
       ExecStartPre = pkgs.writeShellScript "mate-chat-setup" ''
         set -eu
-        mkdir -p ${home}/work ${home}/.claude ${home}/.config/herdr-core
-        ln -sfn /etc/agent-hc.toml ${home}/.config/herdr-core/config.toml
-        ln -sfn /etc/agent-instructions ${home}/work/AGENTS.md
-        ln -sfn /etc/agent-instructions ${home}/work/CLAUDE.md
+        mkdir -p "$HOME/work" "$HOME/.claude" "$HOME/.config/herdr-core"
+        ln -sfn /etc/agent-hc.toml "$HOME/.config/herdr-core/config.toml"
+        ln -sfn /etc/agent-instructions "$HOME/work/AGENTS.md"
+        ln -sfn /etc/agent-instructions "$HOME/work/CLAUDE.md"
         merge() {
           file=$1 patch=$2
           [ -s "$file" ] || echo '{}' >"$file"
           ${pkgs.jq}/bin/jq --argjson patch "$patch" '. * $patch' "$file" >"$file.new"
           mv "$file.new" "$file"
         }
-        merge ${home}/.claude.json ${lib.escapeShellArg (builtins.toJSON claudeState)}
-        merge ${home}/.claude/settings.json ${lib.escapeShellArg (builtins.toJSON { skipDangerousModePermissionPrompt = true; })}
+        merge "$HOME/.claude.json" ${lib.escapeShellArg (builtins.toJSON claudeState)}
+        merge "$HOME/.claude.json" "$(${pkgs.jq}/bin/jq -n --arg dir "$HOME/work" \
+          --argjson project ${lib.escapeShellArg (builtins.toJSON claudeProject)} \
+          '{projects: {($dir): $project}}')"
+        merge "$HOME/.claude/settings.json" ${lib.escapeShellArg (builtins.toJSON { skipDangerousModePermissionPrompt = true; })}
       '';
       ExecStart = "${pkgs.beadsmith-hc}/bin/hc server start --json";
       ExecStop = "${pkgs.beadsmith-hc}/bin/hc server stop --json";

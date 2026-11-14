@@ -14,19 +14,20 @@
  *   MATE_RUNNER_STATE_DIR     where chat logs live (default ./mate-runner-state)
  *   MATE_RUNNER_MAX_SESSIONS  live agent CLIs at once (default 3)
  * Where the agent runs (absolute paths on the agent's machine):
- *   MATE_AGENT_WORKDIR        its working directory (required with SSH; default: cwd)
- *   MATE_AGENT_CLAUDE_CONFIG  Claude Code's config directory, where its
- *                             transcripts live (required with SSH; default ~/.claude)
  *   MATE_AGENT_CLAUDE         Claude Code executable the terminal runs (default: claude)
- *   MATE_AGENT_HC             hc executable (default: hc)
  * The runner reaches each chat's hc core over SSH (production), where the
  * guest's `mate-chat` helper runs every chat as a Unix identity of its own
  * (ADR-0023) and MATE_AGENT_HC is not used:
  *   MATE_AGENT_SSH            user@host of the guest (the key may run only the helper)
  *   MATE_AGENT_SSH_KEY        private key file
  *   MATE_AGENT_KNOWN_HOSTS    known_hosts file pinning the guest
+ *   MATE_AGENT_CHAT_HOMES     the guest directory holding each chat's home
  * or, with MATE_AGENT_LOCAL=1, with `hc connect` on this machine
- * (development: one core and one user for every chat).
+ * (development: one core and one user for every chat):
+ *   MATE_AGENT_WORKDIR        the working directory (default: cwd)
+ *   MATE_AGENT_CLAUDE_CONFIG  Claude Code's config directory, where its
+ *                             transcripts live (default ~/.claude)
+ *   MATE_AGENT_HC             hc executable (default: hc)
  */
 
 import { readFileSync } from 'node:fs';
@@ -70,21 +71,25 @@ function absolute(name: string, fallback?: string): string {
 }
 
 const local = process.env.MATE_AGENT_LOCAL === '1';
-const place: AgentPlace = {
-	workdir: absolute('MATE_AGENT_WORKDIR', local ? process.cwd() : undefined),
-	config_dir: absolute('MATE_AGENT_CLAUDE_CONFIG', local ? join(homedir(), '.claude') : undefined),
-	claude: process.env.MATE_AGENT_CLAUDE?.trim() || 'claude',
-	hc: process.env.MATE_AGENT_HC?.trim() || 'hc'
-};
+const claude = process.env.MATE_AGENT_CLAUDE?.trim() || 'claude';
 const ssh: SshAgentConfig | undefined = local
 	? undefined
 	: {
-			...place,
+			claude,
+			chat_homes: absolute('MATE_AGENT_CHAT_HOMES'),
 			target: required('MATE_AGENT_SSH'),
 			identity_file: required('MATE_AGENT_SSH_KEY'),
 			known_hosts_file: required('MATE_AGENT_KNOWN_HOSTS')
 		};
-const connect: ConnectAgent = ssh === undefined ? localConnector(place) : sshConnector(ssh);
+function localPlace(): AgentPlace {
+	return {
+		workdir: absolute('MATE_AGENT_WORKDIR', process.cwd()),
+		config_dir: absolute('MATE_AGENT_CLAUDE_CONFIG', join(homedir(), '.claude')),
+		claude,
+		hc: process.env.MATE_AGENT_HC?.trim() || 'hc'
+	};
+}
+const connect: ConnectAgent = ssh === undefined ? localConnector(localPlace()) : sshConnector(ssh);
 
 const [host, port] = (process.env.MATE_RUNNER_LISTEN ?? '127.0.0.1:8787').split(/:(?=\d+$)/);
 const handler = createRunnerHandler({

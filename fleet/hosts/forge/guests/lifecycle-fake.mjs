@@ -13,7 +13,8 @@ if (depth === 0) {
 	for (const command of ['git', 'curl', 'rg', 'ls', 'bash'])
 		execFileSync(command, ['--version'], { stdio: 'ignore' });
 }
-appendFileSync(`/var/lib/agent/home/work/lifecycle-${id}.pids`, `${process.pid}\n`);
+// HOME is the chat's home, from its unit.
+appendFileSync(`${process.env.HOME}/work/lifecycle-${id}.pids`, `${process.pid}\n`);
 for (const signal of ['SIGTERM', 'SIGHUP']) process.on(signal, () => {});
 if (depth < 2) {
 	spawn(

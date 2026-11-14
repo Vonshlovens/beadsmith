@@ -5,8 +5,9 @@
  * In the guest every chat has a core of its own, under a Unix identity of its
  * own (ADR-0023): the runner's key may only run the guest's `mate-chat`
  * helper, which starts that chat's core and connects to it as the chat's
- * user, or discards the chat. The working directory and config directory are
- * the same paths for every chat; each chat sees its own home there.
+ * user, or discards the chat. Each chat's home is
+ * `<chat_homes>/<chatInstance(session id)>`, its working directory `work`
+ * and its Claude Code config `.claude` under it.
  *
  * Either way the runner gets an hc client and nothing else: the session core
  * (`src/lib/agent-session/`) launches Claude Code in a terminal of that core.
@@ -17,6 +18,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { connectHc } from '../hc/client.js';
 import { childProcessTransport } from '../hc/node-transport.js';
 import type { AgentConnection, ConnectAgent } from './session.js';
@@ -33,7 +35,9 @@ export interface AgentPlace {
 	hc: string;
 }
 
-export interface SshAgentConfig extends Omit<AgentPlace, 'hc'> {
+export interface SshAgentConfig extends Pick<AgentPlace, 'claude'> {
+	/** Absolute directory in the guest that holds every chat's home. */
+	chat_homes: string;
 	/** `user@host` of the guest; the key may run only the guest's `mate-chat` helper. */
 	target: string;
 	/** Private key the runner uses to reach the guest. */
@@ -59,6 +63,21 @@ export function shellQuote(word: string): string {
 
 /** Lowercase UUIDs, as Beadsmith makes session ids; the guest helper checks the same. */
 const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * The guest's name for a chat: its `mate-chat@` unit instance, the `mc-`
+ * user and its home's directory. The first 24 hex digits of the SHA-256 of
+ * the CLI session id; the guest's `mate-chat` helper computes the same.
+ */
+export function chatInstance(session_id: string): string {
+	return createHash('sha256').update(session_id).digest('hex').slice(0, 24);
+}
+
+/** Where one chat's agent runs in the guest. */
+export function chatPlace(config: SshAgentConfig, session_id: string): AgentConnection['launch'] {
+	const home = `${config.chat_homes}/${chatInstance(session_id)}`;
+	return { cwd: `${home}/work`, config_dir: `${home}/.claude`, command: config.claude };
+}
 
 /** What the guest's `mate-chat` helper does for one chat. */
 export type ChatCommand = 'connect' | 'discard';
@@ -96,7 +115,7 @@ export function sshArgs(
 	];
 }
 
-function launchOf(place: Omit<AgentPlace, 'hc'>): AgentConnection['launch'] {
+function launchOf(place: AgentPlace): AgentConnection['launch'] {
 	return { cwd: place.workdir, config_dir: place.config_dir, command: place.claude };
 }
 
@@ -106,7 +125,10 @@ export function sshConnector(config: SshAgentConfig): ConnectAgent {
 		const child = spawn('ssh', sshArgs(config, 'connect', session_id), {
 			stdio: ['pipe', 'pipe', 'ignore']
 		});
-		return { client: await connectHc(childProcessTransport(child)), launch: launchOf(config) };
+		return {
+			client: await connectHc(childProcessTransport(child)),
+			launch: chatPlace(config, session_id)
+		};
 	};
 }
 

@@ -24,23 +24,19 @@
 //    another chat runs on.
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { claudeCode } from '../../../src/lib/agent-session/claude-code.ts';
 import { AgentSession } from '../../../src/lib/agent-session/session.ts';
 import { connectHc } from '../../../src/lib/hc/client.ts';
 import { childProcessTransport } from '../../../src/lib/hc/node-transport.ts';
-import { sshArgs } from '../../../src/lib/mate-runner/spawn.ts';
+import { chatInstance, chatPlace, sshArgs } from '../../../src/lib/mate-runner/spawn.ts';
 
-// The path every chat sees as its own home.
-const HOME = '/var/lib/agent/home';
-const WORKDIR = `${HOME}/work`;
 const config = {
 	target: 'root@10.100.0.2',
 	identity_file: '/var/lib/mate-runner/ssh/agent_ed25519',
 	known_hosts_file: '/var/lib/microvm-keys/known_hosts',
-	workdir: WORKDIR,
-	config_dir: `${HOME}/.claude`,
+	chat_homes: '/var/lib/private/mate-chats',
 	claude: '/run/current-system/sw/bin/mate-claude'
 };
 const LABEL = 'beadsmith-lifecycle-test';
@@ -55,10 +51,10 @@ const root = (command, input) =>
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** The guest's unit instance and user for a chat (mate-chat in guests/mate.nix). */
-const instance = (chat) => createHash('sha256').update(chat).digest('hex').slice(0, 24);
+const instance = chatInstance;
 const user = (chat) => `mc-${instance(chat)}`;
 /** A chat's home as root sees it in the guest. */
-const homeOf = (chat) => `/var/lib/private/mate-chats/${instance(chat)}`;
+const homeOf = (chat) => `${config.chat_homes}/${instance(chat)}`;
 
 /** One runner-shaped channel to a chat's core: the ssh process and an hc client over it. */
 async function channel(chat) {
@@ -74,7 +70,7 @@ function discard(chat) {
 
 function installFixture(chat) {
 	const file = `${homeOf(chat)}/work/lifecycle-fake.mjs`;
-	root(`cat > ${file} && chown ${user(chat)}:${user(chat)} ${file}`, FIXTURE);
+	root(`cat > ${file} && chmod 0644 ${file}`, FIXTURE);
 }
 
 const pids = (chat, id) =>
@@ -94,10 +90,11 @@ function inChatUnit(pid, chat) {
 const uidOf = (pid) => root(`stat -c %u /proc/${pid}`);
 const chatUid = (chat) => root(`id -u ${user(chat)}`);
 
-async function fixture(client, id) {
+async function fixture(client, chat, id) {
+	const work = `${homeOf(chat)}/work`;
 	const terminal = await client.run({
-		argv: ['/run/current-system/sw/bin/node', `${WORKDIR}/lifecycle-fake.mjs`, '--session-id', id],
-		cwd: WORKDIR,
+		argv: ['/run/current-system/sw/bin/node', `${work}/lifecycle-fake.mjs`, '--session-id', id],
+		cwd: work,
 		labels: { [LABEL]: id }
 	});
 	await delay(1500);
@@ -113,7 +110,7 @@ function probeScript(target, targetPid) {
 	const check = (name, command) =>
 		`if ${command} >/dev/null 2>&1; then echo "${name} LEAK"; else echo "${name} ok"; fi`;
 	return [
-		'exec > ' + `${WORKDIR}/probe.out` + ' 2>&1',
+		'exec > "$HOME/work/probe.out" 2>&1',
 		check('list-other-home', `ls ${other}`),
 		check('read-other-config', `cat ${other}/.claude.json`),
 		check('write-other-work', `touch ${other}/work/probe-was-here`),
@@ -122,7 +119,7 @@ function probeScript(target, targetPid) {
 		check('signal-other-process', `kill -0 ${targetPid}`),
 		check('see-old-shared-state', `ls ${'/var/lib/agent/ssh'}`),
 		// Positive control: its own home is there and writable.
-		`if touch ${HOME}/.probe && test -s ${HOME}/.claude.json; then echo "own-home ok"; else echo "own-home LEAK"; fi`,
+		`if touch "$HOME/.probe" && test -s "$HOME/.claude.json"; then echo "own-home ok"; else echo "own-home LEAK"; fi`,
 		'echo done'
 	].join('\n');
 }
@@ -138,8 +135,8 @@ try {
 	channels.push(first);
 	assert.equal(root(`systemctl is-active mate-chat@${instance(chatA)}.service`), 'active');
 	installFixture(chatA);
-	const keeper = await fixture(first.client, keeperId);
-	const victim = await fixture(first.client, victimId);
+	const keeper = await fixture(first.client, chatA, keeperId);
+	const victim = await fixture(first.client, chatA, victimId);
 	assert.equal(
 		pids(chatA, keeperId).length,
 		3,
@@ -175,7 +172,7 @@ try {
 	const [targetPid] = pids(chatA, keeperId);
 	await probe.client.run({
 		argv: ['/run/current-system/sw/bin/bash', '-c', probeScript(chatA, targetPid)],
-		cwd: WORKDIR,
+		cwd: `${homeOf(chatB)}/work`,
 		labels: { [LABEL]: 'probe' }
 	});
 	let report = '';
@@ -197,9 +194,7 @@ try {
 		harness: claudeCode,
 		launch: {
 			session_id: claudeId,
-			cwd: config.workdir,
-			config_dir: config.config_dir,
-			command: config.claude
+			...chatPlace(config, chatA)
 		},
 		labels: { [LABEL]: claudeId },
 		onEvent: () => {}
@@ -221,12 +216,23 @@ try {
 	root(`systemctl restart mate-chat@${instance(chatB)}.service`);
 	const resumed = await channel(chatB);
 	channels.push(resumed);
-	assert.equal(
-		root(`stat -c %u ${homeOf(chatB)}/work/probe.out`),
-		chatUid(chatB),
-		"chat B's files belong to its user after a restart"
-	);
 	assert.match(root(`cat ${homeOf(chatB)}/work/probe.out`), /done/);
+	// The chat can still write its own files under the UID it has now.
+	await resumed.client.run({
+		argv: [
+			'/run/current-system/sw/bin/bash',
+			'-c',
+			'echo again >> "$HOME/work/probe.out" && echo ok > "$HOME/work/after-restart"'
+		],
+		cwd: `${homeOf(chatB)}/work`,
+		labels: { [LABEL]: 'after-restart' }
+	});
+	let after = '';
+	for (let i = 0; i < 20 && after !== 'ok'; i++) {
+		await delay(500);
+		after = root(`cat ${homeOf(chatB)}/work/after-restart 2>/dev/null || true`);
+	}
+	assert.equal(after, 'ok', 'chat B writes its own home after a restart');
 	console.log("PASS a chat's home survives a restart of its unit");
 
 	discard(chatA);

@@ -101,9 +101,8 @@ in {
       MATE_AGENT_SSH = "root@${net.guestAddress}";
       MATE_AGENT_SSH_KEY = "%d/agent-key";
       MATE_AGENT_KNOWN_HOSTS = toString knownHosts;
-      # The same paths in every chat: each sees its own home there.
-      MATE_AGENT_WORKDIR = "/var/lib/agent/home/work";
-      MATE_AGENT_CLAUDE_CONFIG = "/var/lib/agent/home/.claude";
+      # Each chat's home is <this>/<instance> (guests/mate.nix).
+      MATE_AGENT_CHAT_HOMES = "/var/lib/private/mate-chats";
       MATE_AGENT_CLAUDE = "/run/current-system/sw/bin/mate-claude";
     };
     serviceConfig = {
