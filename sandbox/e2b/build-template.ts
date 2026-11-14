@@ -33,6 +33,7 @@ import {
 
 const BD_VERSION = '1.1.0';
 const BD_SHA256_LINUX_AMD64 = 'b0f3dd607c3fb989ee08d0a6854fba80d0402971eb108f9af6170bc14d491a34';
+// The forge guest runs the same release: beadsmith-claude-code in nix/overlay.nix.
 const CLAUDE_CODE_VERSION = '2.1.311';
 
 const name = process.argv[2] ?? 'beadsmith-agent';

@@ -204,6 +204,14 @@ The rules that keep those scopes real:
   process channel) or the forge runner (through its SSH to the guest) speaks
   hc, with `hc connect`. The browser, personal devices and other sandboxes
   never do.
+- First Mate chats do not share an agent identity. On Sand each chat has a
+  sandbox of its own; on forge each chat runs in the guest as its own Unix
+  user with a private home and its own hc core, and the runner's key may
+  only connect to or discard one chat at a time
+  ([ADR-0023](../specs/decisions/0023-forge-chat-isolation.md)). One
+  admin's chat agent cannot read or change another chat's transcripts,
+  working files or configuration, or signal its processes. Deleting a chat
+  removes its state in the guest.
 - An agent on a personal device reaches Beadsmith instead: through an MCP
   server its user authorizes with OAuth, whose tools are a facade over the
   authorized HTTP API and limited by that user's role.

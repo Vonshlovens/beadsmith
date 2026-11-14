@@ -13,6 +13,9 @@ let
     mkdir -p $out/src/lib/server/dispatch
     cp ${../../../src/lib/server/dispatch/sanitize.ts} $out/src/lib/server/dispatch/sanitize.ts
     cp ${../../../src/lib/mission-events.ts} $out/src/lib/mission-events.ts
+    # The terminal attach relay (ADR-0021 rule 4); its other imports are types only.
+    mkdir -p $out/src/lib/server/terminal-relay
+    cp ${../../../src/lib/server/terminal-relay/relay.ts} $out/src/lib/server/terminal-relay/relay.ts
     echo '{"type":"module"}' > $out/package.json
   '';
   knownHosts = pkgs.writeText "mate-known-hosts" "${net.guestAddress} ${net.hostKey}\n";
@@ -93,14 +96,14 @@ in {
       MATE_RUNNER_LISTEN = "127.0.0.1:8787";
       MATE_RUNNER_SECRET_FILE = "%d/mate-runner-secret";
       MATE_RUNNER_STATE_DIR = "/var/lib/mate-runner/chats";
-      MATE_AGENT_SSH = "agent@${net.guestAddress}";
+      # Root, but the guest forces this key to its mate-chat helper, which
+      # connects to one chat's core as that chat's user (guests/mate.nix).
+      MATE_AGENT_SSH = "root@${net.guestAddress}";
       MATE_AGENT_SSH_KEY = "%d/agent-key";
       MATE_AGENT_KNOWN_HOSTS = toString knownHosts;
-      MATE_AGENT_WORKDIR = "/var/lib/agent/home/work";
-      MATE_AGENT_CLAUDE_CONFIG = "/var/lib/agent/home/.claude";
+      # Each chat's home is <this>/<instance> (guests/mate.nix).
+      MATE_AGENT_CHAT_HOMES = "/var/lib/private/mate-chats";
       MATE_AGENT_CLAUDE = "/run/current-system/sw/bin/mate-claude";
-      # The guest's hc (guests/mate.nix); its core runs as a user service there.
-      MATE_AGENT_HC = "/run/current-system/sw/bin/hc";
     };
     serviceConfig = {
       ExecStart = "${node}/bin/node --import ${source}/scripts/ts-resolve.mjs ${source}/scripts/mate-runner.ts";

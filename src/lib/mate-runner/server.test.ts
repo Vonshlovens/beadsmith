@@ -32,6 +32,8 @@ let fake: FakeClaude;
 let handler: ReturnType<typeof createRunnerHandler>;
 let failConnect = false;
 let connects = 0;
+let failDiscard = false;
+let discards: string[] = [];
 
 const later = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -78,6 +80,13 @@ async function start(max_live_sessions = 3): Promise<void> {
 				client: await connectHc(fake.core.connect()),
 				launch: { cwd: WORKDIR, config_dir: fake.config_dir, command: 'mate-claude' }
 			};
+		},
+		discard: async (session_id) => {
+			discards.push(session_id);
+			if (failDiscard) {
+				failDiscard = false;
+				throw new Error('ssh: connection refused');
+			}
 		},
 		max_live_sessions,
 		heartbeat_ms: 50,
@@ -150,6 +159,8 @@ async function readEvents(chat: string, count: number, after?: string) {
 }
 
 beforeEach(async () => {
+	failDiscard = false;
+	discards = [];
 	dir = mkdtempSync(join(tmpdir(), 'mate-runner-'));
 	fake = newFake();
 	failConnect = false;
@@ -354,8 +365,23 @@ describe('mate runner', () => {
 		expect((await fetch(`${base}${target}`, signed('DELETE', target))).status).toBe(204);
 		expect(t.state).toBe('finished');
 		expect(new ChatStore(dir).get('chat1').after(undefined)).toEqual([]);
+		expect(discards).toEqual([SESSION]);
 		const fresh = await post('chat1', 'hi', 'm9', OTHER);
 		expect(await fresh.json()).toEqual({ event_id: 'e000000001' });
+	});
+
+	it('keeps a deleted chat whose state could not be discarded, for a retry', async () => {
+		await post('chat1', 'hello', 'm1');
+		await readEvents('chat1', 3);
+		const target = '/v1/mate/chats/chat1';
+		failDiscard = true;
+		const refused = await fetch(`${base}${target}`, signed('DELETE', target));
+		expect(refused.status).toBe(503);
+		expect(await refused.json()).toEqual({ error: expect.stringMatching(/Try again/) });
+		expect(new ChatStore(dir).get('chat1').meta?.session_id).toBe(SESSION);
+		expect((await fetch(`${base}${target}`, signed('DELETE', target))).status).toBe(204);
+		expect(discards).toEqual([SESSION, SESSION]);
+		expect(new ChatStore(dir).get('chat1').meta).toBeUndefined();
 	});
 
 	it('does not consume message ids on capacity rejection', async () => {
