@@ -198,7 +198,7 @@ live in [`src/app.css`](../src/app.css).
 | Code | Purpose |
 | --- | --- |
 | [`src/routes/+layout.svelte`](../src/routes/+layout.svelte), [`src/lib/components/`](../src/lib/components/) | Shell, rail, shared components |
-| [`src/routes/+page.ts`](../src/routes/+page.ts), [`src/lib/client/home.ts`](../src/lib/client/home.ts) | `/` redirects to your own work: Todos for admins, First Mate for members |
+| [`src/routes/+page.ts`](../src/routes/+page.ts), [`src/lib/client/home.ts`](../src/lib/client/home.ts) | `/` redirects to First Mate, the first screen for every account |
 | [`src/routes/projects/`](../src/routes/projects/) | Project catalogue: one sortable row per project |
 | [`src/lib/components/activity-drawer.svelte`](../src/lib/components/activity-drawer.svelte) | Recent changes drawer (top bar, `.`): events folded to one line per issue per day |
 | [`src/routes/ready/`](../src/routes/ready/) | Cross-project Ready deck |

@@ -5,7 +5,9 @@ import { api, errorMessage } from '#lib/client/api.js';
 import type { Mission } from '#lib/types.js';
 import type { PageLoad } from './$types';
 
-export const load: PageLoad = async ({ fetch }) => {
+export const load: PageLoad = async ({ fetch, depends }) => {
+	// The page re-runs just this load to follow working missions.
+	depends('app:missions');
 	let missions: Mission[] = [];
 	let error: string | null = null;
 

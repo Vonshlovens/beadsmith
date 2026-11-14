@@ -8,24 +8,31 @@
 	 * mate runner (docs/first-mate.md); without a runner they get a
 	 * placeholder, and members are told First Mate is for admins for now.
 	 * Agent threads are real: `?thread=&project=` opens a mission as before.
-	 * The question screen offers next actions from live data (ready work, and
-	 * on Sand unrouted todos and failed missions) and says where a new chat
-	 * runs and what it can do there; see #lib/client/mate-start.ts.
+	 * The question screen is also the app's home (`/` lands here), so under
+	 * the composer it lists the viewer's work from live data: top todos (for
+	 * admins), ready issues and running or failed repo workers, each linking
+	 * to the work and, where a chat could act on it, offering a question.
+	 * Members, and admins on a host with no runner, still get that list:
+	 * the page is never a dead end. See #lib/client/mate-start.ts.
 	 * The command palette stays on ⌘K, reachable from every composer.
 	 */
 	import { tip } from '#lib/client/tooltip.js';
 	import { tick, untrack } from 'svelte';
-	import { toast } from 'svelte-sonner';
+	import { MediaQuery } from 'svelte/reactivity';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import ArrowLeftIcon from 'phosphor-svelte/lib/ArrowLeftIcon';
+	import ArrowRightIcon from 'phosphor-svelte/lib/ArrowRightIcon';
+	import ChatCircleTextIcon from 'phosphor-svelte/lib/ChatCircleTextIcon';
 	import CommandIcon from 'phosphor-svelte/lib/CommandIcon';
 	import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
 	import AgentThread from '#lib/components/agent-thread.svelte';
 	import ChatComposer from '#lib/components/chat-composer.svelte';
 	import IssueId from '#lib/components/issue-id.svelte';
 	import MateChatView from '#lib/components/mate-chat-view.svelte';
+	import { missionStatusLabel } from '#lib/components/mission-status.svelte';
 	import MateContextSelect from '#lib/components/mate-context-select.svelte';
+	import PriorityChip from '#lib/components/priority-chip.svelte';
 	import RunnerSelect from '#lib/components/runner-select.svelte';
 	import AgentChoiceSelect from '#lib/components/agent-choice-select.svelte';
 	import { api, errorMessage } from '#lib/client/api.js';
@@ -41,9 +48,18 @@
 	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
 	import { stepFocus } from '#lib/client/list-focus.js';
 	import { STARTERS, chatHref } from '#lib/client/mate-chat.js';
-	import { runsOnNote, startSuggestions } from '#lib/client/mate-start.js';
+	import {
+		runsOnNote,
+		startMode,
+		startSuggestions,
+		topReady,
+		topTodos,
+		workerSummary,
+		type StartSuggestion
+	} from '#lib/client/mate-start.js';
 	import { mate_chats } from '#lib/client/mate-chat.svelte.js';
-	import { currentProject, statusSnapshot } from '#lib/client/projects.svelte.js';
+	import { currentProject, currentViewer, statusSnapshot } from '#lib/client/projects.svelte.js';
+	import { daysUntil, dueLabel } from '#lib/todos/dates.js';
 	import { app_state } from '#lib/client/stores.svelte.js';
 	import { PRODUCT_NAME } from '#lib/product.js';
 	import type { DispatchRequest, Mission, ReadyIssue } from '#lib/types.js';
@@ -85,6 +101,21 @@
 	const mounted = $derived(mate_chats.loaded);
 	const can_chat = $derived(mate_chats.can_chat);
 	const mate_reason = $derived(mate_chats.status?.reason);
+	const is_admin = $derived(currentViewer()?.role === 'admin');
+	const mode = $derived(
+		startMode({
+			loaded: mounted,
+			has_status: mate_chats.status !== null,
+			admin_only: mate_reason === 'admin_only',
+			connected: mate_chats.connected
+		})
+	);
+	let retrying = $state(false);
+	/** Why the last start failed; the question stays in the box. */
+	let start_error = $state<string | null>(null);
+
+	/** A phone or tablet: no focus on arrival, which would raise the keyboard over the page. */
+	const touch_only = new MediaQuery('(hover: none) and (pointer: coarse)', false);
 
 	/** Where a new chat runs: the viewer's pick, else the server default. */
 	const new_chat_runner = $derived(
@@ -94,35 +125,52 @@
 	);
 	const runs_on = $derived(runsOnNote(new_chat_runner, mate_chats.status?.runners ?? []));
 
-	// Live data for the start screen's next actions. A source that fails to
-	// load stays null and its suggestion is left out: the screen still works.
-	let ready = $state<ReadyIssue[] | null>(null);
-	let todos = $state<Todo[] | null>(null);
-	let live_pending = $state(0);
+	// Live data for the home: each source keeps what it last read while it
+	// refreshes, and a failed read says so instead of looking empty.
+	interface Source<T> {
+		value: T | null;
+		error: string | null;
+	}
+	let ready_src = $state<Source<ReadyIssue[]>>({ value: null, error: null });
+	let todo_src = $state<Source<Todo[]>>({ value: null, error: null });
+	/** Bumped by a panel's Retry. */
+	let live_seq = $state(0);
 
 	$effect(() => {
-		if (is_open || !can_chat || !mate_chats.connected) return;
+		void live_seq;
+		if (is_open) return;
+		const admin = is_admin;
 		const ac = new AbortController();
-		const settle = <T,>(load: Promise<T>, take: (value: T) => void) => {
-			// Untracked: `+=` reads the counter, and a tracked read would make
-			// this effect re-run (aborting both loads) every time it changes.
-			untrack(() => (live_pending += 1));
-			void load
-				.then((value) => {
-					if (!ac.signal.aborted) take(value);
-				})
-				.catch(() => {})
-				.finally(() => {
-					live_pending -= 1;
-				});
-		};
-		settle(api.ready(100, { signal: ac.signal }), (response) => (ready = response.issues));
-		settle(
-			api.todos({ status: 'open', limit: 200 }, { signal: ac.signal }),
-			(response) => (todos = response.todos)
-		);
+		untrack(() => {
+			settle(ready_src, api.ready(100, { signal: ac.signal }), (r) => r.issues, ac.signal);
+			// The todo list is admin-only; a member's read would be refused.
+			if (admin) {
+				settle(
+					todo_src,
+					api.todos({ status: 'open', limit: 200 }, { signal: ac.signal }),
+					(r) => r.todos,
+					ac.signal
+				);
+			}
+		});
 		return () => ac.abort();
 	});
+
+	function settle<R, T>(
+		src: Source<T>,
+		load: Promise<R>,
+		take: (response: R) => T,
+		signal: AbortSignal
+	) {
+		src.error = null;
+		void load
+			.then((response) => {
+				if (!signal.aborted) src.value = take(response);
+			})
+			.catch((error) => {
+				if (!signal.aborted) src.error = errorMessage(error);
+			});
+	}
 
 	const suggestions = $derived(
 		startSuggestions({
@@ -130,12 +178,32 @@
 			runner: new_chat_runner,
 			can_launch: agent.enabled,
 			scope,
-			ready,
-			todos,
+			ready: ready_src.value,
+			todos: todo_src.value,
 			missions: agent.visible && !loading && missions_error === null ? missions : null
 		})
 	);
-	const checking = $derived(live_pending > 0 && suggestions.length === 0);
+	/** The question each panel can offer, when a chat could act on it. */
+	const ask_for = $derived(
+		Object.fromEntries(suggestions.map((suggestion) => [suggestion.id, suggestion])) as Partial<
+			Record<StartSuggestion['id'], StartSuggestion>
+		>
+	);
+	const home_todos = $derived(todo_src.value === null ? [] : topTodos(todo_src.value, new Date()));
+	const open_todos = $derived(todo_src.value?.filter((todo) => todo.status === 'open').length ?? 0);
+	const home_ready = $derived(ready_src.value === null ? [] : topReady(ready_src.value, scope));
+	const workers = $derived(workerSummary(missions));
+	const recent_chats = $derived(mate_chats.chats.slice(0, 3));
+
+	async function retryStatus() {
+		if (retrying) return;
+		retrying = true;
+		try {
+			await mate_chats.load();
+		} finally {
+			retrying = false;
+		}
+	}
 
 	$effect(() => {
 		void mate_chats.load();
@@ -190,9 +258,11 @@
 	});
 
 	// The top bar's First Mate button and `n` bump this to focus the question.
+	// Arriving on a touch screen does not: the home is for reading first.
+	const arrival_tick = app_state.first_mate_focus_tick;
 	$effect(() => {
-		void app_state.first_mate_focus_tick;
-		if (!is_open) {
+		const bumped = app_state.first_mate_focus_tick !== arrival_tick;
+		if (!is_open && (bumped || !untrack(() => touch_only.current))) {
 			void tick().then(() => start_input?.focus());
 		}
 	});
@@ -209,12 +279,14 @@
 			return;
 		}
 		starting = true;
+		start_error = null;
 		try {
 			const id = await mate_chats.start(text, scope);
 			if (draft.trim() === text.trim()) draft = '';
 			await goto(chatHref(id));
 		} catch (error) {
-			toast.error('Could not start the chat', { description: errorMessage(error) });
+			start_error = errorMessage(error);
+			void tick().then(() => start_input?.focus());
 		} finally {
 			starting = false;
 		}
@@ -269,6 +341,7 @@
 			keys: ['n'],
 			label: 'New chat',
 			group: 'Agent',
+			when: () => can_chat,
 			run: () => void newChat()
 		}
 	]);
@@ -276,8 +349,45 @@
 
 <svelte:head><title>First Mate · {PRODUCT_NAME}</title></svelte:head>
 
+{#snippet pending(what: string)}
+	<div class="work-pending" role="status">
+		<span class="sr-only">Loading {what}…</span>
+		<div class="skel" aria-hidden="true"></div>
+		<div class="skel" aria-hidden="true"></div>
+	</div>
+{/snippet}
+
+{#snippet failed(what: string, error: string, retry: () => void)}
+	<div class="work-failed" role="alert">
+		<p>Could not load {what}. {error}</p>
+		<button class="btn btn-sm" type="button" onclick={retry}>Retry</button>
+	</div>
+{/snippet}
+
+<!-- A refresh that failed keeps the last rows and says they may be old. -->
+{#snippet stale(src: Source<unknown>)}
+	{#if src.value !== null && src.error}
+		<p class="work-stale">Could not refresh: {src.error}</p>
+	{/if}
+{/snippet}
+
+<!-- Fills the box with a question about this panel; it never sends. -->
+{#snippet ask(suggestion: StartSuggestion)}
+	<button
+		class="work-ask"
+		type="button"
+		disabled={starting}
+		onclick={() => useStarter(suggestion.prompt)}
+	>
+		<span class="work-ask-lbl"
+			><ChatCircleTextIcon size={13} aria-hidden="true" /> Ask about {suggestion.label}</span
+		>
+		<span class="work-ask-q">{suggestion.prompt}</span>
+	</button>
+{/snippet}
+
 <div class="wrap is-wide mate" class:is-open={is_open}>
-	<aside class="mate-rail" aria-label="Chats" bind:this={rail_el}>
+	<aside class="mate-rail" id="mate-rail" aria-label="Chats" bind:this={rail_el}>
 		<button class="btn new-chat" type="button" disabled={!can_chat} onclick={() => void newChat()}>
 			<PlusIcon size={14} aria-hidden="true" /> New chat
 			<span class="kbd" aria-hidden="true">n</span>
@@ -330,7 +440,7 @@
 				{:else if missions_error}
 					<p class="hint" role="alert">{missions_error}</p>
 				{:else if missions.length === 0}
-					<p class="hint">No agent threads yet. Press a on an issue to start one.</p>
+					<p class="hint">No agent threads yet. Ask an agent from an issue (a) to start one.</p>
 				{:else}
 					<ul class="rail-list">
 						{#each missions as mission (mission.id)}
@@ -343,7 +453,7 @@
 									<span class="row-ti">
 										<i
 											class="dot dot-{dispatchBadgeKey(mission.status)}"
-											{@attach tip(mission.status)}
+											{@attach tip(missionStatusLabel(mission.status))}
 											aria-hidden="true"
 										></i>
 										{mission.title ?? mission.project_name}
@@ -354,7 +464,7 @@
 										{#if mission.issue_id}· {mission.issue_id}{/if}
 										{#if several_runners}· {missionProvider(mission, dispatch)?.label ??
 												'removed runner'}{/if}
-										<span class="sr-only">, {mission.status}</span>
+										<span class="sr-only">, {missionStatusLabel(mission.status)}</span>
 									</span>
 								</a>
 							</li>
@@ -432,120 +542,277 @@
 			</div>
 		{:else}
 			<div class="start">
-				<h1 class="h1">What do you want to know?</h1>
-				<p class="sub">
-					Ask about the work in your Beads projects: what's ready, what's stalled, what changed,
-					what to file next.
-				</p>
-
-				<ChatComposer
-					bind:value={draft}
-					bind:textarea={start_input}
-					label="Ask First Mate"
-					placeholder="Ask about your projects…"
-					rows={4}
-					submit_label="Ask"
-					disabled={!mounted || !can_chat}
-					reason={!mounted
-						? 'Loading First Mate…'
-						: mate_reason === 'admin_only'
-							? 'First Mate is for admins for now'
-							: !can_chat
-								? 'First Mate is unavailable. Retry loading chats.'
-								: undefined}
-					busy={starting}
-					onsend={(text) => void startChat(text)}
-				>
-					{#snippet controls()}
-						<MateContextSelect bind:value={scope} disabled={starting || !can_chat} />
-						<RunnerSelect />
-						<AgentChoiceSelect takes={can_chat && mate_chats.connected} disabled={starting} />
-						<button
-							class="btn btn-sm btn-ghost"
-							type="button"
-							{@attach tip('Commands (⌘K)')}
-							onclick={() => app_state.openFirstMate()}
-						>
-							<CommandIcon size={12} aria-hidden="true" /> Commands
-						</button>
-					{/snippet}
-				</ChatComposer>
-
-				{#if checking}
-					<p class="next-status" role="status">Checking your projects…</p>
-				{:else if suggestions.length > 0}
-					<ul class="next" aria-label="Next up">
-						{#each suggestions as suggestion (suggestion.id)}
-							<li>
-								<button
-									type="button"
-									disabled={starting}
-									onclick={() => useStarter(suggestion.prompt)}
-								>
-									<span class="next-lbl">{suggestion.label}</span>
-									<span class="next-q">{suggestion.prompt}</span>
-								</button>
-							</li>
-						{/each}
-					</ul>
+				{#if mode === 'members'}
+					<h1 class="h1">Your work</h1>
+					<p class="sub">What is ready and running across your Beads projects.</p>
+				{:else}
+					<h1 class="h1">What do you want to know?</h1>
+					<p class="sub">
+						Ask about the work in your Beads projects: what's ready, what's stalled, what changed,
+						what to file next.
+					</p>
 				{/if}
 
-				<ul class="starters" aria-label="Starting points">
-					{#each STARTERS as starter (starter)}
-						<li>
+				{#if mode === 'error'}
+					<div class="banner banner-err start-banner" role="alert">
+						<div class="banner-bd">
+							<b>Could not reach First Mate.</b>
+							{mate_chats.list_error ?? ''} Your work below loads on its own.
+						</div>
+						<div class="banner-acts">
 							<button
+								class="btn btn-sm"
 								type="button"
-								disabled={!can_chat || starting}
-								onclick={() => useStarter(starter)}
+								disabled={retrying}
+								onclick={() => void retryStatus()}>{retrying ? 'Retrying…' : 'Retry'}</button
 							>
-								{starter}
-							</button>
-						</li>
-					{/each}
-				</ul>
+						</div>
+					</div>
+				{:else if mode === 'placeholder'}
+					<div class="banner banner-warn start-banner">
+						<div class="banner-bd">
+							<b>No model is connected yet.</b>
+							Replies are placeholders until a mate runner is configured. Your chats are kept for when
+							one is.
+						</div>
+					</div>
+				{:else if mode === 'members'}
+					<div class="banner start-banner">
+						<div class="banner-bd">
+							<b>First Mate answers admins only, for now.</b>
+							It runs an agent that can change Beads in every project. Your ready work is below.
+						</div>
+					</div>
+				{/if}
 
-				<div class="notes">
-					{#if mate_reason === 'admin_only'}
-						<p>
-							<strong>Admins only, for now.</strong>
-							First Mate runs an agent that can change Beads in every project, so only admins talk to
-							it.
-						</p>
-					{:else if runs_on?.crew}
-						<p>
-							<strong>Runs on {runs_on.label}, with crew tools.</strong>
-							It reads every project, your todos and missions, routes todos and starts repo workers, acting
-							as you{#if mate_chats.status?.reachable === false}. The runner is not answering right
-								now{/if}.
-						</p>
-					{:else if runs_on}
-						<p>
-							<strong>Runs on {runs_on.label}.</strong>
-							It works in its own Beads sandbox. Crew tools (your todos, missions, repo workers) are on
-							Sand only{#if runs_on.sand_offered}: pick Sand under Runs on to use them{/if}{#if mate_chats.status?.reachable === false}.
-								The runner is not answering right now{/if}.
-						</p>
-					{:else}
-						<p>
-							<strong>Not connected yet.</strong>
-							No model answers yet: replies are placeholders. Your chats are kept for when one is.
+				{#if mode !== 'members'}
+					<ChatComposer
+						bind:value={draft}
+						bind:textarea={start_input}
+						label="Ask First Mate"
+						placeholder="Ask about your projects…"
+						rows={4}
+						submit_label="Ask"
+						disabled={!can_chat}
+						reason={mode === 'loading'
+							? 'Loading First Mate…'
+							: mode === 'error'
+								? 'First Mate is unavailable. Retry above.'
+								: undefined}
+						busy={starting}
+						onsend={(text) => void startChat(text)}
+					>
+						{#snippet controls()}
+							<MateContextSelect bind:value={scope} disabled={starting || !can_chat} />
+							<RunnerSelect />
+							<AgentChoiceSelect takes={can_chat && mate_chats.connected} disabled={starting} />
+							<button
+								class="btn btn-sm btn-ghost"
+								type="button"
+								aria-label="Commands"
+								{@attach tip('Commands (⌘K)')}
+								onclick={() => app_state.openFirstMate()}
+							>
+								<CommandIcon size={12} aria-hidden="true" /><span class="cmd-lbl">Commands</span>
+							</button>
+						{/snippet}
+					</ChatComposer>
+					<p class="sr-only" role="status">{starting ? 'Starting the chat…' : ''}</p>
+					{#if start_error}
+						<p class="start-err" role="alert">
+							Could not start the chat. {start_error} Your question is still in the box: send it again
+							to retry.
 						</p>
 					{/if}
-					{#if runs_on?.crew}
-						<p>
-							<strong>Beads changes go through missions.</strong>
-							To file, comment or tackle, it starts a mission whose agent runs bd, and asks before starting
-							more than one. It cannot delete anything.
-							<span class="kbd">⌘K</span> runs a command without a chat.
-						</p>
-					{:else}
-						<p>
-							<strong>Changes go through bd.</strong>
-							First Mate and its crew change Beads with bd, never behind its back.
-							<span class="kbd">⌘K</span> runs a command without a chat.
-						</p>
+
+					{#if can_chat}
+						<ul class="starters" aria-label="Starting points">
+							{#each STARTERS as starter (starter)}
+								<li>
+									<button type="button" disabled={starting} onclick={() => useStarter(starter)}>
+										{starter}
+									</button>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				{/if}
+
+				<div class="work">
+					{#if can_chat && recent_chats.length > 0}
+						<!-- Narrow screens only: there the rail sits below the whole page. -->
+						<section class="work-panel is-narrow-only" aria-labelledby="work-chats-hd">
+							<div class="sec-hd">
+								<h2 class="lbl" id="work-chats-hd">Recent chats</h2>
+								<span class="rule"></span>
+								<a class="work-all" href="#mate-rail"
+									>All chats<ArrowRightIcon size={12} aria-hidden="true" /></a
+								>
+							</div>
+							<ul class="work-list">
+								{#each recent_chats as item (item.id)}
+									<li>
+										<a class="work-row is-plain" href={chatHref(item.id)}>
+											<span class="work-ti">{item.title}</span>
+											<span class="work-when mono-num">{relativeShort(item.updated_at)}</span>
+										</a>
+									</li>
+								{/each}
+							</ul>
+						</section>
+					{/if}
+
+					{#if is_admin}
+						<section class="work-panel" aria-labelledby="work-todos-hd">
+							<div class="sec-hd">
+								<h2 class="lbl" id="work-todos-hd">Todos</h2>
+								{#if todo_src.value !== null}<span class="meta mono-num">{open_todos} open</span
+									>{/if}
+								<span class="rule"></span>
+								<a class="work-all" href="/todos"
+									>All todos<ArrowRightIcon size={12} aria-hidden="true" /></a
+								>
+							</div>
+							{#if todo_src.value === null && todo_src.error}
+								{@render failed('todos', todo_src.error, () => (live_seq += 1))}
+							{:else if todo_src.value === null}
+								{@render pending('todos')}
+							{:else if home_todos.length === 0}
+								<p class="work-empty">Nothing open. <a href="/todos">Capture a todo</a></p>
+							{:else}
+								<ul class="work-list">
+									{#each home_todos as todo (todo.id)}
+										<li class="work-row is-static">
+											<PriorityChip priority={todo.priority} />
+											<span class="work-ti">{todo.title}</span>
+											{#if todo.due_at}
+												<span
+													class="work-when"
+													class:is-late={(daysUntil(todo.due_at, new Date()) ?? 0) < 0}
+													>{dueLabel(todo.due_at, new Date())}</span
+												>
+											{/if}
+										</li>
+									{/each}
+								</ul>
+							{/if}
+							{@render stale(todo_src)}
+							{#if ask_for.todos}{@render ask(ask_for.todos)}{/if}
+						</section>
+					{/if}
+
+					<section class="work-panel" aria-labelledby="work-ready-hd">
+						<div class="sec-hd">
+							<h2 class="lbl" id="work-ready-hd">Ready</h2>
+							{#if ready_src.value !== null}<span class="meta mono-num"
+									>{ready_src.value.length}{ready_src.value.length >= 100 ? '+' : ''} ready</span
+								>{/if}
+							<span class="rule"></span>
+							<a class="work-all" href="/ready"
+								>Ready deck<ArrowRightIcon size={12} aria-hidden="true" /></a
+							>
+						</div>
+						{#if ready_src.value === null && ready_src.error}
+							{@render failed('ready issues', ready_src.error, () => (live_seq += 1))}
+						{:else if ready_src.value === null}
+							{@render pending('ready issues')}
+						{:else if home_ready.length === 0}
+							<p class="work-empty">No issue is ready to start in any project.</p>
+						{:else}
+							<ul class="work-list">
+								{#each home_ready as issue (`${issue.project_id}:${issue.id}`)}
+									<li>
+										<a class="work-row" href="/p/{issue.project_id}/i/{issue.id}">
+											<PriorityChip priority={issue.priority} />
+											<span class="work-ti">{issue.title}</span>
+											<span class="work-sub"><IssueId id={issue.id} /> · {issue.project_name}</span>
+										</a>
+									</li>
+								{/each}
+							</ul>
+						{/if}
+						{@render stale(ready_src)}
+						{#if ask_for.ready}{@render ask(ask_for.ready)}{/if}
+					</section>
+
+					{#if agent.visible}
+						<section class="work-panel" aria-labelledby="work-workers-hd">
+							<div class="sec-hd">
+								<h2 class="lbl" id="work-workers-hd">Workers</h2>
+								{#if !loading && missions_error === null}<span class="meta mono-num"
+										>{workers.working} working{#if workers.needs_you > 0}
+											· {workers.needs_you} need you{/if}</span
+									>{/if}
+								<span class="rule"></span>
+								<a class="work-all" href="/missions"
+									>Missions<ArrowRightIcon size={12} aria-hidden="true" /></a
+								>
+							</div>
+							{#if missions_error && missions.length === 0}
+								{@render failed('workers', missions_error, () => void loadMissions())}
+							{:else if loading}
+								{@render pending('workers')}
+							{:else if workers.rows.length === 0}
+								<p class="work-empty">
+									Nothing is running and nothing needs you. Ask an agent from an issue to start one.
+								</p>
+							{:else}
+								<ul class="work-list">
+									{#each workers.rows as mission (mission.id)}
+										<li>
+											<a class="work-row" href={threadHref(mission)}>
+												<i class="dot dot-{dispatchBadgeKey(mission.status)}" aria-hidden="true"
+												></i>
+												<span class="work-ti">{mission.title ?? mission.project_name}</span>
+												<span class="work-sub"
+													>{missionStatusLabel(mission.status)} · {missionVerb(
+														mission
+													)}{#if mission.issue_id}
+														· {mission.issue_id}{/if}</span
+												>
+											</a>
+										</li>
+									{/each}
+								</ul>
+							{/if}
+							{#if ask_for.missions}{@render ask(ask_for.missions)}{/if}
+						</section>
 					{/if}
 				</div>
+
+				{#if mode === 'chat' || mode === 'placeholder'}
+					<div class="notes">
+						{#if runs_on?.crew}
+							<p>
+								<strong>Runs on {runs_on.label}, with crew tools.</strong>
+								It reads every project, your todos and missions, routes todos and starts repo workers,
+								acting as you{#if mate_chats.status?.reachable === false}. The runner is not
+									answering right now{/if}.
+							</p>
+						{:else if runs_on}
+							<p>
+								<strong>Runs on {runs_on.label}.</strong>
+								It works in its own Beads sandbox. Crew tools (your todos, missions, repo workers) are
+								on Sand only{#if runs_on.sand_offered}: pick Sand under Runs on to use them{/if}{#if mate_chats.status?.reachable === false}.
+									The runner is not answering right now{/if}.
+							</p>
+						{/if}
+						{#if runs_on?.crew}
+							<p>
+								<strong>Beads changes go through missions.</strong>
+								To file, comment or tackle, it starts a mission whose agent runs bd, and asks before starting
+								more than one. It cannot delete anything.
+								<span class="kbd">⌘K</span> runs a command without a chat.
+							</p>
+						{:else}
+							<p>
+								<strong>Changes go through bd.</strong>
+								First Mate and its crew change Beads with bd, never behind its back.
+								<span class="kbd">⌘K</span> runs a command without a chat.
+							</p>
+						{/if}
+					</div>
+				{/if}
 			</div>
 		{/if}
 	</section>
@@ -687,56 +954,16 @@
 		font-size: var(--t-base);
 		color: var(--tx-mid);
 	}
-	/* Suggestions, like a chat app's prompt chips: they fill the box, never send. */
-	/* Next actions from live data: what it says, then what it will ask. */
-	.next-status {
-		margin: var(--s-4) 0 0;
+	.start-banner {
+		margin: 0 0 var(--s-4);
 		font-size: var(--t-sm);
-		color: var(--tx-dim);
 	}
-	.next {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(min(100%, 30ch), 1fr));
-		gap: var(--s-2);
-		margin: var(--s-4) 0 0;
-		padding: 0;
-		list-style: none;
-	}
-	.next button {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-		width: 100%;
-		height: 100%;
-		padding: 8px 12px;
-		background: var(--s2);
-		border: 1px solid var(--line-2);
-		border-radius: var(--r-2);
-		font: inherit;
-		text-align: left;
-		cursor: pointer;
-		transition:
-			background-color 0.12s ease-out,
-			border-color 0.12s ease-out;
-	}
-	.next button:hover:not(:disabled),
-	.next button:focus-visible {
-		background: var(--s3);
-		border-color: var(--line-3);
-	}
-	.next button:disabled {
-		cursor: not-allowed;
-		opacity: 0.6;
-	}
-	.next-lbl {
+	.start-err {
+		margin: var(--s-2) 0 0;
 		font-size: var(--t-sm);
-		font-weight: 600;
-		color: var(--tx-hi);
+		color: var(--danger-tx);
 	}
-	.next-q {
-		font-size: var(--t-xs);
-		color: var(--tx-mid);
-	}
+	/* Starters, like a chat app's prompt chips: they fill the box, never send. */
 	.starters {
 		display: flex;
 		flex-wrap: wrap;
@@ -769,10 +996,186 @@
 		cursor: not-allowed;
 		opacity: 0.6;
 	}
+
+	/* ---- the home: the viewer's work, each panel a way into it */
+	.work {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 30ch), 1fr));
+		gap: var(--s-5) var(--s-6);
+		margin-top: var(--s-6);
+	}
+	.work-panel {
+		display: flex;
+		flex-direction: column;
+		gap: var(--s-2);
+		min-width: 0;
+	}
+	.work-panel .sec-hd {
+		margin-bottom: 0;
+	}
+	.work-panel h2.lbl {
+		margin: 0;
+		font-size: var(--t-xs);
+	}
+	.work-all {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--s-1);
+		font-size: var(--t-xs);
+		color: var(--tx-mid);
+		white-space: nowrap;
+	}
+	.work-all:hover,
+	.work-all:focus-visible {
+		color: var(--tx-hi);
+	}
+	.work-list {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.work-row {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr) auto;
+		align-items: baseline;
+		gap: 2px var(--s-2);
+		margin: 0 calc(-1 * var(--s-2));
+		padding: 6px var(--s-2);
+		border-radius: var(--r-2);
+		color: var(--tx);
+		font-size: var(--t-sm);
+		text-decoration: none;
+		outline: none;
+	}
+	.work-row.is-plain {
+		grid-template-columns: minmax(0, 1fr) auto;
+	}
+	a.work-row:hover,
+	a.work-row:focus-visible {
+		background: var(--s2);
+		color: var(--tx-hi);
+		text-decoration: none;
+	}
+	a.work-row:focus-visible {
+		box-shadow: inset 0 0 0 1px var(--line-3);
+	}
+	.work-row .dot {
+		align-self: center;
+	}
+	.work-ti {
+		min-width: 0;
+		line-height: 1.4;
+		overflow-wrap: anywhere;
+	}
+	/* A link leads to the whole record, so its title may stop at two lines. */
+	a.work-row .work-ti {
+		display: -webkit-box;
+		overflow: hidden;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+	}
+	.work-when,
+	.work-sub {
+		font-size: var(--t-xs);
+		color: var(--tx-dim);
+	}
+	.work-when {
+		white-space: nowrap;
+	}
+	.work-when.is-late {
+		color: var(--danger-tx);
+		font-weight: 600;
+	}
+	.work-sub {
+		grid-column: 2 / -1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.work-empty,
+	.work-failed p {
+		margin: 0;
+		font-size: var(--t-sm);
+		color: var(--tx-mid);
+	}
+	.work-failed {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--s-2) var(--s-3);
+	}
+	.work-failed p {
+		color: var(--danger-tx);
+	}
+	.work-stale {
+		margin: 0;
+		font-size: var(--t-xs);
+		color: var(--amber-tx);
+	}
+	.work-pending {
+		display: grid;
+		gap: var(--s-3);
+		padding: var(--s-2) 0;
+	}
+	.work-pending .skel:last-child {
+		width: 70%;
+	}
+	.work-ask {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		width: 100%;
+		margin-top: var(--s-1);
+		padding: var(--s-2) var(--s-3);
+		background: var(--s2);
+		border: 1px solid var(--line-2);
+		border-radius: var(--r-2);
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+		transition:
+			background-color 0.12s ease-out,
+			border-color 0.12s ease-out;
+	}
+	.work-ask:hover:not(:disabled),
+	.work-ask:focus-visible {
+		background: var(--s3);
+		border-color: var(--line-3);
+	}
+	.work-ask:disabled {
+		cursor: not-allowed;
+		opacity: 0.6;
+	}
+	.work-ask-lbl {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-size: var(--t-sm);
+		font-weight: 600;
+		color: var(--tx-hi);
+	}
+	.work-ask-q {
+		font-size: var(--t-xs);
+		color: var(--tx-mid);
+	}
 	@media (pointer: coarse) {
 		.starters button,
-		.next button {
+		.work-ask,
+		a.work-row,
+		.work-all {
 			min-height: 44px;
+		}
+	}
+	@media (min-width: 901px) {
+		.is-narrow-only {
+			display: none;
+		}
+	}
+	@media (max-width: 640px) {
+		.cmd-lbl {
+			display: none;
 		}
 	}
 	.notes {

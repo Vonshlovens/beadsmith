@@ -79,10 +79,12 @@ export const GET: RequestHandler = async ({ params, request }) => {
 							controller.close();
 							return;
 						}
+						// Not `stored-error`: that id is a final answer, and the page
+						// stops following on it. This one it retries.
 						push(
 							encodeSse({
 								type: 'error',
-								id: 'stored-error',
+								id: 'stream-unavailable',
 								message: 'The mission stream is temporarily unavailable.'
 							})
 						);

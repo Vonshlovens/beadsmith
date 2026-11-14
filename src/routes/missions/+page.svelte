@@ -1,9 +1,11 @@
 <script lang="ts">
 	/**
 	 * Fleet view of agent missions across projects; each row opens its thread.
-	 * A kind filter separates ralph loops from one-shot runs.
+	 * A kind filter separates ralph loops from one-shot runs. While any run
+	 * is working the list re-reads itself, so statuses move without a manual
+	 * refresh; it pauses in a background tab.
 	 */
-	import { refreshAll } from '$app/navigation';
+	import { invalidate, refreshAll } from '$app/navigation';
 	import EmptyState from '#lib/components/empty-state.svelte';
 	import MissionsList from '#lib/components/missions-list.svelte';
 	import PageHeader from '#lib/components/page-header.svelte';
@@ -19,6 +21,7 @@
 	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
 	import { stepFocus } from '#lib/client/list-focus.js';
 	import { PRODUCT_NAME } from '#lib/product.js';
+	import type { Mission } from '#lib/types.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -26,17 +29,26 @@
 	let list_el = $state<HTMLDivElement | null>(null);
 	let refreshing = $state(false);
 	let kind = $state<MissionKind>('all');
-	const working = $derived(data.missions.filter((mission) => isBusyStatus(mission.status)).length);
+	/**
+	 * The last list that loaded. A background re-read that fails keeps it on
+	 * screen, marked as not refreshed, instead of swapping it for an error.
+	 */
+	let kept = $state<Mission[] | null>(null);
+	$effect.pre(() => {
+		if (!data.error) kept = data.missions;
+	});
+	const stale = $derived(data.error !== null && kept !== null && kept.length > 0);
+	const missions = $derived(stale && kept ? kept : data.missions);
+	const working = $derived(missions.filter((mission) => isBusyStatus(mission.status)).length);
 	const loops_running = $derived(
-		data.missions.filter(
-			(mission) => missionKind(mission) === 'loop' && isBusyStatus(mission.status)
-		).length
+		missions.filter((mission) => missionKind(mission) === 'loop' && isBusyStatus(mission.status))
+			.length
 	);
-	const has_loops = $derived(data.missions.some((mission) => missionKind(mission) === 'loop'));
-	const shown = $derived(filterMissions(data.missions, kind));
+	const has_loops = $derived(missions.some((mission) => missionKind(mission) === 'loop'));
+	const shown = $derived(filterMissions(missions, kind));
 	const meta = $derived(
 		[
-			kind === 'all' ? String(data.missions.length) : `${shown.length} of ${data.missions.length}`,
+			kind === 'all' ? String(missions.length) : `${shown.length} of ${missions.length}`,
 			working > 0 ? `${working} working` : '',
 			loops_running > 0 ? `${loops_running} ${loops_running === 1 ? 'loop' : 'loops'}` : ''
 		]
@@ -45,7 +57,7 @@
 	);
 
 	function kindCount(value: MissionKind): number {
-		return filterMissions(data.missions, value).length;
+		return filterMissions(missions, value).length;
 	}
 
 	/** Arrow keys move the choice, as in any radio group. */
@@ -62,6 +74,21 @@
 			.querySelector<HTMLButtonElement>(`[data-kind="${next}"]`)
 			?.focus();
 	}
+
+	/** How often a list with working runs re-reads, as a chat's mission cards do. */
+	const FOLLOW_MS = 12_000;
+
+	$effect(() => {
+		if (working === 0 || (data.error && !stale)) {
+			return;
+		}
+		const poll = setInterval(() => {
+			if (document.visibilityState === 'visible' && !refreshing) {
+				void invalidate('app:missions');
+			}
+		}, FOLLOW_MS);
+		return () => clearInterval(poll);
+	});
 
 	async function refresh() {
 		refreshing = true;
@@ -94,8 +121,7 @@
 	<PageHeader
 		title="Missions"
 		{meta}
-		meta_label="{shown.length} of {data.missions
-			.length} runs across all projects, {working} working, {loops_running} loops running"
+		meta_label="{shown.length} of {missions.length} runs across all projects, {working} working, {loops_running} loops running"
 		onrefresh={refresh}
 		{refreshing}
 	>
@@ -120,7 +146,21 @@
 		{/snippet}
 	</PageHeader>
 
-	{#if data.error}
+	{#if stale}
+		<div class="banner banner-warn" role="status">
+			<i class="dot dot-in_progress" style="margin-top:5px" aria-hidden="true"></i>
+			<div class="banner-bd">
+				<b>These statuses may be out of date.</b>
+				<div class="mt-2">The list could not be refreshed: {data.error}</div>
+			</div>
+			<div class="banner-acts">
+				<button class="btn btn-sm" type="button" onclick={refresh} disabled={refreshing}
+					>Retry now</button
+				>
+			</div>
+		</div>
+	{/if}
+	{#if data.error && !stale}
 		<div class="banner banner-err" role="alert">
 			<i class="dot dot-blocked" style="margin-top:5px" aria-hidden="true"></i>
 			<div class="banner-bd">
@@ -131,7 +171,7 @@
 				<button class="btn btn-sm" type="button" onclick={refresh}>Retry now</button>
 			</div>
 		</div>
-	{:else if data.missions.length === 0}
+	{:else if missions.length === 0}
 		<EmptyState
 			title="No agent runs yet"
 			description="File, Tackle and agent threads land here, one row per run."
@@ -145,7 +185,7 @@
 			title={kind === 'loop' ? 'No loops in these runs' : 'No one-shot runs in these runs'}
 			description="The filter shows {MISSION_KIND_LABEL[
 				kind
-			].toLowerCase()} only, from the latest {data.missions.length} runs."
+			].toLowerCase()} only, from the latest {missions.length} runs."
 		>
 			{#snippet actions()}
 				<button class="btn btn-sm" type="button" onclick={() => (kind = 'all')}

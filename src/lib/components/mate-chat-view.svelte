@@ -31,6 +31,7 @@
 	import WarningCircleIcon from 'phosphor-svelte/lib/WarningCircleIcon';
 	import CommandIcon from 'phosphor-svelte/lib/CommandIcon';
 	import CopyIcon from 'phosphor-svelte/lib/CopyIcon';
+	import GitPullRequestIcon from 'phosphor-svelte/lib/GitPullRequestIcon';
 	import SquareIcon from 'phosphor-svelte/lib/SquareIcon';
 	import SteeringWheelIcon from 'phosphor-svelte/lib/SteeringWheelIcon';
 	import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
@@ -47,7 +48,9 @@
 		placeChatMissions,
 		placeMateRows,
 		prettyJson,
+		TOOL_RUN_FOLD,
 		toolActivity,
+		toolRunSummary,
 		type MateBubble,
 		type MatePart,
 		type MateRole
@@ -56,6 +59,7 @@
 	import { currentViewer } from '#lib/client/projects.svelte.js';
 	import type { MateChat } from '#lib/mate.js';
 	import { app_state } from '#lib/client/stores.svelte.js';
+	import { isSafeRunUrl } from '#lib/client/agent.js';
 	import { run_place } from '#lib/client/agent-runner.svelte.js';
 	import { agentChoiceLine } from '#lib/client/agent-choice.js';
 
@@ -89,6 +93,8 @@
 	let delete_button = $state<HTMLButtonElement | null>(null);
 	let keep_button = $state<HTMLButtonElement | null>(null);
 	let follow_latest = $state(true);
+	/** How many rows there were when the reader scrolled up, to count what is new. */
+	let rows_seen = $state(0);
 	let textarea = $state<HTMLTextAreaElement | null>(null);
 	let log_el = $state<HTMLDivElement | null>(null);
 	let copied = $state<string | null>(null);
@@ -188,12 +194,42 @@
 		}
 	}
 
+	/** Messages that arrived since the reader scrolled up into the history. */
+	const unseen = $derived(follow_latest ? 0 : Math.max(0, rows.length - rows_seen));
+
 	function jumpToLatest() {
 		follow_latest = true;
 		log_el?.scrollTo({ top: log_el.scrollHeight });
 	}
+	let last_top = 0;
 	function trackScroll() {
-		if (log_el) follow_latest = log_el.scrollHeight - log_el.scrollTop - log_el.clientHeight < 64;
+		if (!log_el) return;
+		const top = log_el.scrollTop;
+		const gap = log_el.scrollHeight - top - log_el.clientHeight;
+		// Any move up is the reader leaving, however small: waiting for the
+		// threshold lets the next streamed line snap a slow drag back down.
+		// (A gap this small is the list shrinking, not a scroll.)
+		const left = gap >= 64 || (top < last_top - 1 && gap > 4);
+		last_top = top;
+		if (follow_latest && left) rows_seen = rows.length;
+		follow_latest = !left;
+	}
+
+	/** Composer focus after a failed message's action removed the button pressed. */
+	function focusComposer() {
+		void tick().then(() => textarea?.focus());
+	}
+	function retrySend(item: PendingMessage) {
+		mate_chats.retry(chat.id, item);
+		focusComposer();
+	}
+	function editSend(item: PendingMessage) {
+		mate_chats.recall(chat.id, item);
+		focusComposer();
+	}
+	function discardSend(item: PendingMessage) {
+		mate_chats.discard(item);
+		focusComposer();
 	}
 
 	// Stay pinned to the bottom when the transcript or its viewport changes
@@ -271,6 +307,30 @@
 
 <svelte:window onkeydowncapture={confirmKeydown} />
 
+<!-- The agent's own steps: a quiet chip each. Only a step still running or
+     one that did not finish says so; a done step is just its name. -->
+{#snippet toolChips(items: ToolPart[])}
+	<ul class="tools" aria-label="Tool calls">
+		{#each items as tool (tool.id)}
+			<li
+				class="tool"
+				class:is-running={tool.status === 'running'}
+				class:is-failed={tool.status === 'failed'}
+				class:is-stopped={tool.status === 'stopped'}
+			>
+				{#if tool.status === 'running'}<i class="act-dot" aria-hidden="true"></i>
+				{:else if tool.status === 'failed'}<WarningCircleIcon size={12} aria-hidden="true" />
+				{:else if tool.status === 'stopped'}<MinusCircleIcon size={12} aria-hidden="true" />{/if}
+				<code>{tool.name}</code>
+				{#if tool.status === 'failed' || tool.status === 'stopped'}<span class="tool-status"
+						>{tool.status}</span
+					>{/if}
+				<span class="sr-only">, {TOOL_STATE[tool.status]}</span>
+			</li>
+		{/each}
+	</ul>
+{/snippet}
+
 <section class="chat" aria-label={chat.title}>
 	<header class="chat-hd">
 		<button
@@ -314,10 +374,15 @@
 	</header>
 
 	{#if confirming_delete}
-		<div class="delete-confirm">
-			<p>Delete this chat and stop its session? Its saved messages will be removed.</p>
-			{#if delete_error}<p class="err" role="alert">{delete_error}</p>{/if}
-			<div class="confirm-actions">
+		<div class="banner banner-err delete-confirm" role="group" aria-label="Delete this chat">
+			<div class="banner-bd">
+				<p>
+					<b>Delete this chat?</b> Its session stops and its saved messages are removed. This cannot be
+					undone.
+				</p>
+				{#if delete_error}<p class="err" role="alert">{delete_error}</p>{/if}
+			</div>
+			<div class="banner-acts">
 				<button
 					class="btn btn-sm btn-danger"
 					type="button"
@@ -357,16 +422,27 @@
 				<li class="note">No messages yet. Send a message to start this conversation.</li>
 			{/if}
 			{#if !connected}
-				<li class="note">No model is connected yet. Replies are placeholders.</li>
+				<li class="notice">
+					<p class="banner banner-warn">
+						<span class="banner-bd"
+							><b>No model is connected.</b> Messages are saved, and each gets a placeholder reply.</span
+						>
+					</p>
+				</li>
 			{/if}
 			{#if mate_chats.open_error}
-				<li class="note err" role="alert">
-					{mate_chats.open_error}
-					<button
-						class="btn btn-sm btn-ghost"
-						type="button"
-						onclick={() => void mate_chats.open(chat.id)}>Retry loading</button
-					>
+				<li class="notice">
+					<div class="banner banner-err" role="alert">
+						<div class="banner-bd">
+							<b>Could not load this conversation.</b>
+							{mate_chats.open_error}
+						</div>
+						<div class="banner-acts">
+							<button class="btn btn-sm" type="button" onclick={() => void mate_chats.open(chat.id)}
+								>Retry loading</button
+							>
+						</div>
+					</div>
 				</li>
 			{/if}
 
@@ -413,19 +489,29 @@
 						{#if row.kind === 'pending'}
 							<p class="body is-pending">{row.item.text}</p>
 							{#if row.item.error}
-								<p class="err" role="alert">
-									Not sent: {row.item.error}
-									<button
-										class="link-btn"
-										type="button"
-										onclick={() => mate_chats.retry(chat.id, row.item)}>Retry</button
-									>
-									<button
-										class="link-btn"
-										type="button"
-										onclick={() => mate_chats.discard(row.item)}>Discard</button
-									>
-								</p>
+								<div class="not-sent">
+									<p class="err" role="alert">
+										<WarningCircleIcon size={13} aria-hidden="true" />
+										<span><b>Not sent.</b> {row.item.error}</span>
+									</p>
+									<div class="not-sent-acts">
+										<button class="link-btn" type="button" onclick={() => retrySend(row.item)}
+											>Retry</button
+										>
+										<button
+											class="link-btn"
+											type="button"
+											aria-label="Edit this message in the composer"
+											onclick={() => editSend(row.item)}>Edit</button
+										>
+										<button
+											class="link-btn"
+											type="button"
+											aria-label="Discard this message"
+											onclick={() => discardSend(row.item)}>Discard</button
+										>
+									</div>
+								</div>
 							{:else}
 								<p class="sending">{row.item.event_id ? 'Sent' : 'Sending…'}</p>
 							{/if}
@@ -520,28 +606,42 @@
 											{/each}
 										</ul>
 									{:else if part.kind === 'tools'}
-										<ul class="tools" aria-label="Tool calls">
-											{#each part.items as tool (tool.id)}
-												{#if tool.kind === 'tool'}
-													<li
-														class="tool"
-														class:is-running={tool.status === 'running'}
-														class:is-failed={tool.status === 'failed'}
+										{#if part.items.length > TOOL_RUN_FOLD}
+											{@const summary = toolRunSummary(part.items)}
+											<details class="tool-run">
+												<summary>
+													<CaretRightIcon class="act-caret" size={11} aria-hidden="true" />
+													<span class="tool-run-n">{part.items.length} tool calls</span>
+													<span class="tool-run-counts"
+														>{summary.counts
+															.slice(0, 3)
+															.map((item) => `${item.name} ${item.count}`)
+															.join(' · ')}{summary.counts.length > 3 ? ' …' : ''}</span
 													>
-														<code>{tool.name}</code>
-														<span class="tool-status">{tool.status}</span>
-													</li>
-												{/if}
-											{/each}
-										</ul>
+													{#if summary.failed > 0}<span class="tool-run-bad"
+															>{summary.failed} failed</span
+														>{/if}
+													{#if summary.running}<span class="tool-run-now"
+															><i class="act-dot" aria-hidden="true"></i>{summary.running}</span
+														>{/if}
+												</summary>
+												{@render toolChips(part.items)}
+											</details>
+										{:else}
+											{@render toolChips(part.items)}
+										{/if}
 									{:else if part.kind === 'error'}
 										<p class="err" role="status">{part.message}</p>
 									{/if}
 								{/each}
-								{#if row.bubble.result?.git_pr_url}
+								{#if isSafeRunUrl(row.bubble.result?.git_pr_url)}
 									<p class="pr">
-										<a href={row.bubble.result.git_pr_url} target="_blank" rel="noopener noreferrer"
-											>Pull request</a
+										<a
+											class="btn btn-sm"
+											href={row.bubble.result?.git_pr_url}
+											target="_blank"
+											rel="noopener noreferrer"
+											><GitPullRequestIcon size={13} aria-hidden="true" />Pull request</a
 										>
 									</p>
 								{/if}
@@ -598,24 +698,20 @@
 				</li>
 			{/if}
 			{#if mate_chats.missions_error && mate_chats.missions.length === 0 && !mate_chats.opening}
-				<li class="note err" role="status">
-					Could not load the missions this chat started. {mate_chats.missions_error}
-					<button
-						class="btn btn-sm btn-ghost"
-						type="button"
-						onclick={() => void mate_chats.loadMissions(chat.id)}>Retry</button
-					>
-				</li>
-			{/if}
-
-			{#if mate_chats.stream_error}
-				<li class="note err" role="status">
-					{mate_chats.stream_error}
-					<button
-						class="btn btn-sm btn-ghost"
-						type="button"
-						onclick={() => void mate_chats.open(chat.id)}>Reconnect</button
-					>
+				<li class="notice">
+					<div class="banner banner-err" role="status">
+						<div class="banner-bd">
+							<b>Could not load the missions this chat started.</b>
+							{mate_chats.missions_error}
+						</div>
+						<div class="banner-acts">
+							<button
+								class="btn btn-sm"
+								type="button"
+								onclick={() => void mate_chats.loadMissions(chat.id)}>Retry</button
+							>
+						</div>
+					</div>
 				</li>
 			{/if}
 		</ol>
@@ -623,11 +719,28 @@
 
 	<div class="dock">
 		{#if !follow_latest}
-			<div class="older">
-				<span class="older-lbl">Viewing older messages</span>
+			<div class="older" class:has-new={unseen > 0}>
+				<span class="older-lbl"
+					>{unseen > 0
+						? `${unseen} new ${unseen === 1 ? 'message' : 'messages'} below`
+						: 'Viewing older messages'}</span
+				>
 				<button class="btn btn-sm btn-ghost" type="button" onclick={jumpToLatest}>
 					Jump to latest <ArrowDownIcon size={12} aria-hidden="true" />
 				</button>
+			</div>
+		{/if}
+		{#if mate_chats.stream_lost}
+			<div class="banner banner-err dock-banner" role="alert">
+				<div class="banner-bd">
+					<b>{mate_chats.stream_error}</b> First Mate keeps working on its runner; reconnect to catch
+					up on what it said.
+				</div>
+				<div class="banner-acts">
+					<button class="btn btn-sm" type="button" onclick={() => void mate_chats.open(chat.id)}
+						>Reconnect</button
+					>
+				</div>
 			</div>
 		{/if}
 		{#if mate_chats.action_error}
@@ -687,6 +800,10 @@
 		</ChatComposer>
 		<p class="activity" role="status">
 			{#if mate_chats.scope_saving}Saving scope…
+			{:else if mate_chats.stream_error && !mate_chats.stream_lost}<span
+					class="chat-dots"
+					aria-hidden="true"><i></i><i></i><i></i></span
+				>{mate_chats.stream_error}
 			{:else if mate_chats.interrupt_requested}Stop requested. Waiting for the turn to finish.
 			{:else if working}<span class="chat-dots" aria-hidden="true"><i></i><i></i><i></i></span>First
 				Mate is working…{/if}
@@ -749,14 +866,22 @@
 		color: var(--tx-dim);
 		white-space: nowrap;
 	}
-	.delete-confirm {
-		display: flex;
+	/* The shared banner, wrapping its actions under the text when narrow. */
+	.delete-confirm,
+	.notice .banner,
+	.dock-banner {
 		flex-wrap: wrap;
 		align-items: center;
-		gap: var(--s-2) var(--s-4);
-		padding: var(--s-3) 0;
-		border-bottom: 1px solid var(--line);
-		font-size: var(--t-sm);
+	}
+	.delete-confirm {
+		margin-top: var(--s-2);
+	}
+	.delete-confirm .banner-bd,
+	.notice .banner-bd,
+	.dock-banner .banner-bd {
+		display: grid;
+		gap: 4px;
+		min-width: min(32ch, 100%);
 	}
 	.delete-confirm p {
 		margin: 0;
@@ -764,10 +889,6 @@
 	.chat-term {
 		padding: var(--s-2) 0;
 		border-bottom: 1px solid var(--line);
-	}
-	.confirm-actions {
-		display: flex;
-		gap: var(--s-2);
 	}
 
 	/* ---- transcript */
@@ -785,6 +906,15 @@
 		margin: 0;
 		padding: var(--s-4) 0 var(--s-3);
 		list-style: none;
+	}
+	/* Chat-level states (no model, failed loads) read as the app's banners,
+	   lined up with the messages rather than the avatars. */
+	.notice {
+		margin: 0 0 var(--s-3);
+		padding-left: calc(var(--gutter) + var(--s-3));
+	}
+	.notice .banner {
+		margin: 0;
 	}
 	.note {
 		margin: 0 0 var(--s-3);
@@ -928,6 +1058,34 @@
 	.body.is-pending {
 		color: var(--tx-mid);
 	}
+	.not-sent {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 2px var(--s-3);
+		margin-top: 2px;
+	}
+	.not-sent .err {
+		display: flex;
+		align-items: baseline;
+		gap: 5px;
+		min-width: 0;
+		overflow-wrap: anywhere;
+	}
+	.not-sent .err :global(svg) {
+		flex: none;
+		align-self: center;
+	}
+	.not-sent .err b {
+		font-weight: 600;
+	}
+	.not-sent-acts {
+		display: flex;
+		gap: var(--s-3);
+	}
+	.not-sent-acts .link-btn {
+		margin-left: 0;
+	}
 	.sending {
 		margin: 2px 0 0;
 		font-size: var(--t-xs);
@@ -992,8 +1150,8 @@
 	}
 	.tool {
 		display: inline-flex;
-		align-items: baseline;
-		gap: 6px;
+		align-items: center;
+		gap: 5px;
 		min-width: 0;
 		max-width: 100%;
 		padding: 1px 6px;
@@ -1009,9 +1167,70 @@
 	}
 	.tool.is-failed {
 		border-color: var(--danger-line);
+		color: var(--danger-tx);
 	}
 	.tool.is-failed .tool-status {
 		color: var(--danger-tx);
+	}
+	.tool.is-stopped {
+		color: var(--tx-dim);
+	}
+	.tool :global(svg) {
+		flex: none;
+	}
+	/* A long run folded to one line: how many steps, which tools, and what
+	   is running now, so a busy turn stays readable around the reply. */
+	.tool-run > summary {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 2px var(--s-2);
+		width: fit-content;
+		max-width: 100%;
+		min-height: 28px;
+		margin: -4px 0 -4px -4px;
+		padding: 0 4px;
+		border-radius: var(--r-2);
+		font-size: var(--t-xs);
+		color: var(--tx-dim);
+		list-style: none;
+		cursor: pointer;
+	}
+	.tool-run > summary::-webkit-details-marker {
+		display: none;
+	}
+	.tool-run > summary:hover {
+		background: var(--s2);
+		color: var(--tx-mid);
+	}
+	.tool-run > summary :global(.act-caret) {
+		flex: none;
+		transition: transform 120ms ease-out;
+	}
+	.tool-run[open] > summary :global(.act-caret) {
+		transform: rotate(90deg);
+	}
+	.tool-run[open] > .tools {
+		margin-top: 6px;
+	}
+	.tool-run-n {
+		font-weight: 600;
+		color: var(--tx-mid);
+	}
+	.tool-run-counts {
+		min-width: 0;
+		font-family: var(--font-mono);
+		overflow-wrap: anywhere;
+	}
+	.tool-run-bad {
+		color: var(--danger-tx);
+	}
+	.tool-run-now {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		font-family: var(--font-mono);
+		color: var(--tx-hi);
 	}
 	.tool code {
 		font-family: var(--font-mono);
@@ -1187,7 +1406,9 @@
 	}
 	.pr {
 		margin: 0;
-		font-size: var(--t-sm);
+	}
+	.pr .btn {
+		gap: 5px;
 	}
 
 	/* ---- dock: older-messages bar, composer, activity line */
@@ -1208,6 +1429,10 @@
 		font-size: var(--t-xs);
 		color: var(--tx-mid);
 	}
+	.older.has-new {
+		color: var(--tx-hi);
+		font-weight: 600;
+	}
 	.older-lbl {
 		min-width: 0;
 		overflow: hidden;
@@ -1217,7 +1442,8 @@
 	.cmd {
 		gap: 5px;
 	}
-	.dock-err {
+	.dock-err,
+	.dock-banner {
 		margin-bottom: var(--s-2);
 	}
 	.dock :global(.composer.is-compact) {
@@ -1237,7 +1463,8 @@
 
 	@media (pointer: coarse) {
 		.chat :global(.btn-sm),
-		.thinking summary {
+		.thinking summary,
+		.tool-run > summary {
 			min-height: 44px;
 		}
 		.link-btn {
@@ -1279,6 +1506,9 @@
 		}
 		.act-dot {
 			animation: none;
+		}
+		.tool-run > summary :global(.act-caret) {
+			transition: none;
 		}
 	}
 </style>

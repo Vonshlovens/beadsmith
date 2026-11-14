@@ -32,8 +32,7 @@ with `useHotkeys` (`src/lib/client/hotkeys.svelte.ts`), and
 | `g c` | Console                                          |
 | `g t` | Todos (admins)                                   |
 
-`/` itself opens your own work: Todos for admins, First Mate for everyone
-else.
+`/` itself opens First Mate.
 
 ## Command palette
 
@@ -244,3 +243,7 @@ has a **Commands** button.
 | `n`       | New chat                       |
 | `j` / `k` | Next / previous chat or thread |
 | `Esc`     | Close the chat or thread       |
+
+On a touch screen with no pointer, Enter starts a new line, because an
+on-screen keyboard has no Shift+Enter: send with the **Send** button (or
+`⌘Enter` from a hardware keyboard). `n` is live only when you can chat.

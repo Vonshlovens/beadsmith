@@ -11,7 +11,9 @@ import {
 	placeChatMissions,
 	placeMateRows,
 	prettyJson,
+	streamRetryDelay,
 	toolActivity,
+	toolRunSummary,
 	touchesCrewCalls,
 	touchesMissions
 } from './mate-chat';
@@ -408,5 +410,41 @@ describe('prettyJson', () => {
 	it('indents JSON and leaves other text alone', () => {
 		expect(prettyJson('{"a":1}')).toBe('{\n  "a": 1\n}');
 		expect(prettyJson('Launch limit reached.')).toBe('Launch limit reached.');
+	});
+});
+
+describe('toolRunSummary', () => {
+	it('counts calls by name, most used first, ties in first-use order', () => {
+		const summary = toolRunSummary([
+			{ name: 'Read', status: 'completed' },
+			{ name: 'Bash', status: 'completed' },
+			{ name: 'Bash', status: 'failed' },
+			{ name: 'Edit', status: 'stopped' },
+			{ name: 'Read', status: 'completed' },
+			{ name: 'Grep', status: 'running' }
+		]);
+		expect(summary.counts).toEqual([
+			{ name: 'Read', count: 2 },
+			{ name: 'Bash', count: 2 },
+			{ name: 'Edit', count: 1 },
+			{ name: 'Grep', count: 1 }
+		]);
+		expect(summary).toMatchObject({ running: 'Grep', failed: 1, stopped: 1 });
+	});
+
+	it('names nothing running once every call has finished', () => {
+		expect(toolRunSummary([{ name: 'Read', status: 'completed' }]).running).toBeUndefined();
+	});
+});
+
+describe('streamRetryDelay', () => {
+	it('backs off between reconnects, then stops', () => {
+		const delays: number[] = [];
+		for (let attempt = 0; streamRetryDelay(attempt) !== undefined; attempt += 1) {
+			delays.push(streamRetryDelay(attempt)!);
+		}
+		expect(delays.length).toBeGreaterThan(2);
+		expect(delays).toEqual([...delays].sort((a, b) => a - b));
+		expect(delays.reduce((sum, delay) => sum + delay, 0)).toBeGreaterThanOrEqual(30_000);
 	});
 });

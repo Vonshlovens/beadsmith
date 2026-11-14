@@ -2,10 +2,16 @@
 	/**
 	 * The message box for First Mate chats and agent threads: a bordered
 	 * textarea with a row of controls under it. Enter sends, Shift+Enter starts
-	 * a new line, and ⌘/Ctrl+Enter also sends. When the box cannot take a
-	 * message, `reason` says why in place of the hint.
+	 * a new line, and ⌘/Ctrl+Enter also sends. On a touch-only screen Enter
+	 * starts a new line instead (an on-screen keyboard has no Shift+Enter) and
+	 * the Send button sends. When the box cannot take a message, `reason` says
+	 * why in place of the hint.
+	 *
+	 * A message over `max_chars` is kept whole and refused with a count, rather
+	 * than cut short by `maxlength` the moment it is pasted.
 	 */
 	import type { Snippet } from 'svelte';
+	import { MediaQuery } from 'svelte/reactivity';
 	import ArrowUpIcon from 'phosphor-svelte/lib/ArrowUpIcon';
 	import { MAX_MESSAGE_CHARS } from '#lib/client/mate-chat.js';
 
@@ -21,6 +27,8 @@
 		/** A send is in flight. */
 		busy?: boolean;
 		submit_label?: string;
+		/** Longest message the receiver takes. */
+		max_chars?: number;
 		textarea?: HTMLTextAreaElement | null;
 		onsend: (text: string) => void;
 		/** Left of the footer: context, mode, commands. */
@@ -39,6 +47,7 @@
 		reason,
 		busy = false,
 		submit_label = 'Send',
+		max_chars = MAX_MESSAGE_CHARS,
 		textarea = $bindable(null),
 		onsend,
 		controls,
@@ -47,7 +56,27 @@
 	}: Props = $props();
 
 	const hint_id = $props.id();
-	const can_send = $derived(!disabled && !busy && (value ?? '').trim().length > 0);
+	/** A phone or tablet without a pointer: Enter is the keyboard's only line break. */
+	const touch_only = new MediaQuery('(hover: none) and (pointer: coarse)', false);
+
+	// Trimmed, as the server counts it: trailing blank lines are not over the limit.
+	const length = $derived((value ?? '').trim().length);
+	const over = $derived(length - max_chars);
+	/** Show the count once it is worth watching, not on every short message. */
+	const show_count = $derived(length >= max_chars * 0.9);
+	const can_send = $derived(!disabled && !busy && over <= 0 && (value ?? '').trim().length > 0);
+
+	// Browsers without `field-sizing` (Firefox today) keep a fixed-height box;
+	// grow it with the text instead, up to the CSS max-height.
+	const grows_natively =
+		typeof CSS !== 'undefined' && CSS.supports?.('field-sizing', 'content') === true;
+	$effect(() => {
+		void value;
+		const el = textarea;
+		if (grows_natively || el === null) return;
+		el.style.height = 'auto';
+		el.style.height = `${el.scrollHeight}px`;
+	});
 
 	function submit(event?: SubmitEvent) {
 		event?.preventDefault();
@@ -57,36 +86,56 @@
 	}
 
 	function onKeydown(event: KeyboardEvent) {
-		if (event.key !== 'Enter' || event.isComposing || event.shiftKey || event.altKey) {
-			return;
-		}
+		// keyCode 229: Safari reports the Enter that confirms an IME candidate
+		// with `isComposing` already false.
+		if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+		if (event.shiftKey || event.altKey) return;
+		const modified = event.metaKey || event.ctrlKey;
+		if (touch_only.current && !modified) return;
 		event.preventDefault();
 		submit();
 	}
 </script>
 
-<form class="composer {class_name}" class:is-disabled={disabled} onsubmit={submit}>
+<form class="composer {class_name}" class:is-disabled={disabled} aria-busy={busy} onsubmit={submit}>
 	<textarea
 		bind:this={textarea}
 		bind:value
 		class="composer-in"
 		{rows}
-		maxlength={MAX_MESSAGE_CHARS}
 		aria-label={label}
 		aria-describedby={hint_id}
+		aria-invalid={over > 0 ? 'true' : undefined}
+		enterkeyhint={touch_only.current ? 'enter' : 'send'}
 		placeholder={disabled ? '' : placeholder}
 		{disabled}
 		onkeydown={onKeydown}></textarea>
 	<div class="composer-ft">
 		{@render controls?.()}
 		<span class="spacer"></span>
-		{#if disabled && reason}
-			<span id={hint_id} class="why">{reason}</span>
-		{:else}
-			<span id={hint_id} class="hint-keys"
-				><span class="kbd">⏎</span> send <span class="kbd">⇧⏎</span> new line</span
-			>
-		{/if}
+		<span id={hint_id} class="composer-hint">
+			{#if disabled && reason}
+				<span class="why">{reason}</span>
+			{:else if over > 0}
+				<span class="count is-over mono-num"
+					>{length.toLocaleString()} / {max_chars.toLocaleString()} · shorten by {over.toLocaleString()}</span
+				>
+			{:else}
+				{#if show_count}
+					<span class="count mono-num"
+						>{length.toLocaleString()} / {max_chars.toLocaleString()}</span
+					>
+				{/if}
+				{#if touch_only.current}
+					<span class="sr-only">Use the {submit_label} button to send.</span>
+				{:else}
+					<span class="hint-keys" aria-hidden="true"
+						><span class="kbd">⏎</span> send <span class="kbd">⇧⏎</span> new line</span
+					>
+					<span class="sr-only">Enter sends, Shift+Enter starts a new line.</span>
+				{/if}
+			{/if}
+		</span>
 		{@render actions?.()}
 		<button class="btn btn-sm btn-primary send" type="submit" disabled={!can_send}>
 			{busy ? 'Sending…' : submit_label}
@@ -108,6 +157,9 @@
 	}
 	.composer:focus-within {
 		border-color: var(--tx-hi);
+	}
+	.composer:has(.composer-in[aria-invalid='true']) {
+		border-color: var(--danger);
 	}
 	.composer.is-disabled {
 		background: var(--s1);
@@ -143,10 +195,17 @@
 	.spacer {
 		flex: 1;
 	}
-	.hint-keys,
-	.why {
+	.composer-hint {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--s-2);
+		min-width: 0;
 		font-size: var(--t-xs);
 		color: var(--tx-dim);
+	}
+	.count.is-over {
+		color: var(--danger-tx);
+		font-weight: 600;
 	}
 	.hint-keys .kbd {
 		margin-left: 4px;
