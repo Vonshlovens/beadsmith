@@ -13,6 +13,9 @@ let
     mkdir -p $out/src/lib/server/dispatch
     cp ${../../../src/lib/server/dispatch/sanitize.ts} $out/src/lib/server/dispatch/sanitize.ts
     cp ${../../../src/lib/mission-events.ts} $out/src/lib/mission-events.ts
+    # The terminal attach relay (ADR-0021 rule 4); its other imports are types only.
+    mkdir -p $out/src/lib/server/terminal-relay
+    cp ${../../../src/lib/server/terminal-relay/relay.ts} $out/src/lib/server/terminal-relay/relay.ts
     echo '{"type":"module"}' > $out/package.json
   '';
   knownHosts = pkgs.writeText "mate-known-hosts" "${net.guestAddress} ${net.hostKey}\n";
