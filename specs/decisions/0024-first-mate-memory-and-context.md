@@ -114,6 +114,9 @@ message saying what to do, never truncated.
 | Recall tool | 25 results, within the crew tools' existing result cap, with the total match count |
 | Sliding threshold | a turn ends with 100,000 or more live context tokens (input, cache read and cache creation of its last assistant message), half a 200k window, well before Claude Code's own compaction |
 | Carry-over note | 8,000 characters |
+| Meta file | 20,000 characters, so one crew tool result holds it whole |
+| Meta files per owner | 200, and 1,000,000 characters in all |
+| Meta path | 200 characters, 8 `/`-separated parts of `[A-Za-z0-9._-]`, none starting with a dot |
 
 ## Consequences
 
@@ -163,8 +166,14 @@ table `mate_memories` with FTS5 index `mate_memories_fts`) and the
 `remember`, `recall` and `forget` crew tools
 ([`src/lib/server/crew/memory-tools.ts`](../../src/lib/server/crew/memory-tools.ts)).
 A write is one guarded upsert, so the limits hold against concurrent
-writes. Not yet: per-turn recall, the meta folder, sliding windows and the
-owner's page. Expected places for the rest: a store beside
+writes. The meta folder
+([`src/lib/server/mate/meta-store.ts`](../../src/lib/server/mate/meta-store.ts),
+table `mate_meta_files`) and its `meta_list`, `meta_read`, `meta_write`,
+`meta_move` and `meta_delete` crew tools
+([`src/lib/server/crew/meta-tools.ts`](../../src/lib/server/crew/meta-tools.ts));
+`meta_read` returns the file as plain text (`CrewText`) rather than JSON, so
+it is not cut field by field. Not yet: per-turn recall, sliding windows and
+the owner's page. Expected places for the rest: a store beside
 [`src/lib/server/mate/store.ts`](../../src/lib/server/mate/store.ts); tools
 in [`src/lib/server/crew/`](../../src/lib/server/crew/); recall in the turn
 context built for each message (shared with the tagged turn context work);

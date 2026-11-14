@@ -14,6 +14,7 @@ import { safeError } from '../security.js';
 import { READ_TOOLS } from './read-tools.js';
 import { WRITE_TOOLS } from './write-tools.js';
 import { MEMORY_TOOLS } from './memory-tools.js';
+import { META_TOOLS } from './meta-tools.js';
 import {
 	boundedJson,
 	CrewToolError,
@@ -23,7 +24,12 @@ import {
 } from './registry.js';
 
 /** Every crew tool, in the order `tools/list` returns them. */
-export const CREW_TOOLS: CrewTool[] = [...READ_TOOLS, ...WRITE_TOOLS, ...MEMORY_TOOLS];
+export const CREW_TOOLS: CrewTool[] = [
+	...READ_TOOLS,
+	...WRITE_TOOLS,
+	...MEMORY_TOOLS,
+	...META_TOOLS
+];
 
 /** Newest first; an `initialize` asking for another version gets the newest. */
 export const MCP_PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'] as const;

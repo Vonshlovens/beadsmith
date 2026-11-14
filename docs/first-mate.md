@@ -119,6 +119,7 @@ they refuse a click, with the same message.
 | Todos    | `create_todo`, `update_todo`, `complete_todo`, `route_todo`                                               | Changes the owner's todo list directly; `route_todo` files a todo with a mission. |
 | Missions | `file_issue`, `comment_issue`, `tackle_issue`, `discuss_issue`, `follow_up_mission`, `cancel_mission`     | Starts, continues or stops a mission on the default dispatch provider.            |
 | Memory   | `remember`, `recall`, `forget`                                                                            | The owner's memory, kept across chats ([below](#memory)).                         |
+| Meta     | `meta_list`, `meta_read`, `meta_write`, `meta_move`, `meta_delete`                                        | First Mate's own folder of text files, kept across chats ([below](#meta-folder)). |
 
 Beads itself only changes through missions: First Mate files and comments by
 starting a File or comment mission, whose agent runs `bd` in a sandbox of its
@@ -169,8 +170,25 @@ Limits (the ADR's Limits table): 500 characters per memory, keys of up to
 which at most 40 are `owner`-scoped, and 25 per recall. A write over a
 limit is refused with a message saying what to do; nothing is cut.
 
-Not yet shipped: memories added to each turn automatically, the meta
-folder, the sliding context window and a page to review and edit memories.
+### Meta folder
+
+First Mate also has a folder of its own: text files it organizes as it sees
+fit (notes, drafts, docs for itself, its own checklist), per account and
+kept across chats like memories. Folders are just path prefixes. `meta_write`
+creates, replaces or appends to a file; `meta_read` returns it whole as
+plain text; `meta_list` shows paths and sizes, optionally under one folder,
+with how much room is left; `meta_move` renames one file and `meta_delete`
+removes one. Work the admin would track still goes to Beads or the todo
+list, not only into a file.
+
+Paths are relative, `/`-separated parts of letters, digits, `.`, `_` and
+`-`, none starting with a dot, up to 200 characters and 8 parts. Limits:
+20,000 characters per file (one crew tool result holds it whole), 200 files
+and 1,000,000 characters per account. A write over a limit is refused.
+
+Not yet shipped: memories and the folder's index added to each turn
+automatically, the sliding context window and a page to review and edit
+memories and files.
 
 Mission tools need dispatch configured (`BDX_DISPATCH_PROVIDER`); without it
 they answer with the reason, and the read and todo tools still work. Chats on
@@ -179,7 +197,7 @@ setup until it gets a transport for the same tool module.
 
 ## What Beadsmith stores
 
-Four tables in `state.db` ([ADR-0004](../specs/decisions/0004-service-local-sqlite.md)):
+Five tables in `state.db` ([ADR-0004](../specs/decisions/0004-service-local-sqlite.md)):
 
 - `mate_chats`: id (`mc_` + 24 hex), owner account id, title, scope (a
   project id, or null for every project), the chat runner (`remote` or `e2b`;
@@ -202,6 +220,9 @@ Four tables in `state.db` ([ADR-0004](../specs/decisions/0004-service-local-sqli
   per owner), scope, body, the chat that last wrote it, and created,
   updated and last-recalled times, with an FTS5 index (`mate_memories_fts`)
   for recall. Deleting a chat leaves them.
+- `mate_meta_files`: First Mate's meta folder, per owner account: path,
+  content, the chat that last wrote it, and created and updated times.
+  Deleting a chat leaves them.
 
 The runner is the durable log of a chat. Beadsmith's copy lets a chat open
 without the runner and catch up from where it left off.

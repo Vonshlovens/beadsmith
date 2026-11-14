@@ -442,3 +442,20 @@ export const mateMemories = sqliteTable(
 		index('mate_memories_owner_scope').on(table.ownerId, table.scope, table.updatedAt)
 	]
 );
+
+/**
+ * First Mate's meta folder (ADR-0024 rule 5): text files per owner account,
+ * keyed by path. Keep in step with `META_SCHEMA_SQL` in `mate/meta-store.ts`.
+ */
+export const mateMetaFiles = sqliteTable(
+	'mate_meta_files',
+	{
+		ownerId: text('owner_id').notNull(),
+		path: text('path').notNull(),
+		content: text('content').notNull(),
+		sourceChatId: text('source_chat_id'),
+		createdAt: text('created_at').notNull(),
+		updatedAt: text('updated_at').notNull()
+	},
+	(table) => [primaryKey({ columns: [table.ownerId, table.path] })]
+);

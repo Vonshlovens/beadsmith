@@ -12,6 +12,7 @@ import type { ReadDeps } from '../read-model.js';
 import type { DispatchDeps } from '../dispatch/service.js';
 import type { TodoStore } from '../todos/store.js';
 import type { MemoryStore } from '../mate/memory-store.js';
+import type { MetaStore } from '../mate/meta-store.js';
 import type { Project } from '#lib/types.js';
 import type { LaunchLimiter } from './launch-limit.js';
 
@@ -47,6 +48,8 @@ export interface CrewDeps {
 	todos?: () => Promise<TodoStore>;
 	/** The owner's First Mate memories (ADR-0024). */
 	memories?: () => Promise<MemoryStore>;
+	/** The owner's First Mate meta folder (ADR-0024). */
+	meta?: () => Promise<MetaStore>;
 	/** Per-chat cap on mission launches; defaults to the env-configured one. */
 	launch_limiter?: LaunchLimiter;
 }
@@ -91,6 +94,15 @@ export class CrewToolError extends Error {
 	}
 }
 
+/**
+ * A tool result sent as plain text rather than JSON, for content the model
+ * should get whole (a meta file), which `boundedJson` would cut field by
+ * field. Still bounded by `RESULT_MAX_CHARS`.
+ */
+export class CrewText {
+	constructor(readonly text: string) {}
+}
+
 /** Longest single string field a tool returns before it is cut. */
 export const FIELD_MAX_CHARS = 2_000;
 /** Longest serialised tool result; past this, fields are cut harder. */
@@ -126,6 +138,13 @@ function boundStrings(value: unknown, max: number): unknown {
  * @param value JSON value from a handler.
  */
 export function boundedJson(value: unknown): string {
+	if (value instanceof CrewText) {
+		return value.text.length <= RESULT_MAX_CHARS
+			? value.text
+			: `${value.text.slice(0, RESULT_MAX_CHARS)}… [result truncated: ${
+					value.text.length - RESULT_MAX_CHARS
+				} more chars]`;
+	}
 	for (const max of [FIELD_MAX_CHARS, 500, 160]) {
 		const text = JSON.stringify(boundStrings(value, max)) ?? 'null';
 		if (text.length <= RESULT_MAX_CHARS) return text;
