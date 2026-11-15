@@ -16,11 +16,12 @@ import { discoverProjects, resolveProject } from '../discovery.js';
 import { listProjectIssues, type IssueFilters, type ReadDeps } from '../read-model.js';
 import { safeError } from '../security.js';
 import { GrownError } from './errors.js';
-import { label_schema, MAX_LIST_LIMIT, project_id_schema } from '../validation.js';
+import { label_schema, project_id_schema } from '../validation.js';
 import type { Project } from '#lib/types.js';
 import {
 	VIEW_GROUPS,
 	VIEW_PRESENTATIONS,
+	VIEW_LIMIT_MAX,
 	VIEW_SORTS,
 	type ViewIssue,
 	type ViewResult,
@@ -59,7 +60,7 @@ export const view_filters_schema = z.strictObject({
 	label: label_schema.optional(),
 	assignee: assignee_schema.optional(),
 	include_closed: z.boolean().optional(),
-	limit: z.number().int().min(1).max(MAX_LIST_LIMIT).optional()
+	limit: z.number().int().min(1).max(VIEW_LIMIT_MAX).optional()
 });
 
 export const view_spec_schema = z.strictObject({

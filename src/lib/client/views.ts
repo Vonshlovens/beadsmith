@@ -7,7 +7,14 @@ import { priorityName, STATUS_KEYS, statusKey, statusLabel } from '#lib/client/f
 import type { ListFilters } from '#lib/client/issue-list-cache.js';
 import type { IssueView } from '#lib/client/issue-view.js';
 import { GROWN_SLUG_MAX } from '#lib/grown.js';
-import type { ViewGroup, ViewIssue, ViewSort, ViewSpecShape } from '#lib/views.js';
+import {
+	VIEW_LIMIT_MAX,
+	type ViewGroup,
+	type ViewIssue,
+	type ViewPresentation,
+	type ViewSort,
+	type ViewSpecShape
+} from '#lib/views.js';
 
 export interface ViewIssueGroup {
 	key: string;
@@ -15,7 +22,7 @@ export interface ViewIssueGroup {
 	issues: ViewIssue[];
 }
 
-const SORT_LABEL: Record<ViewSort, string> = {
+export const SORT_LABEL: Record<ViewSort, string> = {
 	updated: 'Recently updated',
 	created: 'Newest',
 	priority: 'Priority',
@@ -266,4 +273,143 @@ export function slugFromName(name: string): string {
 		.replace(/^-+|-+$/g, '')
 		.slice(0, GROWN_SLUG_MAX)
 		.replace(/-+$/, '');
+}
+
+/*
+ * The filter vocabulary the project page's filter menus offer, which the view
+ * editor on `/views/<slug>` offers too, so a filter means the same thing in
+ * both places. A view written by First Mate may name a status or type outside
+ * these (a project's custom status); the editor keeps such values as extra
+ * choices rather than dropping them (`filterChoices`).
+ */
+export const FILTER_STATUSES = [
+	'open',
+	'in_progress',
+	'blocked',
+	'deferred',
+	'closed',
+	'pinned',
+	'hooked'
+] as const;
+export const FILTER_TYPES = ['bug', 'feature', 'task', 'epic', 'chore'] as const;
+export const FILTER_PRIORITIES = [0, 1, 2, 3, 4] as const;
+
+/** The scope select's value for "every project"; project ids start with `d_`. */
+export const ALL_PROJECTS = '*';
+
+/**
+ * A view's spec as the editor's fields hold it: text inputs as strings, the
+ * scope as one select value, no grouping as `'none'`.
+ */
+export interface ViewSpecForm {
+	scope: string;
+	status: string[];
+	type: string[];
+	priority: number[];
+	q: string;
+	label: string;
+	assignee: string;
+	include_closed: boolean;
+	/** Empty for the default row limit. */
+	limit: string;
+	sort: ViewSort;
+	presentation: ViewPresentation;
+	group_by: ViewGroup | 'none';
+}
+
+/**
+ * The editor's fields for a stored spec.
+ * @param spec The view's current spec.
+ */
+export function viewSpecForm(spec: ViewSpecShape): ViewSpecForm {
+	const f = spec.filters;
+	return {
+		scope: spec.scope === 'all' ? ALL_PROJECTS : spec.scope.project,
+		status: [...(f.status ?? [])],
+		type: [...(f.type ?? [])],
+		priority: [...(f.priority ?? [])],
+		q: f.q ?? '',
+		label: f.label ?? '',
+		assignee: f.assignee ?? '',
+		include_closed: f.include_closed === true,
+		limit: f.limit === undefined ? '' : String(f.limit),
+		sort: spec.sort,
+		presentation: spec.presentation,
+		group_by: spec.group_by ?? 'none'
+	};
+}
+
+/**
+ * Why the row-limit field cannot be saved, or undefined when it can. Empty
+ * means the default limit.
+ * @param text The field as typed.
+ */
+export function viewLimitError(text: string): string | undefined {
+	const trimmed = text.trim();
+	if (trimmed === '') return undefined;
+	const n = /^\d+$/.test(trimmed) ? Number(trimmed) : NaN;
+	return Number.isInteger(n) && n >= 1 && n <= VIEW_LIMIT_MAX
+		? undefined
+		: `A whole number from 1 to ${VIEW_LIMIT_MAX}, or empty for the default.`;
+}
+
+/**
+ * The spec the editor's fields describe. Empty text and empty choices drop
+ * their filter, and a board drops its grouping (a board ignores one). The
+ * caller checks `viewLimitError` first; the server validates the rest.
+ * @param form The editor's fields.
+ */
+export function viewSpecFromForm(form: ViewSpecForm): ViewSpecShape {
+	const filters: ViewSpecShape['filters'] = {};
+	if (form.status.length > 0) filters.status = [...form.status];
+	if (form.type.length > 0) filters.type = [...form.type];
+	if (form.priority.length > 0) filters.priority = [...form.priority].sort((a, b) => a - b);
+	const q = form.q.trim();
+	if (q) filters.q = q;
+	const label = form.label.trim();
+	if (label) filters.label = label;
+	const assignee = form.assignee.trim();
+	if (assignee) filters.assignee = assignee;
+	if (form.include_closed) filters.include_closed = true;
+	const limit = form.limit.trim();
+	if (limit) filters.limit = Number(limit);
+	return {
+		scope: form.scope === ALL_PROJECTS ? 'all' : { project: form.scope },
+		filters,
+		sort: form.sort,
+		presentation: form.presentation,
+		...(form.presentation === 'list' && form.group_by !== 'none' ? { group_by: form.group_by } : {})
+	};
+}
+
+/**
+ * A filter's choices: the shared vocabulary, then any value the view already
+ * holds that the vocabulary lacks, so editing never silently drops it.
+ * @param vocabulary The options the project page offers.
+ * @param held The values in the view's spec.
+ */
+export function filterChoices<T extends string | number>(
+	vocabulary: readonly T[],
+	held: readonly T[]
+): T[] {
+	return [...vocabulary, ...held.filter((value) => !vocabulary.includes(value))];
+}
+
+/**
+ * What a save sends: only the fields that changed, or null when nothing did,
+ * so the editor never writes a revision identical to the one it opened.
+ * @param before The view as the editor opened it.
+ * @param after The editor's name, description and spec.
+ */
+export function viewRevisionChanges(
+	before: { name: string; description: string; spec: ViewSpecShape },
+	after: { name: string; description: string; spec: ViewSpecShape }
+): { name?: string; description?: string; spec?: ViewSpecShape } | null {
+	const changes: { name?: string; description?: string; spec?: ViewSpecShape } = {};
+	const name = after.name.trim();
+	const description = after.description.trim();
+	if (name !== before.name) changes.name = name;
+	if (description !== before.description) changes.description = description;
+	if (!sameViewSpec(before.spec, after.spec)) changes.spec = after.spec;
+	return Object.keys(changes).length === 0 ? null : changes;
 }

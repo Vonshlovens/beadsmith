@@ -17,6 +17,13 @@ export type ViewPresentation = (typeof VIEW_PRESENTATIONS)[number];
 export const VIEW_GROUPS = ['status', 'priority', 'type', 'assignee', 'project'] as const;
 export type ViewGroup = (typeof VIEW_GROUPS)[number];
 
+/**
+ * Most rows a view may ask for. The server's spec schema enforces it and the
+ * view editor checks it before sending; it stays within the read plane's own
+ * list limit (`MAX_LIST_LIMIT`, checked by a test), which a view compiles onto.
+ */
+export const VIEW_LIMIT_MAX = 1000;
+
 /** One project by id, or every project in the catalogue. */
 export type ViewScope = { project: string } | 'all';
 

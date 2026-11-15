@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { ViewIssue, ViewSpecShape } from '#lib/views.js';
+import { VIEW_LIMIT_MAX } from '#lib/views.js';
 import {
+	ALL_PROJECTS,
 	describeViewSpec,
+	FILTER_STATUSES,
+	filterChoices,
+	viewLimitError,
+	viewRevisionChanges,
+	viewSpecForm,
+	viewSpecFromForm,
 	groupViewIssues,
 	projectPageForView,
 	projectPageHref,
@@ -190,5 +198,93 @@ describe('saving the project page as a view', () => {
 		const long = slugFromName('word '.repeat(40));
 		expect(long.length).toBeLessThanOrEqual(64);
 		expect(long).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+	});
+});
+
+describe('view editor fields', () => {
+	const full: ViewSpecShape = {
+		scope: { project: 'd_a' },
+		filters: {
+			status: ['open', 'review'],
+			type: ['bug'],
+			priority: [0, 1],
+			q: 'login',
+			label: 'ui',
+			assignee: 'sam',
+			include_closed: true,
+			limit: 50
+		},
+		sort: 'priority',
+		presentation: 'list',
+		group_by: 'assignee'
+	};
+
+	it('round-trips every spec field through the form', () => {
+		expect(viewSpecFromForm(viewSpecForm(full))).toEqual(full);
+		const all: ViewSpecShape = {
+			scope: 'all',
+			filters: {},
+			sort: 'updated',
+			presentation: 'board'
+		};
+		expect(viewSpecForm(all).scope).toBe(ALL_PROJECTS);
+		expect(viewSpecFromForm(viewSpecForm(all))).toEqual(all);
+	});
+
+	it('drops empty text and choices, trims text, and sorts priorities', () => {
+		const form = {
+			...viewSpecForm(full),
+			status: [],
+			q: '   ',
+			label: ' ui ',
+			assignee: '',
+			include_closed: false,
+			limit: '',
+			priority: [3, 0]
+		};
+		expect(viewSpecFromForm(form).filters).toEqual({
+			type: ['bug'],
+			priority: [0, 3],
+			label: 'ui'
+		});
+	});
+
+	it('drops the grouping of a board and of "no grouping"', () => {
+		const form = viewSpecForm(full);
+		expect(viewSpecFromForm({ ...form, presentation: 'board' }).group_by).toBeUndefined();
+		expect(viewSpecFromForm({ ...form, group_by: 'none' })).not.toHaveProperty('group_by');
+	});
+
+	it('takes an empty or in-range whole row limit and refuses the rest', () => {
+		expect(viewLimitError('')).toBeUndefined();
+		expect(viewLimitError(' 25 ')).toBeUndefined();
+		expect(viewLimitError(String(VIEW_LIMIT_MAX))).toBeUndefined();
+		for (const bad of ['0', '-1', '2.5', '1e3', 'ten', String(VIEW_LIMIT_MAX + 1)]) {
+			expect(viewLimitError(bad)).toMatch(/whole number/);
+		}
+	});
+
+	it('keeps a held value the shared vocabulary lacks as an extra choice', () => {
+		expect(filterChoices(FILTER_STATUSES, ['review', 'open'])).toEqual([
+			...FILTER_STATUSES,
+			'review'
+		]);
+		expect(filterChoices([0, 1], [1])).toEqual([0, 1]);
+	});
+
+	it('sends only what changed, and nothing when nothing did', () => {
+		const before = { name: 'Bugs', description: 'Open bugs', spec: full };
+		expect(viewRevisionChanges(before, { ...before, name: ' Bugs ' })).toBeNull();
+		// Same rows in another order is the same spec.
+		const reordered = { ...full, filters: { ...full.filters, status: ['review', 'open'] } };
+		expect(viewRevisionChanges(before, { ...before, spec: reordered })).toBeNull();
+		expect(viewRevisionChanges(before, { ...before, name: 'Bug triage ' })).toEqual({
+			name: 'Bug triage'
+		});
+		expect(viewRevisionChanges(before, { ...before, description: '' })).toEqual({
+			description: ''
+		});
+		const board = { ...full, presentation: 'board' as const };
+		expect(viewRevisionChanges(before, { ...before, spec: board })).toEqual({ spec: board });
 	});
 });

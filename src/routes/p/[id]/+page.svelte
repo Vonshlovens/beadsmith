@@ -79,6 +79,9 @@
 	import { currentProject, currentViewer, statusSnapshot } from '#lib/client/projects.svelte.js';
 	import { api, errorMessage } from '#lib/client/api.js';
 	import {
+		FILTER_PRIORITIES,
+		FILTER_STATUSES,
+		FILTER_TYPES,
 		projectPageForView,
 		SAVED_VIEW_PARAM,
 		sameViewSpec,
@@ -138,18 +141,6 @@
 		}
 		rememberHintIfListed(to.url.pathname, data.project_id, issues);
 	});
-
-	const STATUS_OPTIONS = [
-		'open',
-		'in_progress',
-		'blocked',
-		'deferred',
-		'closed',
-		'pinned',
-		'hooked'
-	];
-	const TYPE_OPTIONS = ['bug', 'feature', 'task', 'epic', 'chore'];
-	const PRIORITY_OPTIONS = [0, 1, 2, 3, 4];
 
 	/** Labels for the sortable headers, and the caption they explain. */
 	const SORT_LABELS: Record<SortColumn, string> = {
@@ -774,7 +765,7 @@
 				{/snippet}
 			</DropdownMenu.Trigger>
 			<DropdownMenu.Content class="ui-menu ui-menu-narrow" align="start" sideOffset={6}>
-				{#each STATUS_OPTIONS as option (option)}
+				{#each FILTER_STATUSES as option (option)}
 					<DropdownMenu.CheckboxItem
 						class="ui-menu-item"
 						closeOnSelect={false}
@@ -808,7 +799,7 @@
 				{/snippet}
 			</DropdownMenu.Trigger>
 			<DropdownMenu.Content class="ui-menu ui-menu-narrow" align="start" sideOffset={6}>
-				{#each TYPE_OPTIONS as option (option)}
+				{#each FILTER_TYPES as option (option)}
 					<DropdownMenu.CheckboxItem
 						class="ui-menu-item"
 						closeOnSelect={false}
@@ -842,7 +833,7 @@
 				{/snippet}
 			</DropdownMenu.Trigger>
 			<DropdownMenu.Content class="ui-menu ui-menu-narrow" align="start" sideOffset={6}>
-				{#each PRIORITY_OPTIONS as option (option)}
+				{#each FILTER_PRIORITIES as option (option)}
 					<DropdownMenu.CheckboxItem
 						class="ui-menu-item"
 						closeOnSelect={false}

@@ -7,16 +7,19 @@
 	 * viewer; a sandboxed app runs in its frame, reading through the bridge as
 	 * the viewer. The owner also sees the history, newest first, and reverts (a
 	 * new revision copying an old one forward), publishes a revision, or
-	 * deletes it. Any admin may unpublish one members see.
+	 * deletes it, and edits a view's name, description and filters in place
+	 * (each save a new revision). Any admin may unpublish one members see.
 	 */
 	import { goto, refreshAll } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
 	import EyeIcon from 'phosphor-svelte/lib/EyeIcon';
 	import EyeSlashIcon from 'phosphor-svelte/lib/EyeSlashIcon';
 	import FunnelSimpleIcon from 'phosphor-svelte/lib/FunnelSimpleIcon';
+	import PencilSimpleIcon from 'phosphor-svelte/lib/PencilSimpleIcon';
 	import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
 	import AppFrame from '#lib/components/app/app-frame.svelte';
 	import ConfirmDialog from '#lib/components/confirm-dialog.svelte';
+	import EditViewDialog from '#lib/components/edit-view-dialog.svelte';
 	import EmptyState from '#lib/components/empty-state.svelte';
 	import GrownHistory from '#lib/components/grown-history.svelte';
 	import IssueRows from '#lib/components/issue-rows.svelte';
@@ -48,6 +51,7 @@
 	let busy = $state(false);
 	let confirm_delete = $state(false);
 	let confirm_unpublish = $state(false);
+	let editing = $state(false);
 
 	const view = $derived(data.view);
 	const surface = $derived(data.surface);
@@ -244,6 +248,17 @@
 						<FunnelSimpleIcon size={13} aria-hidden="true" />Open in project
 					</a>
 				{/if}
+				{#if view !== null && view.mine}
+					<button
+						class="btn btn-sm"
+						type="button"
+						disabled={busy}
+						{@attach tip('Change its name, description or filters; saves a new revision')}
+						onclick={() => (editing = true)}
+					>
+						<PencilSimpleIcon size={13} aria-hidden="true" />Edit
+					</button>
+				{/if}
 				{#if thing.mine && (!thing.published || thing.unpublished_changes)}
 					<button
 						class="btn btn-sm btn-primary"
@@ -400,6 +415,9 @@
 			/>
 		{/if}
 
+		{#if view !== null && view.mine}
+			<EditViewDialog bind:open={editing} {view} onsaved={() => void refreshAll()} />
+		{/if}
 		<ConfirmDialog
 			bind:open={confirm_delete}
 			title="Delete {thing.name}?"

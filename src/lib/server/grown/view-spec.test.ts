@@ -8,7 +8,9 @@ import {
 	type ViewSpec
 } from './view-spec.js';
 import { GrownError } from './errors.js';
+import { MAX_LIST_LIMIT } from '../validation.js';
 import type { IssueSummary, Project } from '#lib/types.js';
+import { VIEW_LIMIT_MAX } from '#lib/views.js';
 
 function project(id: string): Project {
 	return {
@@ -43,6 +45,16 @@ function spec(value: unknown): ViewSpec {
 }
 
 describe('view spec', () => {
+	it('keeps the row limit within the read plane list limit it compiles onto', () => {
+		expect(VIEW_LIMIT_MAX).toBeLessThanOrEqual(MAX_LIST_LIMIT);
+		expect(spec({ scope: 'all', filters: { limit: VIEW_LIMIT_MAX } }).filters.limit).toBe(
+			VIEW_LIMIT_MAX
+		);
+		expect(
+			view_spec_schema.safeParse({ scope: 'all', filters: { limit: VIEW_LIMIT_MAX + 1 } }).success
+		).toBe(false);
+	});
+
 	it('fills defaults', () => {
 		expect(spec({ scope: 'all' })).toEqual({
 			scope: 'all',
