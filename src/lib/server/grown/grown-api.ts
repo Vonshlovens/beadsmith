@@ -1,7 +1,7 @@
 /**
  * The browser's side of grown things (ADR-0025 rules 5, 7 and 9): who the
- * request's viewer is, the request bodies the `/api/views` and
- * `/api/surfaces` routes accept, and how a stored thing becomes the summary
+ * request's viewer is, the request bodies the `/api/views`, `/api/surfaces`
+ * and `/api/apps` routes accept, and how a stored thing becomes the summary
  * the pages show. Every kind shares these, so a rule changes in one place.
  * The store decides who may see or change what; these helpers only
  * translate.
@@ -37,7 +37,7 @@ export function personAuthor(locals: App.Locals): GrownAuthor {
 	if (locals.user === undefined) {
 		throw new GrownError(
 			'forbidden',
-			'Changing a view or surface needs a signed-in admin account.'
+			'Changing a view, surface or app needs a signed-in admin account.'
 		);
 	}
 	return { kind: 'person', account_id: locals.user.id, chat_id: null };

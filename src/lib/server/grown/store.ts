@@ -1,8 +1,7 @@
 /**
  * The grown things store (ADR-0025 rules 7 and 8): one revisioned store for
- * every tier (views and surfaces now; apps add a kind with their own spec
- * schema), so there is one revision and visibility implementation rather
- * than three. App-owned rows in `state.db`.
+ * every tier (views, surfaces and apps, each kind with its own spec schema),
+ * so there is one revision and visibility implementation rather than three. App-owned rows in `state.db`.
  *
  * - A thing belongs to its owner (the account that created it). It holds a
  *   slug, its kind and which revision, if any, is published.
@@ -30,6 +29,7 @@ import {
 	surfaceToolProblems,
 	type SurfaceSpec
 } from './surface-spec.js';
+import { app_spec_schema, APP_SPEC_MAX_BYTES } from './app-spec.js';
 import {
 	GROWN_DESCRIPTION_MAX,
 	GROWN_NAME_MAX,
@@ -51,8 +51,8 @@ interface KindDefinition {
 }
 
 /**
- * Every kind the store accepts. A kind is added with its spec schema (apps
- * add theirs); a write naming any other kind is refused.
+ * Every kind the store accepts, each with its spec schema; a write naming
+ * any other kind is refused.
  */
 export const GROWN_KINDS = {
 	view: { schema: view_spec_schema, max_bytes: VIEW_SPEC_MAX_BYTES, per_owner: 200 },
@@ -61,7 +61,8 @@ export const GROWN_KINDS = {
 		max_bytes: SURFACE_SPEC_MAX_BYTES,
 		per_owner: 100,
 		check: (spec: SurfaceSpec) => surfaceToolProblems(spec)
-	}
+	},
+	app: { schema: app_spec_schema, max_bytes: APP_SPEC_MAX_BYTES, per_owner: 50 }
 } satisfies Record<string, KindDefinition>;
 
 export type GrownKind = keyof typeof GROWN_KINDS;

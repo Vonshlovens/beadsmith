@@ -418,6 +418,22 @@ Each action is one bridge call against the same per-viewer, per-surface
 limit, and launches share the crew launch cap, per viewer and surface. The
 answer is `{ slug, action, result }`, `result` being the crew tool's own.
 
+Sandboxed apps (the same ADR, rule 3) have the same routes under
+`/api/apps`, with the same roles and bodies: `GET /api/apps`,
+`GET`/`PATCH`/`DELETE /api/apps/:slug`, `GET /api/apps/:slug/history`,
+`POST /api/apps/:slug/revert` and `PUT`/`DELETE /api/apps/:slug/publish`. An
+app's spec is `{ html, libraries }`: `html` is a model-written document of at
+most 256 KB, stored and served as opaque text, and `libraries` names entries
+of the host's reviewed allowlist (default `["beadsmith-tokens"]`); any other
+key or library is refused. `GET /api/apps/:slug/frame` serves the document
+the viewer may see (the owner's latest, else the published revision, else
+`not_found`) as `text/html` behind the app's own CSP: `sandbox allow-scripts`,
+`default-src 'none'`, inline scripts and styles only, `img-src data:`,
+`connect-src 'none'`, `form-action 'none'`, `base-uri 'none'`,
+`frame-ancestors 'self'`. `?theme=dark` selects the dark tokens. The server
+never parses or runs the document; it runs only in the viewer's browser, in
+an opaque origin with no network.
+
 `GET /api/ready` is the cross-project Ready deck: open issues with no open
 `blocks` dependencies, merged across catalog projects the session can see,
 sorted by priority then recency. Parent-child, related, and discovered-from

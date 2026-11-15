@@ -426,7 +426,30 @@ Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
   reason. The surface's slug is recorded but not yet shown on the missions
   page.
 
-Still expected: the vendored library allowlist pinned in one file, like hc's pin
-([0021](./0021-hc-terminal-runtime.md)). Exporting apps as
+- Apps, first slice: [`app-spec.ts`](../../src/lib/server/grown/app-spec.ts)
+  registers the `app` kind (spec `{ html, libraries }`; the 256 KB limit is
+  on the document's UTF-8 bytes, and the store's JSON limit sits past what
+  escaping can add, so it never refuses a document that fits), builds the
+  served document (the host's head with the inlined libraries, then the
+  app's bytes unchanged, so nothing on the server reads them) and holds the
+  frame CSP. The allowlist is
+  [`app-libraries.ts`](../../src/lib/server/grown/app-libraries.ts), the one
+  file, like hc's pin ([0021](./0021-hc-terminal-runtime.md)). **Correction
+  to rule 3:** the design tokens are first-party, cut at build time from the
+  `:root` and `:root.dark` blocks of `src/app.css`, and carry no SHA-256:
+  they come from the same reviewed commit as the code serving them, so a pin
+  would guard against no drift and would only make every token change edit
+  two files. Vendored third-party files keep the version and SHA-256 pin,
+  checked before a file is first served (a mismatch refuses to serve), and
+  no inlined library may contain its own closing tag. The routes under
+  [`src/routes/api/apps/`](../../src/routes/api/apps/) match the surfaces
+  ones, plus `GET /api/apps/:slug/frame`, which serves the revision the
+  viewer may see through `requireGrown` and the store, with the app's CSP and
+  `no-store`. `?theme=dark` puts `class="dark"` on the frame's `<html>`,
+  since the frame cannot read the page's theme.
+
+Still expected for apps: the host page that frames an app at `/views/<slug>`
+with the postMessage bridge, actions behind the host confirmation, the app
+crew tools and the first vendored chart library. Exporting apps as
 `ui://` resources to outside MCP clients is a later follow-on, not v1. See
 the matching row in [`specs/README.md`](../README.md).

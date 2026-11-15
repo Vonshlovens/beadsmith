@@ -5,6 +5,10 @@ export default defineConfig({
 		environment: 'node',
 		include: ['src/**/*.test.ts'],
 		globals: false,
+		// Vitest blanks CSS imports by default, `?raw` included. The app
+		// libraries inline the design tokens from app.css as raw text
+		// (src/lib/server/grown/app-libraries.ts), so let that one through.
+		css: { include: [/src\/app\.css/] },
 		// Loopback bind so checkBindPolicy does not demand BDX_AUTH_TOKEN.
 		// A dummy Dolt host satisfies the remote-service gate unless the process
 		// already has one (so BDX_LIVE=1 can still target a real server).
