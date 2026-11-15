@@ -347,7 +347,9 @@ const CREW_TOOL_VERBS: Record<string, readonly [running: string, done: string]> 
 	list_views: ['Listing views', 'Listed views'],
 	run_view: ['Running a view', 'Ran a view'],
 	view_history: ['Reading a view’s history', 'Read a view’s history'],
-	revert_view: ['Reverting a view', 'Reverted a view']
+	revert_view: ['Reverting a view', 'Reverted a view'],
+	define_automation: ['Proposing an automation', 'Proposed an automation'],
+	list_automations: ['Listing automations', 'Listed automations']
 };
 
 /** Crew tools whose call can start a mission this chat owns. */

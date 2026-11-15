@@ -126,7 +126,11 @@ idempotency key per slot, so a slot launches at most one mission. Disarming
 dispatch or disallowing the project refuses fired slots like any launch, and
 an automation whose creator is no longer an admin pauses itself. The
 template is the same validated payload a mission stores; no credential is
-saved with it.
+saved with it. First Mate may propose one with the `define_automation` crew
+tool ([ADR-0025](../specs/decisions/0025-grown-capabilities.md) rule 10),
+which goes through the same validation for the chat's owner; the store saves
+a proposed automation paused, marked as First Mate's, and only a person
+resumes it. No crew tool resumes, edits, runs or deletes an automation.
 
 ### First Mate
 
@@ -346,7 +350,9 @@ automation that is not a loop, the project, launch text, runner and model
 and effort stay as saved, and the edit never fires a slot from before it;
 `DELETE` removes the automation
 and its history but not its missions; `POST /api/automations/:id/run`
-fires it once now through the scheduler's path.
+fires it once now through the scheduler's path. An automation view carries
+`proposed_by_first_mate: true` when First Mate proposed it; the proposing
+chat's id stays on the server.
 
 Saved views ([ADR-0025](../specs/decisions/0025-grown-capabilities.md)):
 `GET /api/views` lists the viewer's own views and every published one; an

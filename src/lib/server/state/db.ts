@@ -157,6 +157,11 @@ export async function initStateSchema(client: Client): Promise<void> {
 			await client.execute(`ALTER TABLE mate_chats ADD COLUMN ${column} TEXT`);
 		}
 	}
+	// The First Mate chat that proposed an automation (ADR-0025 rule 10).
+	const automationColumns = await client.execute('PRAGMA table_info(automations)');
+	if (!automationColumns.rows.some((row) => row.name === 'proposed_chat_id')) {
+		await client.execute('ALTER TABLE automations ADD COLUMN proposed_chat_id TEXT');
+	}
 	const columns = await client.execute('PRAGMA table_info(dispatch_requests)');
 	const existing = new Set(
 		columns.rows.map((row) => {

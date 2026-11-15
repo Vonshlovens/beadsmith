@@ -16,6 +16,7 @@ import { WRITE_TOOLS } from './write-tools.js';
 import { MEMORY_TOOLS } from './memory-tools.js';
 import { META_TOOLS } from './meta-tools.js';
 import { VIEW_TOOLS } from './view-tools.js';
+import { AUTOMATION_TOOLS } from './automation-tools.js';
 import {
 	boundedJson,
 	CrewToolError,
@@ -30,7 +31,8 @@ export const CREW_TOOLS: CrewTool[] = [
 	...WRITE_TOOLS,
 	...MEMORY_TOOLS,
 	...META_TOOLS,
-	...VIEW_TOOLS
+	...VIEW_TOOLS,
+	...AUTOMATION_TOOLS
 ];
 
 /** Newest first; an `initialize` asking for another version gets the newest. */
@@ -43,7 +45,8 @@ const INSTRUCTIONS =
 	"owner's todo list directly. Beads changes go through missions: file_issue, comment_issue, " +
 	'tackle_issue and discuss_issue each start an agent with its own thread; say what you ' +
 	'started (operation, project, issue, mission id). Launches per chat are rate limited. ' +
-	'Saved views (define_view, run_view) are private to the owner and return a page URL.';
+	'Saved views (define_view, run_view) are private to the owner and return a page URL. ' +
+	'define_automation proposes a scheduled launch, created paused until the owner resumes it.';
 
 /** JSON-RPC 2.0 error codes used here. */
 export const JSONRPC_ERRORS = {

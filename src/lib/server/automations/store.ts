@@ -27,6 +27,7 @@ export const AUTOMATION_SCHEMA_SQL: string[] = [
 		enabled INTEGER NOT NULL,
 		paused_reason TEXT,
 		created_by TEXT NOT NULL,
+		proposed_chat_id TEXT,
 		last_slot TEXT NOT NULL,
 		created_at TEXT NOT NULL,
 		updated_at TEXT NOT NULL
@@ -62,6 +63,12 @@ export interface Automation {
 	/** Account id of the admin it acts on behalf of. */
 	created_by: string;
 	/**
+	 * The First Mate chat that proposed it (ADR-0025 rule 10), absent when a
+	 * person created it. Kept after it is resumed: it records where the
+	 * automation came from, not its state.
+	 */
+	proposed_chat_id?: string;
+	/**
 	 * The latest slot handled, or the time it was created or last enabled:
 	 * only slots after it can fire, so creating or re-enabling one never
 	 * fires a slot from before.
@@ -92,7 +99,17 @@ export interface CreateAutomationInput {
 	payload: DispatchPayload;
 	overlap: AutomationOverlap;
 	created_by: string;
+	/**
+	 * Set when First Mate proposes it. A proposed automation is always stored
+	 * paused, here rather than by the caller, so no crew path can create one
+	 * that fires before a person resumes it.
+	 */
+	proposed_chat_id?: string;
 }
+
+/** Why a proposed automation is paused until a person resumes it. */
+export const PROPOSED_PAUSED_REASON =
+	'Proposed by First Mate: it fires nothing until a person resumes it.';
 
 /** What an edit replaces; the project, runner and creator stay. */
 export interface UpdateAutomationInput {
@@ -156,6 +173,7 @@ function toAutomation(raw: unknown): Automation {
 	const row = raw as Record<string, unknown>;
 	const provider = optText(row.provider) as DispatchProviderId | undefined;
 	const paused_reason = optText(row.paused_reason);
+	const proposed_chat_id = optText(row.proposed_chat_id);
 	return {
 		id: String(row.id),
 		project_id: String(row.project_id),
@@ -168,6 +186,7 @@ function toAutomation(raw: unknown): Automation {
 		enabled: Number(row.enabled) !== 0,
 		...(paused_reason === undefined ? {} : { paused_reason }),
 		created_by: String(row.created_by),
+		...(proposed_chat_id === undefined ? {} : { proposed_chat_id }),
 		last_slot: String(row.last_slot),
 		created_at: String(row.created_at),
 		updated_at: String(row.updated_at)
@@ -191,7 +210,8 @@ function toRun(raw: unknown): AutomationRun {
 }
 
 const AUTOMATION_SELECT = `SELECT id, project_id, name, cron, time_zone, provider, payload_json,
-	overlap, enabled, paused_reason, created_by, last_slot, created_at, updated_at FROM automations`;
+	overlap, enabled, paused_reason, created_by, proposed_chat_id, last_slot, created_at, updated_at
+	FROM automations`;
 const RUN_SELECT = `SELECT automation_id, slot, trigger, outcome, mission_id, message, created_at,
 	updated_at FROM automation_runs`;
 
@@ -209,10 +229,12 @@ export function createAutomationStore(
 		async create(input) {
 			const id = newId();
 			const at = now().toISOString();
+			const proposed = input.proposed_chat_id !== undefined;
 			await client.execute({
 				sql: `INSERT INTO automations (id, project_id, name, cron, time_zone, provider,
-					payload_json, overlap, enabled, created_by, last_slot, created_at, updated_at)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+					payload_json, overlap, enabled, paused_reason, created_by, proposed_chat_id,
+					last_slot, created_at, updated_at)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				args: [
 					id,
 					input.project_id,
@@ -222,7 +244,10 @@ export function createAutomationStore(
 					input.provider ?? null,
 					JSON.stringify(input.payload),
 					input.overlap,
+					proposed ? 0 : 1,
+					proposed ? PROPOSED_PAUSED_REASON : null,
 					input.created_by,
+					input.proposed_chat_id ?? null,
 					at,
 					at,
 					at

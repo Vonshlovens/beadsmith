@@ -206,8 +206,9 @@ The frame route needs its own CSP and `frame-ancestors 'self'`, the one
 place the app's global `frame-ancestors 'none'` is relaxed, and only for a
 document that is itself sandboxed.
 
-Shipped versus target: the store, the view spec and the views catalogue
-are implemented; crew tools, surfaces and apps are not yet (see
+Shipped versus target: the store, the view spec, the views catalogue, the
+view crew tools and proposed automations are implemented; surfaces and apps
+are not yet (see
 Implementation notes).
 
 ## Alternatives considered
@@ -308,6 +309,16 @@ Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
   rather than rebuilding its query. The writes need the same admin
   permission as the `/api/views` writes. There is no publish or share
   tool (rule 7).
+- Proposed automations (rule 10):
+  [`src/lib/server/crew/automation-tools.ts`](../../src/lib/server/crew/automation-tools.ts)
+  (`define_automation`, `list_automations`) reuse 0019's `createAutomation`
+  and the `POST /api/automations` field schemas, for the chat owner with
+  `dispatch:launch`. The automation store, not the tool, saves an
+  automation that names its proposing chat (`proposed_chat_id`) paused with
+  a reason, so no crew path can create one that fires; resuming clears the
+  reason and keeps the marker, which the browser reads as
+  `proposed_by_first_mate` (never the chat id) and /automations shows.
+  There is no crew tool to resume, edit, run or delete an automation.
 
 Still expected: the vendored library allowlist pinned in one file, like hc's pin
 ([0021](./0021-hc-terminal-runtime.md)). The surface renderer starts with a

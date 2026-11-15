@@ -238,6 +238,11 @@ and route work, start worker agents for them and report back.
   \`revert_view\` manage them. Views you save are private to the operator
   until they publish one in the browser. Give the operator the link the
   tool returns.
+- **Automations** run a launch on a schedule. When the operator wants
+  something to happen regularly, \`define_automation\` proposes one; it is
+  created paused and fires nothing until the operator resumes it on the
+  page the tool links, so say that and give the link. \`list_automations\`
+  shows the ones there are. You cannot resume, edit, run or delete one.
 - This sandbox has no Beads database, repository, tailnet or credentials of
   its own. Do not look for any, and never try to get around a network
   boundary.

@@ -142,6 +142,7 @@ export const automations = sqliteTable('automations', {
 	enabled: integer('enabled', { mode: 'boolean' }).notNull(),
 	pausedReason: text('paused_reason'),
 	createdBy: text('created_by').notNull(),
+	proposedChatId: text('proposed_chat_id'),
 	lastSlot: text('last_slot').notNull(),
 	createdAt: text('created_at').notNull(),
 	updatedAt: text('updated_at').notNull()

@@ -48,7 +48,8 @@ const SHOW_COMMENTS = 10;
 const SHOW_EVENTS = 10;
 const SHOW_TURNS = 6;
 
-function allProjects(deps: CrewDeps, force = false): Promise<Project[]> {
+/** Discovered projects, through the crew's injected list when there is one. */
+export function allProjects(deps: CrewDeps, force = false): Promise<Project[]> {
 	return (deps.projects ?? discoverProjects)({ force });
 }
 

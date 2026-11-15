@@ -1,7 +1,12 @@
 import { createClient, type Client } from '@libsql/client';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { initStateSchema } from '../state/db.js';
-import { AUTOMATION_RUNS_KEPT, createAutomationStore, type AutomationStore } from './store.js';
+import {
+	AUTOMATION_RUNS_KEPT,
+	createAutomationStore,
+	PROPOSED_PAUSED_REASON,
+	type AutomationStore
+} from './store.js';
 
 let client: Client;
 let clock: Date;
@@ -128,5 +133,43 @@ describe('automation store', () => {
 		expect(await store.get(automation.id)).toBeUndefined();
 		expect(await store.listRuns(automation.id, 10)).toEqual([]);
 		expect(await store.remove(automation.id)).toBe(false);
+	});
+
+	it('saves a First Mate proposal paused, whatever the caller asks, and keeps the marker on resume', async () => {
+		const proposed = await store.create({
+			project_id: 'd_beads_web',
+			name: 'Proposed',
+			cron: '* * * * *',
+			time_zone: 'UTC',
+			payload: { operation: 'file', notes: 'x' },
+			overlap: 'skip',
+			created_by: 'acct_admin',
+			proposed_chat_id: 'mc_one'
+		});
+		expect(proposed).toMatchObject({
+			enabled: false,
+			paused_reason: PROPOSED_PAUSED_REASON,
+			proposed_chat_id: 'mc_one'
+		});
+		expect(await store.listEnabled()).toEqual([]);
+		const resumed = await store.setEnabled(proposed.id, true);
+		expect(resumed).toMatchObject({ enabled: true, proposed_chat_id: 'mc_one' });
+		expect(resumed?.paused_reason).toBeUndefined();
+	});
+
+	it('adds the proposal column to a database from before it', async () => {
+		const old = createClient({ url: ':memory:' });
+		await old.execute(`CREATE TABLE automations (id TEXT PRIMARY KEY, project_id TEXT NOT NULL,
+			name TEXT NOT NULL, cron TEXT NOT NULL, time_zone TEXT NOT NULL, provider TEXT,
+			payload_json TEXT NOT NULL, overlap TEXT NOT NULL, enabled INTEGER NOT NULL,
+			paused_reason TEXT, created_by TEXT NOT NULL, last_slot TEXT NOT NULL,
+			created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
+		await old.execute(`INSERT INTO automations VALUES ('au_old', 'd_beads_web', 'Old', '0 2 * * *',
+			'UTC', NULL, '{"operation":"file","notes":"x"}', 'skip', 1, NULL, 'acct_admin',
+			'2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z')`);
+		await initStateSchema(old);
+		const kept = await createAutomationStore(old).get('au_old');
+		expect(kept).toMatchObject({ enabled: true, name: 'Old' });
+		expect(kept?.proposed_chat_id).toBeUndefined();
 	});
 });

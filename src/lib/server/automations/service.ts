@@ -101,6 +101,7 @@ export function automationView(
 		},
 		overlap: automation.overlap,
 		enabled: automation.enabled,
+		...(automation.proposed_chat_id === undefined ? {} : { proposed_by_first_mate: true }),
 		...(automation.paused_reason === undefined ? {} : { paused_reason: automation.paused_reason }),
 		...(next_run === undefined ? {} : { next_run }),
 		...(context.last_run === undefined ? {} : { last_run: automationRunView(context.last_run) }),
@@ -133,6 +134,16 @@ export type CreateAutomationResult =
 	| { ok: false; code: 'bad_request' | 'not_found'; message: string };
 
 /**
+ * Who an automation acts for: an admin's account, and the First Mate chat
+ * when First Mate proposed it (ADR-0025 rule 10), which the store saves paused.
+ */
+export interface AutomationCreator {
+	id: string;
+	email: string;
+	proposed_chat_id?: string;
+}
+
+/**
  * Save an automation for `creator`, an admin's account. The schedule, the
  * project, the bead and the model and effort are checked now so a typo is
  * refused at once rather than recorded as a failed run every night; dispatch
@@ -142,7 +153,7 @@ export type CreateAutomationResult =
  */
 export async function createAutomation(
 	input: CreateAutomationRequest,
-	creator: { id: string; email: string },
+	creator: AutomationCreator,
 	deps: CreateAutomationDeps
 ): Promise<CreateAutomationResult> {
 	const schedule = checkSchedule(input.cron, input.time_zone, deps.now());
@@ -169,7 +180,10 @@ export async function createAutomation(
 		...(input.provider === undefined ? {} : { provider: input.provider }),
 		payload,
 		overlap: input.overlap,
-		created_by: creator.id
+		created_by: creator.id,
+		...(creator.proposed_chat_id === undefined
+			? {}
+			: { proposed_chat_id: creator.proposed_chat_id })
 	});
 	return { ok: true, automation, project };
 }

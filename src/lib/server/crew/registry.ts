@@ -14,6 +14,7 @@ import type { TodoStore } from '../todos/store.js';
 import type { MemoryStore } from '../mate/memory-store.js';
 import type { MetaStore } from '../mate/meta-store.js';
 import type { GrownStore } from '../grown/store.js';
+import type { AutomationStore } from '../automations/store.js';
 import type { Project } from '#lib/types.js';
 import type { LaunchLimiter } from './launch-limit.js';
 
@@ -53,6 +54,8 @@ export interface CrewDeps {
 	meta?: () => Promise<MetaStore>;
 	/** Saved views and other grown things (ADR-0025). */
 	grown?: () => Promise<GrownStore>;
+	/** Automations First Mate proposes and lists (ADR-0025 rule 10). */
+	automations?: () => Promise<AutomationStore>;
 	/** Per-chat cap on mission launches; defaults to the env-configured one. */
 	launch_limiter?: LaunchLimiter;
 }
