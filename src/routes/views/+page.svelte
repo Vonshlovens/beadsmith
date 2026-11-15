@@ -1,9 +1,9 @@
 <script lang="ts">
 	/**
-	 * Saved views and catalog surfaces (ADR-0025 rule 9): each row answers
-	 * "what does this show, who wrote it, and who can see it". An admin sees
-	 * their own and every published one; a member sees only published ones.
-	 * Both kinds share one list, newest change first, since both open at
+	 * Saved views, catalog surfaces and sandboxed apps (ADR-0025 rule 9): each
+	 * row answers "what does this show, who wrote it, and who can see it". An
+	 * admin sees their own and every published one; a member sees only
+	 * published ones. Every kind shares one list, newest change first, since all open at
 	 * /views/<slug>, where the owner reverts, publishes and deletes them.
 	 */
 	import { refreshAll } from '$app/navigation';
@@ -32,7 +32,7 @@
 	const projectName = (id: string) => names.get(id) ?? id;
 	interface Row {
 		thing: GrownSummary<unknown>;
-		/** The project or scope, or "Surface". */
+		/** The project or scope, or "Surface" or "App". */
 		where: string;
 		what: string;
 	}
@@ -47,6 +47,11 @@
 				thing: surface,
 				where: 'Surface',
 				what: surface.description || describeSurfaceSpec(surface.spec)
+			})),
+			...data.apps.map((app): Row => ({
+				thing: app,
+				where: 'App',
+				what: app.description || 'A sandboxed app'
 			}))
 		].sort(
 			(a, b) =>
@@ -90,12 +95,12 @@
 	<PageHeader
 		title="Views"
 		{meta}
-		meta_label="{rows.length} views and surfaces{is_admin ? `, ${mine} of them yours` : ''}"
+		meta_label="{rows.length} views, surfaces and apps{is_admin ? `, ${mine} of them yours` : ''}"
 		onrefresh={refresh}
 		{refreshing}
 	/>
 
-	{#each [{ what: 'Views', message: data.error }, { what: 'Surfaces', message: data.surfaces_error }] as failed (failed.what)}
+	{#each [{ what: 'Views', message: data.error }, { what: 'Surfaces', message: data.surfaces_error }, { what: 'Apps', message: data.apps_error }] as failed (failed.what)}
 		{#if failed.message}
 			<div class="banner banner-err" role="alert">
 				<i class="dot dot-blocked" style="margin-top:5px" aria-hidden="true"></i>
@@ -109,13 +114,13 @@
 			</div>
 		{/if}
 	{/each}
-	{#if data.error && data.surfaces_error}
-		<!-- Both lists failed; the banners say so, and nothing here is an empty catalogue. -->
+	{#if data.error && data.surfaces_error && data.apps_error}
+		<!-- Every list failed; the banners say so, and nothing here is an empty catalogue. -->
 	{:else if rows.length === 0}
 		<EmptyState
 			title="No saved views yet"
 			description={is_admin
-				? 'A view is a named filter of issues, shown as a list or a board. A surface is a dashboard First Mate builds from tiles, lists, boards and charts. Both stay private until you publish them.'
+				? 'A view is a named filter of issues, shown as a list or a board. A surface is a dashboard First Mate builds from tiles, lists, boards and charts. An app is a small tool that runs sandboxed in your browser. All stay private until you publish them.'
 				: 'Views and dashboards an admin publishes show up here.'}
 		>
 			{#snippet actions()}
@@ -123,7 +128,7 @@
 			{/snippet}
 		</EmptyState>
 	{:else}
-		<ul class="list panel" aria-label="Saved views and surfaces" bind:this={list_el}>
+		<ul class="list panel" aria-label="Saved views, surfaces and apps" bind:this={list_el}>
 			{#each rows as { thing: view, where, what } (view.slug)}
 				<li class="v-row">
 					<a class="v-main" href="/views/{view.slug}">

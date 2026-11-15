@@ -4,13 +4,20 @@ import { requiredPermission, roleCan } from '#lib/server/auth/roles.js';
 import { createGrownStore } from '#lib/server/grown/store.js';
 import { APP_FRAME_CSP } from '#lib/server/grown/app-spec.js';
 import { initStateSchema, setGrownStore } from '#lib/server/state/db.js';
-import type { AppHistoryResponse, AppResponse, AppsResponse, AppSummary } from '#lib/apps.js';
+import type {
+	AppHistoryResponse,
+	AppResponse,
+	AppsResponse,
+	AppSummary,
+	AppToolCallResponse
+} from '#lib/apps.js';
 import { GET as LIST, POST as CREATE } from './+server.js';
 import { DELETE, GET as GET_ONE, PATCH } from './[slug]/+server.js';
 import { GET as HISTORY } from './[slug]/history/+server.js';
 import { DELETE as UNPUBLISH, PUT as PUBLISH } from './[slug]/publish/+server.js';
 import { POST as REVERT } from './[slug]/revert/+server.js';
 import { GET as FRAME } from './[slug]/frame/+server.js';
+import { POST as CALL } from './[slug]/call/+server.js';
 import { GET as SURFACE_GET } from '../surfaces/[slug]/+server.js';
 import { POST as VIEW_CREATE } from '../views/+server.js';
 
@@ -227,5 +234,104 @@ describe('apps and other kinds stay apart', () => {
 		await create({ ...BURNDOWN, slug: 'other' });
 		const surface = await call(SURFACE_GET, 'GET', '/api/surfaces/other', { slug: 'other' });
 		expect(surface.status).toBe(404);
+	});
+});
+
+describe('/api/apps/:slug/call', () => {
+	function tool(name: string, args: unknown = {}, user: User | null = OWNER, slug = 'burndown') {
+		return call(CALL, 'POST', `/api/apps/${slug}/call`, {
+			slug,
+			user,
+			body: { name, arguments: args }
+		});
+	}
+
+	async function publish() {
+		expect((await at(PUBLISH, 'PUT', '/publish', {})).status).toBe(200);
+	}
+
+	it('is a read any signed-in role may make, and only that path is', () => {
+		expect(requiredPermission('POST', '/api/apps/x/call')).toBeUndefined();
+		for (const path of ['/api/apps/x/call/more', '/api/apps/x/callx', '/api/apps/call']) {
+			expect(requiredPermission('POST', path), path).toEqual({ console: ['manage'] });
+		}
+	});
+
+	it("answers as the viewer: a member reading an admin's app is refused list_todos", async () => {
+		await create();
+		expect((await tool('list_todos', {}, MEMBER)).status).toBe(404); // not published yet
+		await publish();
+
+		const as_member = await tool('list_todos', {}, MEMBER);
+		expect(as_member.status).toBe(200);
+		expect(await json<AppToolCallResponse>(as_member)).toEqual({
+			slug: 'burndown',
+			revision: 1,
+			name: 'list_todos',
+			result: {
+				ok: false,
+				code: 'forbidden',
+				message: 'list_todos needs an admin account; this app reads as you.'
+			}
+		});
+
+		const as_owner = await json<AppToolCallResponse>(await tool('list_todos'));
+		expect(as_owner.result).toMatchObject({ ok: true, yields: 'todos' });
+	});
+
+	it('refuses anything but an allowlisted read, before it runs', async () => {
+		await create();
+		for (const name of ['create_todo', 'tackle_issue', 'define_app', 'remember', 'run_sql']) {
+			const refused = await tool(name);
+			expect(refused.status, name).toBe(400);
+		}
+	});
+
+	it('refuses bad arguments with the tool’s own reasons, and a read missing its project', async () => {
+		await create();
+		const bad = await json<AppToolCallResponse>(await tool('list_todos', { status: 'nope' }));
+		expect(bad.result).toMatchObject({ ok: false, code: 'bad_request' });
+		const no_project = await json<AppToolCallResponse>(await tool('show_issue', { id: 'x-1' }));
+		expect(no_project.result).toMatchObject({
+			ok: false,
+			code: 'bad_request',
+			message: 'show_issue needs a project: an app has no chat project to default to.'
+		});
+	});
+
+	it('refuses a malformed, oversized or extra-key body', async () => {
+		await create();
+		const huge = await tool('list_todos', { pad: 'x'.repeat(70 * 1024) });
+		expect(huge.status).toBe(400);
+		const extra = await call(CALL, 'POST', '/api/apps/burndown/call', {
+			slug: 'burndown',
+			body: { name: 'list_todos', arguments: {}, as: 'admin' }
+		});
+		expect(extra.status).toBe(400);
+		const not_object = await call(CALL, 'POST', '/api/apps/burndown/call', {
+			slug: 'burndown',
+			body: { name: 'list_todos', arguments: [1] }
+		});
+		expect(not_object.status).toBe(400);
+	});
+
+	it('refuses an app the viewer cannot see, and a surface or view under the slug', async () => {
+		await create();
+		expect((await tool('list_todos', {}, ADMIN2)).status).toBe(404);
+		expect((await tool('list_todos', {}, OWNER, 'missing')).status).toBe(404);
+		await call(VIEW_CREATE, 'POST', '/api/views', {
+			body: { slug: 'a-view', name: 'A view', spec: { scope: 'all', filters: {} } }
+		});
+		expect((await tool('list_todos', {}, OWNER, 'a-view')).status).toBe(404);
+	});
+
+	it('allows 60 calls a minute per viewer and app, then 429 with Retry-After', async () => {
+		await create({ ...BURNDOWN, slug: 'rate-app' });
+		for (let index = 0; index < 60; index += 1) {
+			expect((await tool('list_todos', {}, OWNER, 'rate-app')).status).toBe(200);
+		}
+		const refused = await tool('list_todos', {}, OWNER, 'rate-app');
+		expect(refused.status).toBe(429);
+		expect(Number(refused.headers.get('retry-after'))).toBeGreaterThan(0);
 	});
 });

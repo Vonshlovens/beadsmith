@@ -72,6 +72,12 @@ const DISPATCH_PATTERN = /^\/api\/projects\/[^/]+\/dispatch(?:\/|$)/;
 const AUTOMATIONS_PREFIX = '/api/automations';
 /** Mutations a member may make: their own session/password, the shared theme, a re-scan. */
 const MEMBER_MUTATIONS = ['/api/auth/', '/api/settings/theme', '/api/projects/refresh'];
+/**
+ * An app's bridge read (ADR-0025 rule 6): a POST only because the call has a
+ * body. It runs as the viewer and answers reads alone, each crew tool keeping
+ * its own permission, so any signed-in role may make it.
+ */
+const APP_CALL_PATTERN = /^\/api\/apps\/[^/]+\/call$/;
 
 /**
  * True when `pathname` is `prefix` or below it.
@@ -100,7 +106,10 @@ export function requiredPermission(method: string, pathname: string): Permission
 	if (DISPATCH_PATTERN.test(pathname) || under(pathname, AUTOMATIONS_PREFIX)) {
 		return { dispatch: ['launch'] };
 	}
-	if (MEMBER_MUTATIONS.some((prefix) => pathname === prefix || pathname.startsWith(prefix))) {
+	if (
+		APP_CALL_PATTERN.test(pathname) ||
+		MEMBER_MUTATIONS.some((prefix) => pathname === prefix || pathname.startsWith(prefix))
+	) {
 		return undefined;
 	}
 	return { console: ['manage'] };

@@ -59,25 +59,33 @@ export interface BindingDeps {
 }
 
 /** The crew tools a binding may run: the bridge reads, and `run_view` for a view binding. */
-type BridgeToolName = BridgeReadName | typeof BRIDGE_VIEW_TOOL;
+export type BridgeToolName = BridgeReadName | typeof BRIDGE_VIEW_TOOL;
+
+/** The grown kinds that reach Beadsmith over the bridge. */
+export type BridgeKind = 'surface' | 'app';
 
 /**
  * The context a bridge read or action runs a crew tool under: the viewer's
  * account and role. A grown thing has no chat, so `chat_id` names the
- * surface and the viewer (it keys the per-chat launch limit and a launch's
- * idempotency, so one viewer's clicks never replay or spend another's), and
- * `grown_slug` makes a launch record the surface instead of a chat. `scope`
- * is null: the bridge allowlist makes every project-defaulting tool name its
- * project at save time.
+ * grown thing and the viewer (it keys the per-chat launch limit and a
+ * launch's idempotency, so one viewer's clicks never replay or spend
+ * another's), and `grown_slug` makes a launch record the grown thing instead
+ * of a chat. `scope` is null: every project-defaulting tool must name its
+ * project (checked when a surface is saved, and on every app call).
  * @param viewer The signed-in viewer.
- * @param slug The surface being read.
+ * @param slug The surface or app being read.
+ * @param kind Which kind it is; slugs are unique across kinds, so this only labels the id.
  */
-export function bridgeContext(viewer: BridgeViewer, slug: string): CrewContext {
+export function bridgeContext(
+	viewer: BridgeViewer,
+	slug: string,
+	kind: BridgeKind = 'surface'
+): CrewContext {
 	return {
 		account_id: viewer.account_id,
 		actor: viewer.actor,
 		role: viewer.role,
-		chat_id: `surface:${slug}:${viewer.account_id}`,
+		chat_id: `${kind}:${slug}:${viewer.account_id}`,
 		scope: null,
 		grown_slug: slug
 	};
@@ -132,7 +140,7 @@ function bounded(yields: BridgeYield, value: unknown): SurfaceBindingResult {
 }
 
 /** A thrown refusal or failure as a binding's error value; driver detail never leaves. */
-function failed(error: unknown): SurfaceBindingResult {
+export function bridgeFailure(error: unknown): SurfaceBindingResult {
 	if (error instanceof CrewToolError) {
 		return { ok: false, code: 'bad_request', message: error.message };
 	}
@@ -140,42 +148,94 @@ function failed(error: unknown): SurfaceBindingResult {
 	return { ok: false, code: safe.code, message: safe.message };
 }
 
-async function resolveTool(
+/** True when an app's `tools/call` names a read on the bridge allowlist (or `run_view`). */
+export function isBridgeRead(name: string): name is BridgeToolName {
+	return name === BRIDGE_VIEW_TOOL || Object.hasOwn(BRIDGE_READS, name);
+}
+
+/**
+ * Run one allowlisted read as the viewer: the crew tool's own `permission`
+ * checked against the viewer's role (the check `mcp.ts` makes for a chat, so
+ * an admin's surface or app does not lend a member its permissions), the
+ * stored or sent input parsed by the tool's own schema, then its handler
+ * under `bridgeContext`, the result bounded as `bounded` describes.
+ * Refusals come back as error values; a thrown failure is the caller's.
+ * @param store The grown things store, for `run_view`.
+ * @param viewer The signed-in viewer.
+ * @param thing Which surface or app is reading.
+ * @param name The read (a bridge read, or `run_view`).
+ * @param input Its input: a surface's stored one, or an app's call arguments.
+ * @param deps Injectable crew and tool dependencies.
+ */
+export async function runBridgeRead(
+	store: GrownStore,
+	viewer: BridgeViewer,
+	thing: { slug: string; kind: BridgeKind },
+	name: BridgeToolName,
+	input: Record<string, unknown>,
+	deps: BindingDeps = {}
+): Promise<SurfaceBindingResult> {
+	const yields: BridgeYield = name === BRIDGE_VIEW_TOOL ? 'issues' : BRIDGE_READS[name].yields;
+	const tool = await (deps.tool ?? bridgeTool)(name);
+	if (tool.permission !== undefined && !roleCan(viewer.role, tool.permission)) {
+		return {
+			ok: false,
+			code: 'forbidden',
+			message: `${tool.name} needs an admin account; this ${thing.kind} reads as you.`
+		};
+	}
+	// A surface's inputs were checked when it was saved; an app's arrive with
+	// each call, so the project rule is checked here for both.
+	if (
+		name !== BRIDGE_VIEW_TOOL &&
+		BRIDGE_READS[name].needs_project &&
+		input.project === undefined
+	) {
+		return {
+			ok: false,
+			code: 'bad_request',
+			message: `${tool.name} needs a project: ${thing.kind === 'app' ? 'an app' : 'a surface'} has no chat project to default to.`
+		};
+	}
+	// Parsed again for its defaults, and so a stored input today's schema
+	// refuses is refused, not run.
+	const parsed = tool.input.safeParse(input);
+	if (!parsed.success) {
+		const detail = parsed.error.issues
+			.slice(0, 3)
+			.map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`)
+			.join('; ');
+		return {
+			ok: false,
+			code: 'bad_request',
+			message:
+				thing.kind === 'surface'
+					? `The input for ${tool.name} is no longer valid. Edit the surface.`
+					: `The input for ${tool.name} is not valid: ${detail}`
+		};
+	}
+	const crew: CrewDeps = { ...deps.crew, grown: async () => store };
+	const value = await tool.handler(
+		bridgeContext(viewer, thing.slug, thing.kind),
+		parsed.data,
+		crew,
+		{
+			id: `${thing.kind}:${thing.slug}:${name}`
+		}
+	);
+	return bounded(yields, value);
+}
+
+function resolveTool(
 	store: GrownStore,
 	viewer: BridgeViewer,
 	slug: string,
 	binding: SurfaceBinding,
 	deps: BindingDeps
 ): Promise<SurfaceBindingResult> {
-	const [name, stored, yields]: [BridgeToolName, Record<string, unknown>, BridgeYield] =
-		'view' in binding
-			? [BRIDGE_VIEW_TOOL, { slug: binding.view }, 'issues']
-			: [binding.tool, binding.input, BRIDGE_READS[binding.tool].yields];
-	const tool = await (deps.tool ?? bridgeTool)(name);
-	// The check `mcp.ts` makes for a chat, with the viewer's role: an admin's
-	// surface does not lend a member its permissions.
-	if (tool.permission !== undefined && !roleCan(viewer.role, tool.permission)) {
-		return {
-			ok: false,
-			code: 'forbidden',
-			message: `${tool.name} needs an admin account; this surface reads as you.`
-		};
-	}
-	// Checked against this schema when saved; parsed again for its defaults,
-	// and so a stored input today's schema refuses is refused, not run.
-	const input = tool.input.safeParse(stored);
-	if (!input.success) {
-		return {
-			ok: false,
-			code: 'bad_request',
-			message: `The input for ${tool.name} is no longer valid. Edit the surface.`
-		};
-	}
-	const crew: CrewDeps = { ...deps.crew, grown: async () => store };
-	const value = await tool.handler(bridgeContext(viewer, slug), input.data, crew, {
-		id: `surface:${slug}:${name}`
-	});
-	return bounded(yields, value);
+	const [name, stored]: [BridgeToolName, Record<string, unknown>] =
+		'view' in binding ? [BRIDGE_VIEW_TOOL, { slug: binding.view }] : [binding.tool, binding.input];
+	return runBridgeRead(store, viewer, { slug, kind: 'surface' }, name, stored, deps);
 }
 
 /**
@@ -223,7 +283,7 @@ export async function resolveSurfaceBindings(
 				try {
 					return [name, await resolveTool(store, viewer, surface.slug, binding, deps)];
 				} catch (error) {
-					return [name, failed(error)];
+					return [name, bridgeFailure(error)];
 				}
 			}
 		)

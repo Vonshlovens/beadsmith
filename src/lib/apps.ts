@@ -7,6 +7,7 @@
  */
 import type { GrownRevisionView, GrownSummary } from '#lib/grown.js';
 import type { AppSpec } from '#lib/server/grown/app-spec.js';
+import type { SurfaceBindingResult } from '#lib/surfaces.js';
 
 export type AppSpecShape = AppSpec;
 
@@ -25,4 +26,24 @@ export interface AppResponse {
 
 export interface AppHistoryResponse {
 	revisions: AppRevisionView[];
+}
+
+/**
+ * Most bytes in one bridge frame, in either direction (ADR-0025 limits):
+ * the host drops a bigger message from the app, and the server refuses a
+ * bigger call body.
+ */
+export const BRIDGE_FRAME_MAX_BYTES = 64 * 1024;
+
+/**
+ * `POST /api/apps/:slug/call`: one allowlisted read run as the viewer.
+ * `result` is a refusal value (not an HTTP error) when the tool refused, so
+ * the host can hand the app an MCP tool error it can show.
+ */
+export interface AppToolCallResponse {
+	slug: string;
+	/** The revision the viewer sees, so the host can tell the app was revised. */
+	revision: number;
+	name: string;
+	result: SurfaceBindingResult;
 }

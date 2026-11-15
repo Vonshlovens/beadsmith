@@ -1,13 +1,15 @@
 /**
  * One grown thing at `/views/<slug>` (ADR-0025): a saved view, run as the
- * viewer, or a catalog surface with its bindings resolved as the viewer.
- * Slugs are unique across kinds, so the page asks for a view first (the
- * common case) and, when no view has the slug, for a surface. Either kind
+ * viewer, a catalog surface with its bindings resolved as the viewer, or a
+ * sandboxed app (its document loads in the frame, not here). Slugs are
+ * unique across kinds, so the page asks for a view first (the common case)
+ * and, when no view has the slug, for a surface, then an app. A kind
  * that cannot read its data (a project left the catalogue, Dolt is down)
  * still shows its name and, for its owner, its history, so the owner can
  * revert or change it.
  */
 import { api, ApiError, errorMessage } from '#lib/client/api.js';
+import type { AppRevisionView, AppSummary } from '#lib/apps.js';
 import type { SurfaceDataResponse, SurfaceRevisionView, SurfaceSummary } from '#lib/surfaces.js';
 import type { ViewResult, ViewRevisionView, ViewSummary } from '#lib/views.js';
 import type { PageLoad } from './$types';
@@ -20,7 +22,8 @@ export const load: PageLoad = async ({ fetch, params }) => {
 	let result: ViewResult | null = null;
 	let surface: SurfaceSummary | null = null;
 	let surface_data: SurfaceDataResponse | null = null;
-	let revisions: (ViewRevisionView | SurfaceRevisionView)[] = [];
+	let app: AppSummary | null = null;
+	let revisions: (ViewRevisionView | SurfaceRevisionView | AppRevisionView)[] = [];
 	let error: string | null = null;
 	let run_error: string | null = null;
 	try {
@@ -37,8 +40,16 @@ export const load: PageLoad = async ({ fetch, params }) => {
 			} else {
 				try {
 					surface = (await api.surface(slug, { fetch })).surface;
-				} catch (last) {
-					error = errorMessage(last);
+				} catch (again) {
+					if (!notFound(again)) {
+						error = errorMessage(again);
+					} else {
+						try {
+							app = (await api.app(slug, { fetch })).app;
+						} catch (last) {
+							error = errorMessage(last);
+						}
+					}
 				}
 			}
 		}
@@ -50,16 +61,18 @@ export const load: PageLoad = async ({ fetch, params }) => {
 			run_error = errorMessage(thrown);
 		}
 	}
-	if (view?.mine || surface?.mine) {
+	if (view?.mine || surface?.mine || app?.mine) {
 		try {
 			revisions = (
 				view !== null
 					? await api.viewHistory(slug, { fetch })
-					: await api.surfaceHistory(slug, { fetch })
+					: surface !== null
+						? await api.surfaceHistory(slug, { fetch })
+						: await api.appHistory(slug, { fetch })
 			).revisions;
 		} catch {
 			/* the page still shows it; the history says it could not load */
 		}
 	}
-	return { slug, view, result, surface, surface_data, revisions, error, run_error };
+	return { slug, view, result, surface, surface_data, app, revisions, error, run_error };
 };

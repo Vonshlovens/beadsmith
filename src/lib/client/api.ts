@@ -24,6 +24,13 @@ import type {
 	ViewSummary
 } from '#lib/views.js';
 import type {
+	AppHistoryResponse,
+	AppResponse,
+	AppsResponse,
+	AppSummary,
+	AppToolCallResponse
+} from '#lib/apps.js';
+import type {
 	SurfaceActionResponse,
 	SurfaceDataResponse,
 	SurfaceHistoryResponse,
@@ -816,6 +823,63 @@ export const api = {
 
 	deleteSurface(slug: string, init?: RequestInitLike) {
 		return request<void>('DELETE', `/surfaces/${encodeURIComponent(slug)}`, init);
+	},
+
+	/** Sandboxed apps (ADR-0025 rule 3): the viewer's own and every published one. */
+	apps(init?: RequestInitLike) {
+		return request<AppsResponse>('GET', '/apps', init);
+	},
+
+	app(slug: string, init?: RequestInitLike) {
+		return request<AppResponse>('GET', `/apps/${encodeURIComponent(slug)}`, init);
+	},
+
+	/**
+	 * Forward an app's `tools/call` for an allowlisted read, run as the
+	 * viewer. A tool's refusal is `result.ok === false`, not a thrown error.
+	 */
+	callAppTool(
+		slug: string,
+		body: { name: string; arguments: Record<string, unknown> },
+		init?: RequestInitLike
+	) {
+		return request<AppToolCallResponse>('POST', `/apps/${encodeURIComponent(slug)}/call`, {
+			...init,
+			body
+		});
+	},
+
+	appHistory(slug: string, init?: RequestInitLike) {
+		return request<AppHistoryResponse>('GET', `/apps/${encodeURIComponent(slug)}/history`, init);
+	},
+
+	/** A new revision copying revision `number` forward. Owner only. */
+	revertApp(slug: string, number: number, init?: RequestInitLike) {
+		return request<AppResponse>('POST', `/apps/${encodeURIComponent(slug)}/revert`, {
+			...init,
+			body: { number }
+		});
+	},
+
+	/** Show revision `number` (default the latest) to members. Owner only. */
+	publishApp(slug: string, number?: number, init?: RequestInitLike) {
+		return request<AppResponse>('PUT', `/apps/${encodeURIComponent(slug)}/publish`, {
+			...init,
+			body: number === undefined ? {} : { number }
+		});
+	},
+
+	/** Hide it from members; `null` when it was another admin's app. Any admin. */
+	unpublishApp(slug: string, init?: RequestInitLike) {
+		return request<{ app: AppSummary | null }>(
+			'DELETE',
+			`/apps/${encodeURIComponent(slug)}/publish`,
+			init
+		);
+	},
+
+	deleteApp(slug: string, init?: RequestInitLike) {
+		return request<void>('DELETE', `/apps/${encodeURIComponent(slug)}`, init);
 	},
 
 	missions(

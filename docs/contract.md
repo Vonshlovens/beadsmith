@@ -434,6 +434,21 @@ the viewer may see (the owner's latest, else the published revision, else
 never parses or runs the document; it runs only in the viewer's browser, in
 an opaque origin with no network.
 
+`/views/:slug` frames an app in `<iframe sandbox="allow-scripts">` (pages
+allow only same-origin frames, `frame-src 'self'`, so the frame cannot
+navigate itself elsewhere) and speaks the MCP Apps JSON-RPC subset over
+`postMessage`: `ui/initialize` (answered with the theme and the viewer's
+role), `tools/call`, `ping` and the `initialized` and `size-changed`
+notifications. The page accepts frames only from that iframe's window and
+opaque origin, of at most 64 KB, and drops anything else. A `tools/call` for
+a read goes to `POST /api/apps/:slug/call` with `{ name, arguments }` (at
+most 64 KB): `name` is one of the bridge reads or `run_view`, anything else
+is `bad_request`. Any signed-in role may make this POST; it runs as the
+viewer, each crew tool keeping its own `permission`, and answers
+`{ slug, revision, name, result }`, `result` being a read's value or refusal
+as for a surface binding. Calls count against the same 60-a-minute limit
+per viewer and app (`rate_limited` with `Retry-After`).
+
 `GET /api/ready` is the cross-project Ready deck: open issues with no open
 `blocks` dependencies, merged across catalog projects the session can see,
 sorted by priority then recency. Parent-child, related, and discovered-from
@@ -540,7 +555,7 @@ written before its first byte; one that cannot be recorded is refused (503).
    repository keys stay outside it, added by a proxy.
 9. Grown capabilities (views, catalog surfaces and sandboxed apps,
    [ADR-0025](../specs/decisions/0025-grown-capabilities.md); views and
-   surfaces are implemented, apps not yet) are stored data, never SQL, and the web process never
+   surfaces are implemented; apps render and read, their actions not yet) are stored data, never SQL, and the web process never
    evaluates, imports or templates them. App code runs only in the viewer's
    browser, in a sandboxed iframe with an opaque origin, no network access and
    only vendored, hash-pinned libraries. Every read or action a grown thing

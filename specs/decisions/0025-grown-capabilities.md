@@ -211,8 +211,9 @@ view crew tools and proposed automations are implemented; surfaces are
 stored, served by `/api/surfaces`, written by First Mate's surface crew
 tools, their bindings resolved as the viewer, rendered at `/views/<slug>`,
 and their buttons run allowlisted actions as the viewer behind the host
-confirmation; apps are not yet
-(see Implementation notes).
+confirmation; apps are stored, served from their sandboxed frame route,
+framed at `/views/<slug>` and read through the bridge as the viewer, while
+app actions and app crew tools are not yet (see Implementation notes).
 
 ## Alternatives considered
 
@@ -448,8 +449,41 @@ Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
   `no-store`. `?theme=dark` puts `class="dark"` on the frame's `<html>`,
   since the frame cannot read the page's theme.
 
-Still expected for apps: the host page that frames an app at `/views/<slug>`
-with the postMessage bridge, actions behind the host confirmation, the app
+- Apps, host and reads: `/views/<slug>` asks for a view, then a surface,
+  then an app, and frames an app with
+  [`app-frame.svelte`](../../src/lib/components/app/app-frame.svelte):
+  `sandbox="allow-scripts"`, `no-referrer`, the frame route's URL carrying
+  the page's resolved theme (a theme switch reloads the app with the other
+  tokens) and the revision. The bridge is
+  [`src/lib/client/app-bridge.ts`](../../src/lib/client/app-bridge.ts), a
+  plain module so its checks are unit-tested without a browser. It takes a
+  frame only from that iframe's window **and** the opaque origin (`"null"`),
+  at most 64 KB as JSON, shaped as a JSON-RPC 2.0 request or notification;
+  everything else is dropped, and logged unless it came from another
+  window. It answers `ui/initialize` (host context: theme, display mode,
+  the viewer's role), `tools/call`, `ping`, and reads the `initialized` and
+  `size-changed` notifications (the height is clamped). An app opens at
+  `/views/<slug>` rather than as some tool's result, so the host has no
+  `tool-input` or `tool-result` of its own to announce; the result of an
+  app's call is the response to its `tools/call`, an MCP `CallToolResult`
+  with the data as `structuredContent` and JSON text, and a refusal as
+  `isError`. An answer over 64 KB drops the structured copy, then becomes a
+  JSON-RPC error. The host refuses calls past the server's 60 a minute and
+  past four in flight without a request, so a looping app costs nothing.
+  Replies go to the iframe's window with target origin `*`, since an
+  opaque origin has no name; the pages' CSP now says `frame-src 'self'`
+  (it was the `default-src` fallback before), which is what keeps that
+  window from navigating to another origin and carrying data with it.
+  `POST /api/apps/:slug/call` runs the read through `runBridgeRead` in
+  [`bindings.ts`](../../src/lib/server/grown/bindings.ts), the function a
+  surface binding runs, so both kinds share the permission check, input
+  parse, bounding and limiter. An app's arguments arrive per call, so the
+  project rule a surface meets at save time is checked on every call. The
+  request gate lets any signed-in role make that one POST (it is a read
+  with a body); the route itself answers only the bridge reads and
+  `run_view`. `/views` lists apps beside views and surfaces.
+
+Still expected for apps: actions behind the host confirmation, the app
 crew tools and the first vendored chart library. Exporting apps as
 `ui://` resources to outside MCP clients is a later follow-on, not v1. See
 the matching row in [`specs/README.md`](../README.md).

@@ -4,7 +4,8 @@
 	 * A view shows its rows through the project read path, as a list
 	 * (optionally grouped) or a board per project; a catalog surface is drawn
 	 * natively from its component tree with its bindings resolved as the
-	 * viewer. The owner also sees the history, newest first, and reverts (a
+	 * viewer; a sandboxed app runs in its frame, reading through the bridge as
+	 * the viewer. The owner also sees the history, newest first, and reverts (a
 	 * new revision copying an old one forward), publishes a revision, or
 	 * deletes it. Any admin may unpublish one members see.
 	 */
@@ -14,6 +15,7 @@
 	import EyeSlashIcon from 'phosphor-svelte/lib/EyeSlashIcon';
 	import FunnelSimpleIcon from 'phosphor-svelte/lib/FunnelSimpleIcon';
 	import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
+	import AppFrame from '#lib/components/app/app-frame.svelte';
 	import ConfirmDialog from '#lib/components/confirm-dialog.svelte';
 	import EmptyState from '#lib/components/empty-state.svelte';
 	import GrownHistory from '#lib/components/grown-history.svelte';
@@ -49,9 +51,10 @@
 
 	const view = $derived(data.view);
 	const surface = $derived(data.surface);
-	/** Whichever kind this slug is; the header, history and dialogs treat both alike. */
-	const thing = $derived(view ?? surface);
-	const kind_word = $derived(view !== null ? 'view' : 'surface');
+	const app = $derived(data.app);
+	/** Whichever kind this slug is; the header, history and dialogs treat every kind alike. */
+	const thing = $derived(view ?? surface ?? app);
+	const kind_word = $derived(view !== null ? 'view' : surface !== null ? 'surface' : 'app');
 	const result = $derived(data.result);
 	const is_admin = $derived(currentViewer()?.role === 'admin');
 	const names = $derived(new Map(projectList().map((p) => [p.id, p.name])));
@@ -97,12 +100,19 @@
 					unpublish: async () => (await api.unpublishView(data.slug)).view,
 					remove: () => api.deleteView(data.slug)
 				}
-			: {
-					revert: (n: number) => api.revertSurface(data.slug, n),
-					publish: (n?: number) => api.publishSurface(data.slug, n),
-					unpublish: async () => (await api.unpublishSurface(data.slug)).surface,
-					remove: () => api.deleteSurface(data.slug)
-				}
+			: surface !== null
+				? {
+						revert: (n: number) => api.revertSurface(data.slug, n),
+						publish: (n?: number) => api.publishSurface(data.slug, n),
+						unpublish: async () => (await api.unpublishSurface(data.slug)).surface,
+						remove: () => api.deleteSurface(data.slug)
+					}
+				: {
+						revert: (n: number) => api.revertApp(data.slug, n),
+						publish: (n?: number) => api.publishApp(data.slug, n),
+						unpublish: async () => (await api.unpublishApp(data.slug)).app,
+						remove: () => api.deleteApp(data.slug)
+					}
 	);
 
 	async function refresh() {
@@ -304,6 +314,16 @@
 					can_act={is_admin}
 				/>
 			</div>
+		{:else if app !== null}
+			<div class="sf-body">
+				<AppFrame
+					slug={app.slug}
+					name={app.name}
+					revision={app.revision}
+					theme={app_state.resolved_theme}
+					role={currentViewer()?.role ?? 'member'}
+				/>
+			</div>
 		{:else if view !== null && result !== null}
 			{#if result.skipped.length > 0}
 				<div class="banner banner-warn" role="status">
@@ -372,7 +392,9 @@
 				{busy}
 				revert_help={view !== null
 					? 'Adds a new revision with this one’s name, description and filters'
-					: 'Adds a new revision with this one’s name, description and layout'}
+					: surface !== null
+						? 'Adds a new revision with this one’s name, description and layout'
+						: 'Adds a new revision with this one’s name, description and code'}
 				onrevert={revert}
 				onpublish={publish}
 			/>
