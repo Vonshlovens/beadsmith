@@ -559,6 +559,18 @@ export interface Mission extends DispatchRequest {
 	actor: string;
 	project_name: string;
 	title?: string;
+	/**
+	 * The catalog surface whose button launched it, only when this viewer may
+	 * see that surface: an owner-private surface's slug never reaches anyone
+	 * else (ADR-0025 rule 5).
+	 */
+	surface?: MissionSurface;
+}
+
+/** A launching surface as a mission row links it: `/views/<slug>`. */
+export interface MissionSurface {
+	slug: string;
+	name: string;
 }
 
 /** One message in a mission's conversation. */

@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createClient } from '@libsql/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createGrownStore, type GrownStore, type GrownViewer } from '#lib/server/grown/store.js';
+import { initStateSchema, setGrownStore } from '#lib/server/state/db.js';
 import type { Mission } from '#lib/types.js';
 import { GET } from './+server.js';
 
@@ -28,11 +31,30 @@ const MISSION: Mission = {
 	updated_at: '2026-08-25T00:00:00.000Z'
 };
 
-async function get(query = ''): Promise<Response> {
+type User = { id: string; role: 'admin' | 'member' };
+const OWNER: User = { id: 'acct_owner', role: 'admin' };
+const ADMIN2: User = { id: 'acct_admin2', role: 'admin' };
+const MEMBER: User = { id: 'acct_member', role: 'member' };
+
+async function get(query = '', user: User = OWNER): Promise<Response> {
 	return GET({
-		url: new URL(`http://localhost/api/missions${query}`)
+		url: new URL(`http://localhost/api/missions${query}`),
+		locals: { user, role: user.role }
 	} as unknown as Parameters<typeof GET>[0]);
 }
+
+let grown: GrownStore;
+
+beforeEach(async () => {
+	const client = createClient({ url: ':memory:' });
+	await initStateSchema(client);
+	grown = createGrownStore(client);
+	setGrownStore(grown);
+});
+
+afterEach(() => {
+	setGrownStore(undefined);
+});
 
 beforeEach(() => {
 	mocks.discoverProjects.mockReset();
@@ -58,7 +80,7 @@ describe('GET /api/missions', () => {
 		expect(await response.json()).toEqual({ missions: [MISSION] });
 		expect(mocks.listMissions).toHaveBeenCalledWith(
 			{ limit: 50 },
-			{ project_names: new Map([['d_beads_web', 'beads_web']]) }
+			{ project_names: new Map([['d_beads_web', 'beads_web']]), surface_names: new Map() }
 		);
 	});
 
@@ -78,7 +100,10 @@ describe('GET /api/missions', () => {
 		const response = await get();
 
 		expect(response.status).toBe(200);
-		expect(mocks.listMissions).toHaveBeenCalledWith({ limit: 50 }, { project_names: new Map() });
+		expect(mocks.listMissions).toHaveBeenCalledWith(
+			{ limit: 50 },
+			{ project_names: new Map(), surface_names: new Map() }
+		);
 	});
 
 	it('rejects an invalid project id', async () => {
@@ -86,5 +111,59 @@ describe('GET /api/missions', () => {
 
 		expect(response.status).toBe(400);
 		expect(mocks.listMissions).not.toHaveBeenCalled();
+	});
+
+	describe('launching surfaces', () => {
+		const owner: GrownViewer = { account_id: OWNER.id, role: 'admin' };
+		const spec = {
+			root: 'ready_count',
+			components: [{ id: 'ready_count', component: 'StatTile', label: 'Ready', count: 'ready' }],
+			data: { ready: { tool: 'ready_work', input: { limit: 20 } } }
+		};
+
+		beforeEach(async () => {
+			for (const [slug, name] of [
+				['private-board', 'Private board'],
+				['shared-board', 'Shared board']
+			]) {
+				await grown.create(owner, {
+					kind: 'surface',
+					slug,
+					name,
+					spec,
+					author: { kind: 'person', account_id: OWNER.id, chat_id: null }
+				});
+			}
+			await grown.publish(owner, 'shared-board');
+		});
+
+		async function surfaceNamesFor(user: User) {
+			mocks.listMissions.mockClear();
+			expect((await get('', user)).status).toBe(200);
+			return mocks.listMissions.mock.calls[0][1].surface_names as Map<string, string>;
+		}
+
+		it('names the owner every surface they may see, private ones included', async () => {
+			expect(await surfaceNamesFor(OWNER)).toEqual(
+				new Map([
+					['private-board', 'Private board'],
+					['shared-board', 'Shared board']
+				])
+			);
+		});
+
+		it.each([
+			['a member', MEMBER],
+			['another admin', ADMIN2]
+		])('never names an owner-private surface to %s', async (_label, user) => {
+			expect(await surfaceNamesFor(user)).toEqual(new Map([['shared-board', 'Shared board']]));
+		});
+
+		it('still lists missions when the state store is unavailable', async () => {
+			setGrownStore({
+				list: () => Promise.reject(new Error('state down'))
+			} as unknown as GrownStore);
+			expect(await surfaceNamesFor(OWNER)).toEqual(new Map());
+		});
 	});
 });

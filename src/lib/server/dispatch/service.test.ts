@@ -1131,6 +1131,30 @@ describe('listMissions', () => {
 		});
 		expect(JSON.stringify(missions)).not.toContain('secret body');
 	});
+
+	it('names a launching surface only when the caller says the viewer may see it', async () => {
+		await store.create({
+			idempotency_key: 'idem-surface1',
+			project_id: 'd_beads_web',
+			dolt_database: 'beads_web',
+			operation: 'tackle',
+			actor: 'owner@example.com',
+			grown_slug: 'triage-board',
+			payload: { operation: 'tackle', issue_id: 'beads-web-s42.3' }
+		});
+
+		const visible = await listMissions(
+			{ limit: 10 },
+			{ store, surface_names: new Map([['triage-board', 'Triage board']]) }
+		);
+		expect(visible[0].surface).toEqual({ slug: 'triage-board', name: 'Triage board' });
+
+		for (const surface_names of [undefined, new Map([['other', 'Other']])]) {
+			const hidden = await listMissions({ limit: 10 }, { store, surface_names });
+			expect(hidden[0]).not.toHaveProperty('surface');
+			expect(JSON.stringify(hidden)).not.toContain('triage-board');
+		}
+	});
 });
 
 describe('streamDispatchMissionEvents', () => {

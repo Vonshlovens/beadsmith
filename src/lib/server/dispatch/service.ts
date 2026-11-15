@@ -627,12 +627,21 @@ export function publicLoop(
  * Fleet representation: includes actor and a short title, never File notes,
  * Tackle description, or the idempotency key.
  */
-export function toPublicMission(record: DispatchRecord, project_name: string): Mission {
+export function toPublicMission(
+	record: DispatchRecord,
+	project_name: string,
+	surface_names?: ReadonlyMap<string, string>
+): Mission {
+	const surface_name =
+		record.grown_slug === undefined ? undefined : surface_names?.get(record.grown_slug);
 	return {
 		...toPublicDispatch(record),
 		actor: record.actor,
 		project_name,
-		title: publicTitle(record.payload)
+		title: publicTitle(record.payload),
+		...(surface_name === undefined || record.grown_slug === undefined
+			? {}
+			: { surface: { slug: record.grown_slug, name: surface_name } })
 	};
 }
 
@@ -1639,16 +1648,25 @@ export async function attachDispatchTerminal(
 	}
 }
 
-/** Recent File/Tackle runs for the fleet view or an issue's linked missions. */
+/**
+ * Recent File/Tackle runs for the fleet view or an issue's linked missions.
+ * `surface_names` holds the surfaces the viewer may see (slug to name); a
+ * mission launched from any other surface does not name it, so the caller
+ * decides visibility and omitting the map names none.
+ */
 export async function listMissions(
 	filter: ListDispatchFilter,
-	deps: { store?: DispatchStore; project_names?: ReadonlyMap<string, string> } = {}
+	deps: {
+		store?: DispatchStore;
+		project_names?: ReadonlyMap<string, string>;
+		surface_names?: ReadonlyMap<string, string>;
+	} = {}
 ): Promise<Mission[]> {
 	const store = deps.store ?? (await getDispatchStore());
 	const records = await store.list(filter);
 	return records.map((record) => {
 		const project_name = deps.project_names?.get(record.project_id) ?? record.dolt_database;
-		return toPublicMission(record, project_name);
+		return toPublicMission(record, project_name, deps.surface_names);
 	});
 }
 
