@@ -427,7 +427,7 @@ describe('/api/surfaces/:slug/actions/:name', () => {
 			actions: { add: { tool: 'create_todo', input: { title: 'Follow up' } } }
 		}
 	};
-	const KEY = '9b2f8c1e-7a4d-4e1b-9c3a-2f6d8e0b1a5c';
+	const KEY = '00000000-0000-4000-8000-000000000001';
 
 	function press(user: User | null, body: unknown = { revision: 1, key: KEY }, name = 'add') {
 		return call(ACTION, 'POST', `/api/surfaces/todo-button/actions/${name}`, {

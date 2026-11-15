@@ -245,7 +245,7 @@ describe('runSurfaceAction', () => {
 
 describe('surface_action_request_schema', () => {
 	it('takes a revision and a confirmation key, nothing else', () => {
-		const key = '9b2f8c1e-7a4d-4e1b-9c3a-2f6d8e0b1a5c';
+		const key = '00000000-0000-4000-8000-000000000001';
 		expect(surface_action_request_schema.safeParse({ revision: 1, key }).success).toBe(true);
 		for (const body of [
 			{ revision: 0, key },

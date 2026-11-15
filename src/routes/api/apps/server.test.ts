@@ -345,7 +345,7 @@ describe('/api/apps/:slug/call', () => {
 });
 
 describe('/api/apps/:slug/actions', () => {
-	const KEY = '9b2f8c1e-7a4d-4e1b-9c3a-2f6d8e0b1a5c';
+	const KEY = '00000000-0000-4000-8000-000000000001';
 	const ADD = { name: 'create_todo', arguments: { title: 'Follow up' }, revision: 1, key: KEY };
 
 	function act(user: User | null, body: unknown = ADD, slug = 'burndown') {
