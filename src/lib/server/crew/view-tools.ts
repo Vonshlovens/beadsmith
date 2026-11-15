@@ -1,8 +1,9 @@
 /**
  * Crew view tools (ADR-0025 rules 1, 5, 7, 8 and 9): First Mate creates and
  * revises saved views, lists them, runs them and reverts them, through the
- * same grown things store the `/api/views` routes use. The store decides
- * who may see or change what, so these tools add no rule of their own.
+ * same grown things store the `/api/views` routes use, with the rules every
+ * grown tool shares (`grown-tools.ts`). The store decides who may see or
+ * change what, so these tools add no rule of their own.
  *
  * - Every call acts as the chat's owner with the owner's role (rule 5), and
  *   every revision it writes is attributed to First Mate and the chat (rule 8).
@@ -13,16 +14,9 @@
  *   its views as tools instead of rebuilding the query each time.
  */
 import { z } from 'zod';
-import type { Permission } from '../auth/roles.js';
-import { getGrownStore } from '../state/db.js';
-import { GrownError } from '../grown/errors.js';
 import {
 	GROWN_DESCRIPTION_MAX,
 	GROWN_NAME_MAX,
-	GROWN_SLUG_MAX,
-	GROWN_SLUG_PATTERN,
-	type GrownAuthor,
-	type GrownStore,
 	type GrownThing,
 	type GrownViewer
 } from '../grown/store.js';
@@ -32,58 +26,27 @@ import {
 	view_spec_schema,
 	type RunViewDeps
 } from '../grown/view-spec.js';
-import { requireGrown, grownRevisionView, grownSummary } from '../grown/grown-api.js';
+import { requireGrown } from '../grown/grown-api.js';
 import { VIEW_GROUPS, VIEW_PRESENTATIONS, VIEW_SORTS, type ViewSpecShape } from '#lib/views.js';
 import { compactIssue, resolveCrewProject } from './read-tools.js';
+import { defineTool, type CrewDeps, type CrewTool } from './registry.js';
 import {
-	CrewToolError,
-	defineTool,
-	type CrewContext,
-	type CrewDeps,
-	type CrewTool
-} from './registry.js';
+	compactGrown,
+	defineGrown,
+	GROWN_WRITE_PERMISSION,
+	grown,
+	grownHistoryTool,
+	grownRevertTool,
+	grownSlugSchema,
+	grownStore,
+	grownUrl,
+	viewerOf
+} from './grown-tools.js';
 
-/** Writes need what the `/api/views` writes need: the request gate's admin default. */
-const VIEW_WRITE_PERMISSION: Permission = { console: ['manage'] };
-
-/** Revisions `view_history` returns unless asked for more. */
-const HISTORY_DEFAULT = 10;
-
-const slug_schema = z
-	.string()
-	.max(GROWN_SLUG_MAX)
-	.regex(GROWN_SLUG_PATTERN, 'lowercase letters and digits in dash-separated words')
-	.describe('The view\'s slug, like "blocked-on-review"; its page is /views/<slug>.');
-
-function grownStore(deps: CrewDeps): Promise<GrownStore> {
-	return (deps.grown ?? getGrownStore)();
-}
-
-function viewerOf(ctx: CrewContext): GrownViewer {
-	return { account_id: ctx.account_id, role: ctx.role };
-}
-
-function firstMate(ctx: CrewContext): GrownAuthor {
-	return { kind: 'first_mate', account_id: ctx.account_id, chat_id: ctx.chat_id };
-}
-
-/** The page a view renders on, which the create and revise tools return (rule 9). */
-export function viewUrl(slug: string): string {
-	return `/views/${slug}`;
-}
-
-/** Run a store call, turning its refusal into a message the model reads. */
-async function grown<T>(work: () => Promise<T>): Promise<T> {
-	try {
-		return await work();
-	} catch (error) {
-		if (error instanceof GrownError) throw new CrewToolError(error.message);
-		throw error;
-	}
-}
+const slug_schema = grownSlugSchema('view');
 
 function compactView(thing: GrownThing, viewer: GrownViewer) {
-	return { ...grownSummary<ViewSpecShape>(thing, viewer), url: viewUrl(thing.slug) };
+	return compactGrown<ViewSpecShape>(thing, viewer);
 }
 
 /**
@@ -134,7 +97,7 @@ export const define_view = defineTool({
 		presentation: z.enum(VIEW_PRESENTATIONS).default('list'),
 		group_by: z.enum(VIEW_GROUPS).optional().describe('Group a list view’s rows.')
 	}),
-	permission: VIEW_WRITE_PERMISSION,
+	permission: GROWN_WRITE_PERMISSION,
 	async handler(ctx, input, deps) {
 		const scope =
 			input.project === 'all'
@@ -147,34 +110,13 @@ export const define_view = defineTool({
 			presentation: input.presentation,
 			...(input.group_by === undefined ? {} : { group_by: input.group_by })
 		};
-		const store = await grownStore(deps);
-		const viewer = viewerOf(ctx);
-		return grown(async () => {
-			const existing = await store.read(viewer, input.slug);
-			if (existing !== undefined && existing.kind !== 'view') {
-				throw new GrownError('conflict', `The slug "${input.slug}" is taken. Pick another.`);
-			}
-			const thing =
-				existing === undefined
-					? await store.create(viewer, {
-							kind: 'view',
-							slug: input.slug,
-							name: input.name,
-							description: input.description,
-							spec,
-							author: firstMate(ctx)
-						})
-					: await store.revise(viewer, input.slug, {
-							name: input.name,
-							description: input.description,
-							spec,
-							author: firstMate(ctx)
-						});
-			return {
-				written: existing === undefined ? 'created' : 'revised',
-				view: compactView(thing, viewer)
-			};
+		const { written, thing, viewer } = await defineGrown(ctx, deps, 'view', {
+			slug: input.slug,
+			name: input.name,
+			description: input.description,
+			spec
 		});
+		return { written, view: compactView(thing, viewer) };
 	}
 });
 
@@ -209,7 +151,7 @@ export const run_view = defineTool({
 					slug: thing.slug,
 					name: thing.revision.name,
 					revision: thing.revision.number,
-					url: viewUrl(thing.slug)
+					url: grownUrl(thing.slug)
 				},
 				issues: result.issues.map((issue) => ({
 					...compactIssue(issue),
@@ -229,59 +171,20 @@ export const run_view = defineTool({
 	}
 });
 
-export const view_history = defineTool({
-	name: 'view_history',
-	description:
-		'The kept revisions of one of the chat owner’s views, newest first: number, who wrote ' +
-		'it, its definition and whether members see it. Use a number with revert_view.',
-	input: z.strictObject({
-		slug: slug_schema,
-		limit: z.number().int().min(1).max(50).default(HISTORY_DEFAULT)
-	}),
-	permission: VIEW_WRITE_PERMISSION,
-	async handler(ctx, input, deps) {
-		const viewer = viewerOf(ctx);
-		return grown(async () => {
-			const store = await grownStore(deps);
-			const thing = await requireGrown(store, viewer, 'view', input.slug);
-			const revisions = await store.history(viewer, input.slug);
-			return {
-				slug: thing.slug,
-				url: viewUrl(thing.slug),
-				revisions: revisions
-					.slice(0, input.limit)
-					.map((revision) =>
-						grownRevisionView<ViewSpecShape>(revision, thing.published_revision_id)
-					),
-				...(revisions.length > input.limit
-					? { note: `${revisions.length - input.limit} older revisions not shown.` }
-					: {})
-			};
-		});
-	}
-});
+export const view_history = grownHistoryTool(
+	'view',
+	'view_history',
+	'The kept revisions of one of the chat owner’s views, newest first: number, who wrote ' +
+		'it, its definition and whether members see it. Use a number with revert_view.'
+);
 
-export const revert_view = defineTool({
-	name: 'revert_view',
-	description:
-		'Restore one of the chat owner’s views to an earlier revision (from view_history). ' +
+export const revert_view = grownRevertTool(
+	'view',
+	'revert_view',
+	'Restore one of the chat owner’s views to an earlier revision (from view_history). ' +
 		'The revert is itself a new revision, so nothing is lost. What members see changes only ' +
-		'when an admin publishes.',
-	input: z.strictObject({
-		slug: slug_schema,
-		number: z.number().int().min(1).describe('The revision number to restore.')
-	}),
-	permission: VIEW_WRITE_PERMISSION,
-	async handler(ctx, input, deps) {
-		const viewer = viewerOf(ctx);
-		return grown(async () => {
-			const store = await grownStore(deps);
-			await requireGrown(store, viewer, 'view', input.slug);
-			const thing = await store.revert(viewer, input.slug, input.number, firstMate(ctx));
-			return { reverted_to: input.number, view: compactView(thing, viewer) };
-		});
-	}
-});
+		'when an admin publishes.'
+);
 
 export const VIEW_TOOLS: CrewTool[] = [
 	define_view,

@@ -348,6 +348,10 @@ const CREW_TOOL_VERBS: Record<string, readonly [running: string, done: string]> 
 	run_view: ['Running a view', 'Ran a view'],
 	view_history: ['Reading a view’s history', 'Read a view’s history'],
 	revert_view: ['Reverting a view', 'Reverted a view'],
+	define_surface: ['Saving a surface', 'Saved a surface'],
+	list_surfaces: ['Listing surfaces', 'Listed surfaces'],
+	surface_history: ['Reading a surface’s history', 'Read a surface’s history'],
+	revert_surface: ['Reverting a surface', 'Reverted a surface'],
 	define_automation: ['Proposing an automation', 'Proposed an automation'],
 	list_automations: ['Listing automations', 'Listed automations']
 };

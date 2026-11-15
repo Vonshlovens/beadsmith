@@ -207,8 +207,9 @@ place the app's global `frame-ancestors 'none'` is relaxed, and only for a
 document that is itself sandboxed.
 
 Shipped versus target: the store, the view spec, the views catalogue, the
-view crew tools and proposed automations are implemented; the surface spec
-is stored but surfaces are not yet served or rendered, and apps are not yet
+view crew tools and proposed automations are implemented; surfaces are
+stored, served by `/api/surfaces` and written by First Mate's surface crew
+tools, but not yet rendered, and apps are not yet
 (see Implementation notes).
 
 ## Alternatives considered
@@ -324,6 +325,20 @@ Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
   reason and keeps the marker, which the browser reads as
   `proposed_by_first_mate` (never the chat id) and /automations shows.
   There is no crew tool to resume, edit, run or delete an automation.
+- Surface crew tools:
+  [`src/lib/server/crew/surface-tools.ts`](../../src/lib/server/crew/surface-tools.ts)
+  (`define_surface`, `list_surfaces`, `surface_history`, `revert_surface`).
+  What every kind's tools share (viewer, First Mate author, create-or-revise
+  under one slug, history and revert, the admin write permission, the
+  `/views/<slug>` URL both kinds render at) lives once in
+  [`grown-tools.ts`](../../src/lib/server/crew/grown-tools.ts), which the
+  view tools use too. `define_surface` takes the spec as plain JSON and
+  leaves every check to the store's parse, so a bad tree comes back with the
+  browser API's message and there is one validator. The catalog its
+  description teaches is generated from the catalog schema, so a new
+  component or prop needs no second copy. `list_surfaces` leaves out the
+  trees (up to 32 KB each); the newest `surface_history` revision is the one
+  to edit. No publish tool (rule 7).
 
 - Surface spec: [`surface-spec.ts`](../../src/lib/server/grown/surface-spec.ts).
   **Renderer choice (the spike):** Beadsmith's own schema and Svelte
@@ -350,7 +365,7 @@ Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
   schema by the kind's async `check`, so a bad input is refused when saved.
 
 Still expected: the vendored library allowlist pinned in one file, like hc's pin
-([0021](./0021-hc-terminal-runtime.md)); the surfaces API, binding
-resolution, renderer, actions and crew tools. Exporting apps as
+([0021](./0021-hc-terminal-runtime.md)); surface binding
+resolution, renderer and actions. Exporting apps as
 `ui://` resources to outside MCP clients is a later follow-on, not v1. See
 the matching row in [`specs/README.md`](../README.md).

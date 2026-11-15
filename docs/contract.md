@@ -385,7 +385,10 @@ Catalog surfaces (the same ADR) have the same routes under
 tree over Beadsmith's own catalog; a component, prop or tool the catalog and
 the bridge allowlist do not name is refused when saved. Slugs are shared
 across kinds, and each set of routes answers `not_found` for the other
-kind's slug.
+kind's slug. First Mate's surface crew tools (`define_surface`,
+`list_surfaces`, `surface_history`, `revert_surface`) use the same store and
+parse as the chat's owner, attributing each revision to First Mate and the
+chat; none of them publishes.
 
 `GET /api/ready` is the cross-project Ready deck: open issues with no open
 `blocks` dependencies, merged across catalog projects the session can see,
