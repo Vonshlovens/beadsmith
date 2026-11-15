@@ -6,6 +6,13 @@
  * into client and server output. Packages under MIT, ISC, or 0BSD are listed; every
  * other license gets its full text (and any NOTICE file) inlined.
  *
+ * Also covers the files vendored under `vendor/` for sandboxed apps
+ * (src/lib/server/grown/app-libraries.ts). They ship inside the server
+ * bundle as text, with no package directory carrying their license, so
+ * every one gets its full license text whatever the license. Each
+ * `package.json` under `vendor/` (a vendored file, or a package bundled
+ * inside one) names what to credit; its `LICENSE*` sits beside it.
+ *
  *   pnpm run notices          # rewrite the file
  *   pnpm run notices --check  # exit 1 when the file is stale
  */
@@ -14,6 +21,7 @@ import { existsSync, readFileSync, readdirSync, realpathSync, writeFileSync } fr
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const OUTPUT = join(ROOT, 'THIRD_PARTY_NOTICES.md');
+const VENDOR = join(ROOT, 'vendor');
 /** Shipped although declared as devDependencies (bundled or imported at start). */
 const SHIPPED_DEV = ['@sveltejs/adapter-node', '@sveltejs/kit', 'svelte'];
 /** Shipped, but their own dependencies (if any) are build tools, not shipped. */
@@ -128,7 +136,34 @@ function collect(): Entry[] {
 	);
 }
 
-function render(entries: Entry[]): string {
+/** Every vendored manifest, in path order so the output is the same everywhere. */
+function collectVendored(): Entry[] {
+	if (!existsSync(VENDOR)) return [];
+	return (readdirSync(VENDOR, { recursive: true }) as string[])
+		.filter((path) => path.split(/[\\/]/).pop() === 'package.json')
+		.sort()
+		.map((path) => {
+			const dir = dirname(join(VENDOR, path));
+			const pkg = readJson(join(dir, 'package.json'));
+			if (findFile(dir, /^licen[cs]e/i) === undefined) {
+				throw new Error(`vendor/${path} has no LICENSE file beside it`);
+			}
+			return { name: pkg.name, version: pkg.version, license: licenseOf(pkg, dir), dir };
+		});
+}
+
+function licenseSections(e: Entry): string[] {
+	const lines = ['', `## ${e.name}@${e.version} (${e.license})`];
+	// Every license and notice file: dual-licensed packages ship one per license.
+	for (const pattern of [/^licen[cs]e/i, /^notice/i]) {
+		for (const file of findFiles(e.dir, pattern)) {
+			lines.push('', '```text', readFileSync(file, 'utf8').trimEnd(), '```');
+		}
+	}
+	return lines;
+}
+
+function render(entries: Entry[], vendored: Entry[]): string {
 	const lines = [
 		'# Third-party notices',
 		'',
@@ -148,24 +183,34 @@ function render(entries: Entry[]): string {
 		...entries.map((e) => `| ${e.name} | ${e.version} | ${e.license} |`)
 	];
 	for (const e of entries.filter((entry) => !LISTED_ONLY.has(entry.license))) {
-		lines.push('', `## ${e.name}@${e.version} (${e.license})`);
-		// Every license and notice file: dual-licensed packages ship one per license.
-		for (const pattern of [/^licen[cs]e/i, /^notice/i]) {
-			for (const file of findFiles(e.dir, pattern)) {
-				lines.push('', '```text', readFileSync(file, 'utf8').trimEnd(), '```');
-			}
-		}
+		lines.push(...licenseSections(e));
+	}
+	if (vendored.length > 0) {
+		lines.push(
+			'',
+			'# Vendored for sandboxed apps',
+			'',
+			'These files are committed under `vendor/` and inlined into the sandboxed',
+			'apps that name them (`src/lib/server/grown/app-libraries.ts`). No package',
+			'directory carries their licenses into the image, so each is reproduced in full.',
+			'',
+			'| Package | Version | License |',
+			'| --- | --- | --- |',
+			...vendored.map((e) => `| ${e.name} | ${e.version} | ${e.license} |`)
+		);
+		for (const e of vendored) lines.push(...licenseSections(e));
 	}
 	return `${lines.join('\n')}\n`;
 }
 
 const entries = collect();
-const unknown = entries.filter((e) => e.license === 'UNKNOWN');
+const vendored = collectVendored();
+const unknown = [...entries, ...vendored].filter((e) => e.license === 'UNKNOWN');
 if (unknown.length > 0) {
 	console.error(`Unknown license: ${unknown.map((e) => `${e.name}@${e.version}`).join(', ')}`);
 	process.exit(1);
 }
-const next = render(entries);
+const next = render(entries, vendored);
 if (process.argv.includes('--check')) {
 	const current = existsSync(OUTPUT) ? readFileSync(OUTPUT, 'utf8') : '';
 	if (current !== next) {

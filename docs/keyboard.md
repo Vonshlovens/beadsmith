@@ -12,27 +12,36 @@ with `useHotkeys` (`src/lib/client/hotkeys.svelte.ts`), and
 
 ## Everywhere
 
-| Keys  | Does                                             |
-| ----- | ------------------------------------------------ |
-| `?`   | Keyboard shortcuts                               |
-| `/`   | Search (the page's filter box, else the top bar) |
-| `⌘K`  | Command palette (Ctrl+K off a Mac)               |
-| `.`   | Recent changes (the drawer from the top bar)     |
-| `[`   | Collapse or open the navigation rail             |
-| `r`   | Refresh (pages with a refresh button)            |
-| `Esc` | Leave a field; on an issue or thread, go back    |
-| `g p` | Projects (`/projects`)                           |
-| `g i` | Issues in the current (or last visited) project  |
-| `g b` | Board                                            |
-| `g r` | Ready                                            |
-| `g f` | First Mate (the chat)                            |
-| `g m` | Missions                                         |
-| `g u` | Automations                                      |
-| `g a` | Activity log                                     |
-| `g c` | Console                                          |
-| `g t` | Todos (admins)                                   |
+| Keys  | Does                                                        |
+| ----- | ----------------------------------------------------------- |
+| `?`   | Keyboard shortcuts                                          |
+| `/`   | Search (the page's filter box, else the top bar)            |
+| `⌘K`  | Command palette (Ctrl+K off a Mac)                          |
+| `.`   | Recent changes (the drawer from the top bar)                |
+| `[`   | Collapse or open the navigation rail                        |
+| `\`   | Change this: point at the page to request a change (admins) |
+| `r`   | Refresh (pages with a refresh button)                       |
+| `Esc` | Leave a field; on an issue or thread, go back               |
+| `g p` | Projects (`/projects`)                                      |
+| `g i` | Issues in the current (or last visited) project             |
+| `g b` | Board                                                       |
+| `g r` | Ready                                                       |
+| `g f` | First Mate (the chat)                                       |
+| `g m` | Missions                                                    |
+| `g u` | Automations                                                 |
+| `g a` | Activity log                                                |
+| `g c` | Console                                                     |
+| `g t` | Todos (admins)                                              |
 
 `/` itself opens First Mate.
+
+## Change this (admins)
+
+`\` (or the crosshair in the top bar) turns the mode on when dispatch is
+armed. While it is on it owns the keyboard: Tab to an element and press
+`Enter` or `Space` to select it, `↑` `↓` move to the parent and first child,
+`←` `→` to siblings, `Enter` opens the request, `⌘Enter` (Ctrl+Enter) sends
+it, and `Esc` closes the request, then leaves the mode. `\` leaves too.
 
 ## Command palette
 

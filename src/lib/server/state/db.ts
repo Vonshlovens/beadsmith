@@ -17,6 +17,7 @@ import { createTodoStore, TODO_SCHEMA_SQL, type TodoStore } from '../todos/store
 import { createMateStore, MATE_SCHEMA_SQL, type MateStore } from '../mate/store.js';
 import { createMemoryStore, MEMORY_SCHEMA_SQL, type MemoryStore } from '../mate/memory-store.js';
 import { createMetaStore, META_SCHEMA_SQL, type MetaStore } from '../mate/meta-store.js';
+import { createGrownStore, GROWN_SCHEMA_SQL, type GrownStore } from '../grown/store.js';
 import {
 	createTerminalRelayAuditStore,
 	TERMINAL_RELAY_SCHEMA_SQL,
@@ -87,6 +88,7 @@ export const STATE_SCHEMA_SQL: string[] = [
 	...MATE_SCHEMA_SQL,
 	...MEMORY_SCHEMA_SQL,
 	...META_SCHEMA_SQL,
+	...GROWN_SCHEMA_SQL,
 	...AUTH_SCHEMA_SQL,
 	...TERMINAL_RELAY_SCHEMA_SQL,
 	...AUTOMATION_SCHEMA_SQL
@@ -99,6 +101,8 @@ const DISPATCH_COLUMN_MIGRATIONS = [
 	{ name: 'provider', sql: 'ALTER TABLE dispatch_requests ADD COLUMN provider TEXT' },
 	// The First Mate chat whose crew tool launched the mission (ADR-0020 rule 5).
 	{ name: 'chat_id', sql: 'ALTER TABLE dispatch_requests ADD COLUMN chat_id TEXT' },
+	// The catalog surface whose button launched it (ADR-0025 rule 6).
+	{ name: 'grown_slug', sql: 'ALTER TABLE dispatch_requests ADD COLUMN grown_slug TEXT' },
 	// The outcome that chat was last told (`chatNoticeKey`), so it hears each once.
 	{
 		name: 'chat_notice',
@@ -154,6 +158,11 @@ export async function initStateSchema(client: Client): Promise<void> {
 		if (!chatColumns.rows.some((row) => row.name === column)) {
 			await client.execute(`ALTER TABLE mate_chats ADD COLUMN ${column} TEXT`);
 		}
+	}
+	// The First Mate chat that proposed an automation (ADR-0025 rule 10).
+	const automationColumns = await client.execute('PRAGMA table_info(automations)');
+	if (!automationColumns.rows.some((row) => row.name === 'proposed_chat_id')) {
+		await client.execute('ALTER TABLE automations ADD COLUMN proposed_chat_id TEXT');
 	}
 	const columns = await client.execute('PRAGMA table_info(dispatch_requests)');
 	const existing = new Set(
@@ -220,6 +229,7 @@ let todo_promise: Promise<TodoStore> | undefined;
 let mate_promise: Promise<MateStore> | undefined;
 let memory_promise: Promise<MemoryStore> | undefined;
 let meta_promise: Promise<MetaStore> | undefined;
+let grown_promise: Promise<GrownStore> | undefined;
 let relay_audit_promise: Promise<TerminalRelayAuditStore> | undefined;
 let automation_promise: Promise<AutomationStore> | undefined;
 let state_ok = false;
@@ -246,6 +256,7 @@ async function openStateClient(): Promise<Client> {
 			mate_promise = undefined;
 			memory_promise = undefined;
 			meta_promise = undefined;
+			grown_promise = undefined;
 			relay_audit_promise = undefined;
 			automation_promise = undefined;
 			throw error;
@@ -339,6 +350,14 @@ export async function getMetaStore(): Promise<MetaStore> {
 	return meta_promise;
 }
 
+/** Open (once) the grown things store on the same database (ADR-0025). */
+export async function getGrownStore(): Promise<GrownStore> {
+	if (grown_promise === undefined) {
+		grown_promise = openStateClient().then((client) => createGrownStore(client));
+	}
+	return grown_promise;
+}
+
 /** Open (once) the terminal relay's audit store on the same database (ADR-0021). */
 export async function getTerminalRelayAuditStore(): Promise<TerminalRelayAuditStore> {
 	if (relay_audit_promise === undefined) {
@@ -374,6 +393,7 @@ export function setStateStore(store: StateStore | undefined): void {
 		mate_promise = undefined;
 		memory_promise = undefined;
 		meta_promise = undefined;
+		grown_promise = undefined;
 		relay_audit_promise = undefined;
 		automation_promise = undefined;
 		state_ok = false;
@@ -425,4 +445,9 @@ export function setTerminalRelayAuditStore(store: TerminalRelayAuditStore | unde
 /** Replace the cached automation store (tests only). */
 export function setAutomationStore(store: AutomationStore | undefined): void {
 	automation_promise = store === undefined ? undefined : Promise.resolve(store);
+}
+
+/** Replace the cached grown things store (tests only). */
+export function setGrownStore(store: GrownStore | undefined): void {
+	grown_promise = store === undefined ? undefined : Promise.resolve(store);
 }

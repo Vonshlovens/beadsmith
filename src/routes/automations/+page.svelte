@@ -10,6 +10,7 @@
 	import PauseIcon from 'phosphor-svelte/lib/PauseIcon';
 	import PlayIcon from 'phosphor-svelte/lib/PlayIcon';
 	import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
+	import RobotIcon from 'phosphor-svelte/lib/RobotIcon';
 	import RocketLaunchIcon from 'phosphor-svelte/lib/RocketLaunchIcon';
 	import AutomationDialog from '#lib/components/automation-dialog.svelte';
 	import EmptyState from '#lib/components/empty-state.svelte';
@@ -160,7 +161,15 @@
 				<li class="a-row" class:is-paused={!automation.enabled}>
 					<a class="a-main" href="/automations/{automation.id}">
 						<span class="a-name">{automation.name}</span>
-						<span class="a-what">{launchSummary(automation.launch)}</span>
+						<span class="a-what"
+							>{#if automation.proposed_by_first_mate}<span
+									class="a-mate"
+									{@attach tip('First Mate proposed this; it was created paused')}
+									><RobotIcon size={12} aria-hidden="true" />First Mate</span
+								>
+								·
+							{/if}{launchSummary(automation.launch)}</span
+						>
 					</a>
 					{#if filter_name === undefined}
 						<a class="a-proj" href="/automations?project={automation.project_id}"
@@ -290,6 +299,13 @@
 	}
 	.a-main:focus-visible {
 		box-shadow: -2px 0 0 var(--em-500);
+	}
+	/* Same marker as the views catalogue's First Mate author. */
+	.a-mate {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		color: var(--violet-tx);
 	}
 	.a-name {
 		color: var(--tx-hi);

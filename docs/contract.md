@@ -126,7 +126,11 @@ idempotency key per slot, so a slot launches at most one mission. Disarming
 dispatch or disallowing the project refuses fired slots like any launch, and
 an automation whose creator is no longer an admin pauses itself. The
 template is the same validated payload a mission stores; no credential is
-saved with it.
+saved with it. First Mate may propose one with the `define_automation` crew
+tool ([ADR-0025](../specs/decisions/0025-grown-capabilities.md) rule 10),
+which goes through the same validation for the chat's owner; the store saves
+a proposed automation paused, marked as First Mate's, and only a person
+resumes it. No crew tool resumes, edits, runs or deletes an automation.
 
 ### First Mate
 
@@ -346,7 +350,125 @@ automation that is not a loop, the project, launch text, runner and model
 and effort stay as saved, and the edit never fires a slot from before it;
 `DELETE` removes the automation
 and its history but not its missions; `POST /api/automations/:id/run`
-fires it once now through the scheduler's path.
+fires it once now through the scheduler's path. An automation view carries
+`proposed_by_first_mate: true` when First Mate proposed it; the proposing
+chat's id stays on the server.
+
+Saved views ([ADR-0025](../specs/decisions/0025-grown-capabilities.md)):
+`GET /api/views` lists the viewer's own views and every published one; an
+owner sees the latest revision of theirs, anyone else the published
+revision. `GET /api/views/:slug` reads one and `GET /api/views/:slug/run`
+runs it as the viewer through the project read path, returning its issues,
+whether a row limit cut them and which projects an all-projects view could
+not read. A view the viewer may not see is `not_found`. The writes are
+admin-only (the request gate's default for an unknown write) and need a
+signed-in account to attribute the revision to: `POST /api/views` `{slug,
+name, description?, spec}` creates a private view, `PATCH /api/views/:slug`
+`{name?, description?, spec?}` adds a revision, `POST
+/api/views/:slug/revert` `{number}` copies an old revision forward, and
+`DELETE /api/views/:slug` removes it with its history; these and `GET
+/api/views/:slug/history` are the owner's alone. `PUT
+/api/views/:slug/publish` `{number?}` (the owner) shows that revision, by
+default the latest, to members; `DELETE /api/views/:slug/publish` (any
+admin) hides it again. A spec is validated against a strict schema (unknown
+keys, SQL-like values and oversized specs are refused) and never becomes
+SQL. First Mate's view crew tools (`define_view`, `list_views`, `run_view`,
+`view_history`, `revert_view`) go through the same store as the chat's
+owner, attributing each revision to First Mate and the chat; none of them
+publishes.
+
+Catalog surfaces (the same ADR) have the same routes under
+`/api/surfaces`, with the same roles and bodies, minus `/run`: `GET
+/api/surfaces`, `GET`/`PATCH`/`DELETE /api/surfaces/:slug`, `GET
+/api/surfaces/:slug/history`, `POST /api/surfaces/:slug/revert` and
+`PUT`/`DELETE /api/surfaces/:slug/publish`. A surface's spec is a component
+tree over Beadsmith's own catalog; a component, prop or tool the catalog and
+the bridge allowlist do not name is refused when saved. Slugs are shared
+across kinds, and each set of routes answers `not_found` for the other
+kind's slug. First Mate's surface crew tools (`define_surface`,
+`list_surfaces`, `surface_history`, `revert_surface`) use the same store and
+parse as the chat's owner, attributing each revision to First Mate and the
+chat; none of them publishes.
+
+`GET /api/surfaces/:slug/data` resolves a surface's data bindings as the
+signed-in viewer, for the revision that viewer sees (`?binding=<name>`,
+repeatable, for some of them; every binding otherwise). Any signed-in role
+may call it. A view binding runs through the viewer's own visibility (a
+member reads only a published view) and a tool binding through its crew
+read tool with the viewer's role, so an admin's surface opened by a member
+reads as a member: a `list_todos` binding comes back `forbidden`. Each
+binding answers `{ ok: true, yields, data, truncated? }` or `{ ok: false,
+code, message }` on its own, so one failure does not fail the request; a
+result past the crew tools' 24,000-character bound drops whole rows, keeping
+the full count in `data.total`. Each binding resolved is one bridge call:
+60 per minute per viewer and surface, past which the request is refused
+whole with `rate_limited` (429) and `Retry-After`.
+
+`POST /api/surfaces/:slug/actions/:name` runs one of a surface's button
+actions as the signed-in viewer, after the confirmation the page draws from
+the stored action (the operation, project and issue, never the button's
+label). The body is `{ revision, key }`: the revision the person confirmed,
+so a surface revised since is refused with `conflict` (409), and one key per
+confirmation, so a retried request replays the first mission rather than
+starting another. Admin-only at the request gate (the default for writes);
+behind it the action's crew tool checks the viewer's role again, and a
+launch goes through dispatch's arm, per-project allow and repository map. A
+mission launched this way records the surface's slug instead of a chat.
+Each action is one bridge call against the same per-viewer, per-surface
+limit, and launches share the crew launch cap, per viewer and surface. The
+answer is `{ slug, action, result }`, `result` being the crew tool's own.
+
+Sandboxed apps (the same ADR, rule 3) have the same routes under
+`/api/apps`, with the same roles and bodies: `GET /api/apps`,
+`GET`/`PATCH`/`DELETE /api/apps/:slug`, `GET /api/apps/:slug/history`,
+`POST /api/apps/:slug/revert` and `PUT`/`DELETE /api/apps/:slug/publish`. An
+app's spec is `{ html, libraries }`: `html` is a model-written document of at
+most 256 KB, stored and served as opaque text, and `libraries` names entries
+of the host's reviewed allowlist (`beadsmith-tokens`, the design-token
+CSS, and `chart.js`, a vendored, hash-pinned Chart.js; default
+`["beadsmith-tokens"]`); any other
+key or library is refused. First Mate's app crew tools (`define_app`,
+`list_apps`, `app_history`, `revert_app`) use the same store and parse as the
+chat's owner, need the same admin permission, attribute each revision to
+First Mate and the chat, and none of them publishes. `GET /api/apps/:slug/frame` serves the document
+the viewer may see (the owner's latest, else the published revision, else
+`not_found`) as `text/html` behind the app's own CSP: `sandbox allow-scripts`,
+`default-src 'none'`, inline scripts and styles only, `img-src data:`,
+`connect-src 'none'`, `form-action 'none'`, `base-uri 'none'`,
+`frame-ancestors 'self'`. `?theme=dark` selects the dark tokens. The server
+never parses or runs the document; it runs only in the viewer's browser, in
+an opaque origin with no network.
+
+`/views/:slug` frames an app in `<iframe sandbox="allow-scripts">` (pages
+allow only same-origin frames, `frame-src 'self'`, so the frame cannot
+navigate itself elsewhere) and speaks the MCP Apps JSON-RPC subset over
+`postMessage`: `ui/initialize` (answered with the theme and the viewer's
+role), `tools/call`, `ping` and the `initialized` and `size-changed`
+notifications. The page accepts frames only from that iframe's window and
+opaque origin, of at most 64 KB, and drops anything else. A `tools/call` for
+a read goes to `POST /api/apps/:slug/call` with `{ name, arguments }` (at
+most 64 KB): `name` is one of the bridge reads or `run_view`, anything else
+is `bad_request`. Any signed-in role may make this POST; it runs as the
+viewer, each crew tool keeping its own `permission`, and answers
+`{ slug, revision, name, result }`, `result` being a read's value or refusal
+as for a surface binding. Calls count against the same 60-a-minute limit
+per viewer and app (`rate_limited` with `Retry-After`).
+
+A `tools/call` naming a bridge action (todo changes, File, comment, Tackle
+and discuss launches) never goes there. The page refuses it to a member with
+the reason, and otherwise shows its own `confirm-dialog`, outside the frame,
+drawn from the action's name and arguments (operation, project, issue), one
+at a time. Only a confirmed call is sent, to
+`POST /api/apps/:slug/actions` with
+`{ name, arguments, revision, key }` (at most 64 KB): the arguments the
+dialog showed, the revision on screen (`conflict` when the app changed
+since) and a key made for that confirmation, so a retry replays the first
+mission. Like a surface action, the request gate holds it to an admin; it
+runs as the viewer through the action's crew tool, its own `permission` and
+dispatch's arm, allow list and repository map, records the app's slug on a
+launched mission, counts against the same limit, and answers
+`{ slug, revision, name, result }`. A refusal is an HTTP error, which the
+page hands the app as a tool error.
 
 `GET /api/ready` is the cross-project Ready deck: open issues with no open
 `blocks` dependencies, merged across catalog projects the session can see,
@@ -452,6 +574,16 @@ written before its first byte; one that cannot be recorded is refused (503).
    no wider than its scope: Dolt writes on named project databases, never
    data rights on `*.*`; repository access to one repository. Its model and
    repository keys stay outside it, added by a proxy.
+9. Grown capabilities (views, catalog surfaces and sandboxed apps,
+   [ADR-0025](../specs/decisions/0025-grown-capabilities.md); views and
+   surfaces are implemented; apps render, read and run actions behind the host confirmation) are stored data, never SQL, and the web process never
+   evaluates, imports or templates them. App code runs only in the viewer's
+   browser, in a sandboxed iframe with an opaque origin, no network access and
+   only vendored, hash-pinned libraries. Every read or action a grown thing
+   makes runs as the signed-in viewer, never as its author. Writes and
+   launches go through existing todo and dispatch authority behind a
+   confirmation that Beadsmith renders. Members see only a revision an admin
+   has published.
 
 ## Observability and failure behavior
 

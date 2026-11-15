@@ -235,7 +235,7 @@ so every fire repeats it; `POST /api/automations` also refuses a model or
 effort the operator does not offer when it is saved, rather than recording a
 failed run at each fire.
 
-- `{ operation: "file", idempotency_key, notes, title?, issue_type?, priority?, labels?, status? }`
+- `{ operation: "file", idempotency_key, notes, title?, issue_type?, priority?, labels?, status?, change_request? }`
 - `{ operation: "tackle", idempotency_key, issue_id }`
 - `{ operation: "comment", idempotency_key, issue_id, text }`
 - `{ operation: "discuss", idempotency_key, issue_id, intent, message? }` with
@@ -297,6 +297,20 @@ Comment launches the File checkout (beads-web, no PR) and is allowed when File
 or Tackle is allowed for the project. The browser cannot set `author`; the
 control plane copies the Access email (or `web`). Public GET omits comment
 text the same way it omits File notes.
+
+`change_request` on File is the page context from the admin-only
+**Change this** mode, or `{source: "first_mate"}` from First Mate's
+`request_code_change` ([ADR-0025](../specs/decisions/0025-grown-capabilities.md)
+rule 10): `{source, page?: {url, route_id, title, theme, viewport}, elements?:
+[{selector, tag, role?, name?, text?, html?, box, component?}]}`, at most five
+elements, every string under the limits in `src/lib/change-request.ts`
+(longer is refused with `400`, extra keys fail closed). It changes only the
+prompt: the File agent files one issue against Beadsmith's own code, citing
+the files that render what was pointed at, and implements nothing. The
+context is fenced as data, apart from the request, because it is copied from
+a page that shows text other people wrote. It is a File in every other
+respect: same permission, arm, allow, File checkout map and provider, and
+like notes it is never in the public record.
 
 `status` on File is a StatusKey (`open`, `in_progress`, `blocked`,
 `deferred`, `closed`, `pinned`, `hooked`). The board column "+ New" action

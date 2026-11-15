@@ -16,6 +16,32 @@ import type {
 	AutomationView
 } from '#lib/automations.js';
 import type {
+	ViewHistoryResponse,
+	ViewResponse,
+	ViewRunResponse,
+	ViewSpecShape,
+	ViewsResponse,
+	ViewSummary
+} from '#lib/views.js';
+import type {
+	AppActionResponse,
+	AppHistoryResponse,
+	AppResponse,
+	AppsResponse,
+	AppSummary,
+	AppToolCallResponse
+} from '#lib/apps.js';
+import type { BridgeActionName } from '#lib/grown.js';
+import type { ChangeRequest } from '#lib/change-request.js';
+import type {
+	SurfaceActionResponse,
+	SurfaceDataResponse,
+	SurfaceHistoryResponse,
+	SurfaceResponse,
+	SurfacesResponse,
+	SurfaceSummary
+} from '#lib/surfaces.js';
+import type {
 	DispatchProviderId,
 	AccountRole,
 	AccountView,
@@ -374,6 +400,19 @@ export const api = {
 		});
 	},
 
+	/** The project "Change this" files into; null until an admin picks one. */
+	changeThisProject(init?: RequestInitLike) {
+		return request<{ project_id: string | null }>('GET', '/settings/change-this', init);
+	},
+
+	/** Choose (or, with null, forget) the project "Change this" files into. Admin only. */
+	setChangeThisProject(project_id: string | null, init?: RequestInitLike) {
+		return request<{ project_id: string | null }>('PUT', '/settings/change-this', {
+			...init,
+			body: { project_id }
+		});
+	},
+
 	/** Persist the UI theme preference so the next page load paints it. */
 	setTheme(theme: ThemePreference, init?: RequestInitLike) {
 		return request<{ theme: ThemePreference }>('POST', '/settings/theme', {
@@ -435,6 +474,8 @@ export const api = {
 			priority?: number;
 			labels?: string[];
 			status?: string;
+			/** "Change this" page context (ADR-0025 rule 10). */
+			change_request?: ChangeRequest;
 		} & AgentChoice,
 		init?: RequestInitLike
 	) {
@@ -664,6 +705,220 @@ export const api = {
 
 	deleteAutomation(id: string, init?: RequestInitLike) {
 		return request<void>('DELETE', `/automations/${encodeURIComponent(id)}`, init);
+	},
+
+	/** Saved views (ADR-0025): the viewer's own and every published one. */
+	views(init?: RequestInitLike) {
+		return request<ViewsResponse>('GET', '/views', init);
+	},
+
+	view(slug: string, init?: RequestInitLike) {
+		return request<ViewResponse>('GET', `/views/${encodeURIComponent(slug)}`, init);
+	},
+
+	/** Run it as the viewer: the revision they may see, through the project read path. */
+	runView(slug: string, init?: RequestInitLike) {
+		return request<ViewRunResponse>('GET', `/views/${encodeURIComponent(slug)}/run`, init);
+	},
+
+	/** A new view, private to the viewer until they publish it. Admin only. */
+	createView(
+		body: { slug: string; name: string; description?: string; spec: Partial<ViewSpecShape> },
+		init?: RequestInitLike
+	) {
+		return request<ViewResponse>('POST', '/views', { ...init, body });
+	},
+
+	/** A new revision with these fields changed. Owner only. */
+	reviseView(
+		slug: string,
+		body: { name?: string; description?: string; spec?: Partial<ViewSpecShape> },
+		init?: RequestInitLike
+	) {
+		return request<ViewResponse>('PATCH', `/views/${encodeURIComponent(slug)}`, { ...init, body });
+	},
+
+	viewHistory(slug: string, init?: RequestInitLike) {
+		return request<ViewHistoryResponse>('GET', `/views/${encodeURIComponent(slug)}/history`, init);
+	},
+
+	/** A new revision copying revision `number` forward. Owner only. */
+	revertView(slug: string, number: number, init?: RequestInitLike) {
+		return request<ViewResponse>('POST', `/views/${encodeURIComponent(slug)}/revert`, {
+			...init,
+			body: { number }
+		});
+	},
+
+	/** Show revision `number` (default the latest) to members. Owner only. */
+	publishView(slug: string, number?: number, init?: RequestInitLike) {
+		return request<ViewResponse>('PUT', `/views/${encodeURIComponent(slug)}/publish`, {
+			...init,
+			body: number === undefined ? {} : { number }
+		});
+	},
+
+	/** Hide it from members; `null` when it was another admin's view. Any admin. */
+	unpublishView(slug: string, init?: RequestInitLike) {
+		return request<{ view: ViewSummary | null }>(
+			'DELETE',
+			`/views/${encodeURIComponent(slug)}/publish`,
+			init
+		);
+	},
+
+	deleteView(slug: string, init?: RequestInitLike) {
+		return request<void>('DELETE', `/views/${encodeURIComponent(slug)}`, init);
+	},
+
+	/** Catalog surfaces (ADR-0025 rule 2): the viewer's own and every published one. */
+	surfaces(init?: RequestInitLike) {
+		return request<SurfacesResponse>('GET', '/surfaces', init);
+	},
+
+	surface(slug: string, init?: RequestInitLike) {
+		return request<SurfaceResponse>('GET', `/surfaces/${encodeURIComponent(slug)}`, init);
+	},
+
+	/**
+	 * Resolve the bindings of the revision this viewer sees, as the viewer.
+	 * One failed binding is an error value beside the others.
+	 */
+	surfaceData(slug: string, init?: RequestInitLike) {
+		return request<SurfaceDataResponse>('GET', `/surfaces/${encodeURIComponent(slug)}/data`, init);
+	},
+
+	/**
+	 * Run a button's action as the viewer, after the host confirmation.
+	 * `revision` is the one on screen (a surface revised since is refused);
+	 * `key` is one per confirmation, so a retry replays rather than repeats.
+	 */
+	runSurfaceAction(
+		slug: string,
+		action: string,
+		body: { revision: number; key: string },
+		init?: RequestInitLike
+	) {
+		return request<SurfaceActionResponse>(
+			'POST',
+			`/surfaces/${encodeURIComponent(slug)}/actions/${encodeURIComponent(action)}`,
+			{ ...init, body }
+		);
+	},
+
+	surfaceHistory(slug: string, init?: RequestInitLike) {
+		return request<SurfaceHistoryResponse>(
+			'GET',
+			`/surfaces/${encodeURIComponent(slug)}/history`,
+			init
+		);
+	},
+
+	/** A new revision copying revision `number` forward. Owner only. */
+	revertSurface(slug: string, number: number, init?: RequestInitLike) {
+		return request<SurfaceResponse>('POST', `/surfaces/${encodeURIComponent(slug)}/revert`, {
+			...init,
+			body: { number }
+		});
+	},
+
+	/** Show revision `number` (default the latest) to members. Owner only. */
+	publishSurface(slug: string, number?: number, init?: RequestInitLike) {
+		return request<SurfaceResponse>('PUT', `/surfaces/${encodeURIComponent(slug)}/publish`, {
+			...init,
+			body: number === undefined ? {} : { number }
+		});
+	},
+
+	/** Hide it from members; `null` when it was another admin's surface. Any admin. */
+	unpublishSurface(slug: string, init?: RequestInitLike) {
+		return request<{ surface: SurfaceSummary | null }>(
+			'DELETE',
+			`/surfaces/${encodeURIComponent(slug)}/publish`,
+			init
+		);
+	},
+
+	deleteSurface(slug: string, init?: RequestInitLike) {
+		return request<void>('DELETE', `/surfaces/${encodeURIComponent(slug)}`, init);
+	},
+
+	/** Sandboxed apps (ADR-0025 rule 3): the viewer's own and every published one. */
+	apps(init?: RequestInitLike) {
+		return request<AppsResponse>('GET', '/apps', init);
+	},
+
+	app(slug: string, init?: RequestInitLike) {
+		return request<AppResponse>('GET', `/apps/${encodeURIComponent(slug)}`, init);
+	},
+
+	/**
+	 * Forward an app's `tools/call` for an allowlisted read, run as the
+	 * viewer. A tool's refusal is `result.ok === false`, not a thrown error.
+	 */
+	callAppTool(
+		slug: string,
+		body: { name: string; arguments: Record<string, unknown> },
+		init?: RequestInitLike
+	) {
+		return request<AppToolCallResponse>('POST', `/apps/${encodeURIComponent(slug)}/call`, {
+			...init,
+			body
+		});
+	},
+
+	/**
+	 * Run an action an app asked for, after the host confirmation, as the
+	 * viewer. `body` is what the confirmation showed, with the revision on
+	 * screen and one key per confirmation. Admin only.
+	 */
+	runAppAction(
+		slug: string,
+		body: {
+			name: BridgeActionName;
+			arguments: Record<string, unknown>;
+			revision: number;
+			key: string;
+		},
+		init?: RequestInitLike
+	) {
+		return request<AppActionResponse>('POST', `/apps/${encodeURIComponent(slug)}/actions`, {
+			...init,
+			body
+		});
+	},
+
+	appHistory(slug: string, init?: RequestInitLike) {
+		return request<AppHistoryResponse>('GET', `/apps/${encodeURIComponent(slug)}/history`, init);
+	},
+
+	/** A new revision copying revision `number` forward. Owner only. */
+	revertApp(slug: string, number: number, init?: RequestInitLike) {
+		return request<AppResponse>('POST', `/apps/${encodeURIComponent(slug)}/revert`, {
+			...init,
+			body: { number }
+		});
+	},
+
+	/** Show revision `number` (default the latest) to members. Owner only. */
+	publishApp(slug: string, number?: number, init?: RequestInitLike) {
+		return request<AppResponse>('PUT', `/apps/${encodeURIComponent(slug)}/publish`, {
+			...init,
+			body: number === undefined ? {} : { number }
+		});
+	},
+
+	/** Hide it from members; `null` when it was another admin's app. Any admin. */
+	unpublishApp(slug: string, init?: RequestInitLike) {
+		return request<{ app: AppSummary | null }>(
+			'DELETE',
+			`/apps/${encodeURIComponent(slug)}/publish`,
+			init
+		);
+	},
+
+	deleteApp(slug: string, init?: RequestInitLike) {
+		return request<void>('DELETE', `/apps/${encodeURIComponent(slug)}`, init);
 	},
 
 	missions(

@@ -12,6 +12,7 @@ import {
 	RALPH_STEER_MAX_LENGTH
 } from '#lib/ralph.js';
 import { AUTOMATION_NAME_MAX, AUTOMATION_OVERLAPS } from '#lib/automations.js';
+import { CHANGE_REQUEST_LIMITS as CR, CHANGE_REQUEST_SOURCES } from '#lib/change-request.js';
 import { CRON_MAX_LENGTH } from './automations/cron.js';
 import { EFFORT_PATTERN, MODEL_PATTERN } from '#lib/agent-session/claude-code.js';
 import {
@@ -68,6 +69,65 @@ export const missions_query_schema = z.object({
 	issue_id: issue_id_schema.optional()
 });
 
+/** Body of `PUT /api/settings/change-this`: the project, or null to forget it. */
+export const change_this_setting_schema = z
+	.object({ project_id: project_id_schema.nullable() })
+	.strict();
+
+/** A pixel measure from the browser: finite, and bounded so it stays small in a prompt. */
+const pixel_schema = z.number().finite().min(-1_000_000).max(1_000_000);
+
+/**
+ * A "Change this" request (ADR-0025 rule 10, `src/lib/change-request.ts`).
+ * Over-long strings are refused, not clipped: the browser already truncates
+ * to these limits, so a longer one did not come from it.
+ */
+export const change_request_schema = z
+	.object({
+		source: z.enum(CHANGE_REQUEST_SOURCES),
+		page: z
+			.object({
+				url: z.string().max(CR.url),
+				route_id: z.string().max(CR.route_id).nullable(),
+				title: z.string().max(CR.title),
+				theme: z.enum(['light', 'dark']),
+				viewport: z.object({ width: pixel_schema.min(0), height: pixel_schema.min(0) }).strict()
+			})
+			.strict()
+			.optional(),
+		elements: z
+			.array(
+				z
+					.object({
+						selector: z.string().min(1).max(CR.selector),
+						tag: z.string().min(1).max(CR.tag),
+						role: z.string().max(CR.role).optional(),
+						name: z.string().max(CR.name).optional(),
+						text: z.string().max(CR.text).optional(),
+						html: z.string().max(CR.html).optional(),
+						box: z
+							.object({
+								x: pixel_schema,
+								y: pixel_schema,
+								width: pixel_schema.min(0),
+								height: pixel_schema.min(0)
+							})
+							.strict(),
+						component: z
+							.object({
+								file: z.string().min(1).max(CR.component_file),
+								line: z.number().int().min(0).max(1_000_000).optional()
+							})
+							.strict()
+							.optional()
+					})
+					.strict()
+			)
+			.max(CR.elements)
+			.optional()
+	})
+	.strict();
+
 /** Body of `POST /api/settings/theme`; tracks `ThemePreference`. */
 export const theme_schema: z.ZodType<{ theme: ThemePreference }> = z.object({
 	theme: z.enum(['system', 'light', 'dark'])
@@ -106,7 +166,9 @@ const file_launch_shape = {
 	labels: z.array(label_schema).max(8).optional(),
 	status: z
 		.enum(['open', 'in_progress', 'blocked', 'deferred', 'closed', 'pinned', 'hooked'])
-		.optional()
+		.optional(),
+	/** Present when "Change this" or First Mate asks for a code change (ADR-0025 rule 10). */
+	change_request: change_request_schema.optional()
 };
 
 const tackle_launch_shape = {

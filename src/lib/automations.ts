@@ -73,6 +73,11 @@ export interface AutomationView {
 	launch: AutomationLaunchView;
 	overlap: AutomationOverlap;
 	enabled: boolean;
+	/**
+	 * First Mate proposed it (ADR-0025 rule 10); it was created paused. Which
+	 * chat proposed it stays on the server: chats are private to their owner.
+	 */
+	proposed_by_first_mate?: true;
 	/** Why the scheduler paused it, when it did. */
 	paused_reason?: string;
 	/** The next scheduled fire, when it is enabled and the schedule has one. */

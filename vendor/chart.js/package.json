@@ -1,0 +1,8 @@
+{
+	"name": "chart.js",
+	"version": "4.5.1",
+	"license": "MIT",
+	"description": "dist/chart.umd.min.js from the npm tarball, byte for byte. Pinned in src/lib/server/grown/app-libraries.ts.",
+	"tarball": "https://registry.npmjs.org/chart.js/-/chart.js-4.5.1.tgz",
+	"integrity": "sha512-GIjfiT9dbmHRiYi6Nl2yFCq7kkwdkp1W/lp2J99rX0yo9tgJGn3lKQATztIjb5tVtevcBtIdICNWqlq5+E8/Pw=="
+}

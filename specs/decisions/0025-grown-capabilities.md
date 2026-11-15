@@ -1,0 +1,580 @@
+# 0025. Grown capabilities: views, catalog surfaces and sandboxed apps as revisioned data
+
+Date: 2026-11-14
+
+## Status
+
+accepted, being implemented. Builds on
+[0003](./0003-dolt-read-plane.md) (views compile through the existing
+parameterized read plane, unchanged), [0004](./0004-service-local-sqlite.md)
+(grown things are app-owned rows in `state.db`),
+[0011](./0011-accounts-and-roles.md) (roles),
+[0006](./0006-durable-agent-dispatch.md) and
+[0020](./0020-first-mate-crew-tools.md) (every write or launch reuses their
+authority), and borrows the owner-curation rule of
+[0024](./0024-first-mate-memory-and-context.md) (rule 8).
+
+## Context
+
+First Mate can use Beadsmith through crew tools (0020) but cannot extend it.
+A new view of the work, a dashboard for one project or a small purpose-built
+tool all go through the repository: a mission, a pull request, CI, an image
+and a redeploy. For a question like "show me everything blocked on review in
+these three projects, as a board" that is far too heavy, and the answer is
+then frozen into code everyone sees.
+
+The goal is a layer of **definitions** that the running product holds, that
+the owner and First Mate grow by talking, and that afterwards run with no
+model in the loop: they show up in a catalogue, have a history and can be
+rolled back. The danger is just as clear. Anything First Mate writes may have
+been shaped by prompt injection (an issue body, a mission transcript), and
+the product's authority boundary ([`docs/contract.md`](../../docs/contract.md))
+rests on the web process never running untrusted code, building SQL only from
+validated parts, and authorizing every action as a signed-in account.
+
+Today's code that this decision leans on:
+
+- The read plane builds every issue query from `BrowseFilters` with bound
+  parameters (`buildIssueWhere` in
+  [`src/lib/server/dolt/client.ts`](../../src/lib/server/dolt/client.ts)).
+- Crew tools are defined once, with zod inputs and a `permission` each, in
+  [`src/lib/server/crew/`](../../src/lib/server/crew/); they run as the
+  chat's owner (0020 rule 3).
+- Roles and the request gate are in
+  [`src/lib/server/auth/roles.ts`](../../src/lib/server/auth/roles.ts);
+  unknown API writes default to admin.
+- The app's CSP (`vite.config.ts`) allows only same-origin scripts with
+  SvelteKit's nonces and sets `frame-ancestors 'none'`.
+
+Out of scope: editing Beads from grown things (Beads writes stay delegated
+to missions, contract invariant 1), sharing grown things between Beadsmith
+instances, and exporting apps to outside MCP clients (a later follow-on,
+below).
+
+## Decision
+
+Beadsmith gains a revisioned store of **grown things** in three tiers, from
+most to least constrained. A request goes to the lowest tier that can
+express it.
+
+1. **Views** are declarative specs: a scope (one project or all), browse
+   filters (`BrowseFilters`), a sort and a presentation (list or board,
+   optional grouping). A view runs by compiling its spec through the
+   existing browse path, the same one the project page uses. A view never
+   holds SQL, column names or expressions; its spec is a strict zod schema
+   that rejects unknown keys, and every value reaches Dolt as a bound
+   parameter (0003 unchanged).
+2. **Catalog surfaces** are a JSON component tree, in the style of the A2UI
+   protocol and Vercel's json-render, over a **catalog of Beadsmith
+   components** (layout, headings, text, stat tiles, issue lists and boards,
+   charts, buttons) whose props are zod-typed. Data comes from bindings to
+   saved views or allowlisted read tools; buttons bind to allowlisted
+   actions. Svelte renders the tree natively, and a node that names a
+   component or prop the catalog does not define is rejected when saved,
+   not skipped when rendered. Surface data is never interpreted as code or
+   markup (text is text; Markdown goes through the app's sanitizing
+   renderer, [`markdown-body`](../../src/lib/components/markdown-body.svelte)).
+3. **Sandboxed apps** are model-written HTML, CSS and JavaScript, stored as
+   data, for what the catalog cannot express. An app's code runs **only in
+   the viewer's browser**, inside a sandboxed iframe, and talks to Beadsmith
+   only over the bridge (rule 6):
+   - The iframe is `<iframe sandbox="allow-scripts">` with no
+     `allow-same-origin`, `allow-top-navigation`, `allow-popups`,
+     `allow-forms` or `allow-modals`, so the app runs in an opaque origin:
+     it cannot read Beadsmith's cookies, storage or DOM, navigate the page
+     or open windows.
+   - Its document is served by a dedicated frame route that checks the
+     viewer may see the app, with its own response CSP: `sandbox
+     allow-scripts`, `default-src 'none'`, inline scripts and styles only,
+     `img-src data:`, `connect-src 'none'`, `form-action 'none'`,
+     `base-uri 'none'` and `frame-ancestors 'self'`. The `sandbox`
+     directive keeps the document sandboxed even if it is opened directly.
+     No network request is possible from the app: no `fetch`, XHR,
+     WebSocket, external script, stylesheet, font or image.
+   - **No network-loaded code, ever.** The host inlines into the app
+     document a vendored allowlist of libraries, each pinned by version and
+     SHA-256 in one file in the repository, starting with Beadsmith's
+     design-token CSS and one chart library. Extending the allowlist is a
+     repository change through review, never something First Mate or an app
+     can do.
+4. **Nothing model-written runs in the Node process.** No tier evaluates,
+   imports, templates or compiles stored content on the server. Views and
+   surfaces are parsed as data against schemas; app code is opaque bytes the
+   server stores and serves to the sandboxed frame. This is the line in the
+   contract, not an implementation detail.
+5. **Everything runs as the viewer.** A grown thing has an owner (its
+   author's account) but no authority of its own. Running a view, resolving
+   a surface binding or answering an app's tool call happens as the
+   signed-in account looking at it, with that account's role and visibility,
+   through the same checks the browser path uses. The author's role never
+   carries over: an admin's app opened by a member reads as a member and
+   cannot launch anything.
+6. **The bridge is MCP Apps' wire shape, with Beadsmith as the only host.**
+   Surfaces and apps reach Beadsmith through one tool bridge. For apps it is
+   the MCP Apps (SEP-1865) shape over `postMessage` JSON-RPC: `ui/initialize`,
+   `tools/call`, and the tool-input and tool-result notifications. The host
+   page accepts messages only from its own iframe's window, validates each
+   frame against a schema and a size limit, and forwards an allowed call to a
+   Beadsmith endpoint under the viewer's session. Surfaces call the same
+   endpoint directly. The bridge has an allowlist:
+   - **Reads:** the crew read tools that make sense outside a chat (projects,
+     ready work, issues, an issue, missions, a mission) and running a saved
+     view, each keeping its own `permission`, so `list_todos` answers admins
+     only. Chat-bound tools (memory, meta folder, mission follow-ups and
+     notices) are not on it.
+   - **Actions:** only ones that reuse existing authority: todo changes and
+     mission launches through dispatch, under the global arm, per-project
+     allow and repository map (0006), with the viewer's role checked as the
+     HTTP gate checks it. A launch records the grown thing it came from.
+   - **Host-side confirmation:** every action that writes or launches shows
+     a confirmation the host renders (the app's
+     [`confirm-dialog`](../../src/lib/components/confirm-dialog.svelte)),
+     naming the operation, project and issue, outside the iframe and the
+     surface tree. The grown thing cannot draw, skip or pre-answer it. Reads
+     need no confirmation.
+7. **Owner-private by default; members see only what an admin publishes.**
+   Creating and revising grown things is admin-only in this version (First
+   Mate is admin-only, and unknown writes already default to admin). A new
+   thing is visible to its owner alone. Sharing **publishes one revision**:
+   members see the published revision, the owner sees the latest. A later
+   revision, whether a person or First Mate wrote it, stays owner-only until
+   an admin publishes it, so an agent never changes what members see without
+   an admin action. Publishing and unpublishing are browser actions by a
+   signed-in admin; there is no crew tool for them. The owner publishes;
+   any admin may unpublish a thing members can see.
+8. **Revisions are append-only.** Every create, revise and revert writes a
+   new revision; a revert copies an old revision forward. Each revision
+   records its author kind (person or First Mate), the account and, for
+   First Mate, the chat. One store holds all three tiers, distinguished by
+   kind, each kind with its own spec schema, so there is one revision and
+   visibility implementation rather than three.
+9. **The owner can see and change everything.** A catalogue lists the
+   owner's grown things and the published ones, with author kind, project,
+   last change and published state; each has a history with revert, publish
+   and delete. First Mate's writes show in the chat as crew activity lines
+   like any other crew call, and the tools that create or revise a grown
+   thing return its URL.
+10. **When the grown layer cannot express a request, it becomes code.** An
+    admin-only "change this" action, and a crew tool, dispatch a mission
+    against the Beadsmith repository through existing dispatch with the page
+    and request as context. Automations First Mate proposes are created
+    paused, and only a person resumes them (0019's automations are already
+    data).
+
+### Limits
+
+Writes over a limit are refused with a message saying what to do, never
+truncated.
+
+| What | Limit |
+| --- | --- |
+| Grown things per owner | 200 views, 100 surfaces, 50 apps |
+| Name | 80 characters |
+| Slug | 64 characters, `^[a-z0-9]+(-[a-z0-9]+)*$`, unique across all owners (it is the URL) |
+| Description | 500 characters |
+| Revisions kept per thing | the newest 50, plus the published one; older revisions are dropped whole, never edited |
+| View spec | 4 KB of JSON; text search up to 200 characters; row limit up to the read plane's `MAX_LIMIT` (1,000) |
+| Surface tree | 32 KB of JSON, 200 nodes, depth 8, 12 data bindings |
+| App document | 256 KB of model-written HTML, CSS and JS, not counting inlined libraries |
+| Bridge frame | 64 KB per message in either direction; malformed or oversized frames are dropped and logged |
+| Bridge tool calls | 60 per minute per open surface or app; results bounded by the crew tools' `RESULT_MAX_CHARS` |
+| Launches from grown things | one host confirmation per launch, within dispatch's existing idempotency and the viewer's launch limits |
+
+## Consequences
+
+The owner and First Mate can answer "show me X" in seconds with something
+durable, reviewable and reversible, and First Mate can reuse its own views
+as tools instead of rebuilding queries. The common case (a filtered list or
+board) is the safest tier and runs entirely through code that already
+exists.
+
+Grown things are a new place for a prompt-injected chat to leave something
+behind. Mitigations: nothing runs on the server, nothing runs with the
+author's authority, apps have no network and no Beadsmith origin, actions
+need a host confirmation, members never see an unpublished revision, and
+the owner sees every change with its author and can revert or delete it.
+What a grown thing can still do is show the viewer misleading content built
+from data the viewer could read anyway; publishing is the admin's review
+point for that.
+
+An opaque-origin iframe is not a perfect barrier against every side channel
+of a hostile document (timing, resource exhaustion in the viewer's tab).
+It holds no data the viewer cannot read, and the CSP and sandbox flags leave
+it no way to send that data anywhere.
+
+The host confirmation is a browser-side gate. The action routes cannot tell
+that a person pressed Confirm, only that the call came from the viewer's own
+session with a current revision and a fresh key. That is enough here because
+a grown thing has no network of its own: a surface's buttons and an app's
+`tools/call` reach the action routes only through host code that runs after
+the confirmation, and the routes still apply the viewer's role, dispatch's
+arm, allow and repository map, and the launch limits. Anything that could
+post to those routes without the host page (a script on the Beadsmith
+origin, a stolen session) is outside what grown things change.
+
+The frame route needs its own CSP and `frame-ancestors 'self'`, the one
+place the app's global `frame-ancestors 'none'` is relaxed, and only for a
+document that is itself sandboxed.
+
+Shipped versus target: the store, the view spec, the views catalogue, the
+view crew tools and proposed automations are implemented; surfaces are
+stored, served by `/api/surfaces`, written by First Mate's surface crew
+tools, their bindings resolved as the viewer, rendered at `/views/<slug>`,
+and their buttons run allowlisted actions as the viewer behind the host
+confirmation; apps are stored, served from their sandboxed frame route,
+framed at `/views/<slug>`, read through the bridge as the viewer, run
+allowlisted actions as the viewer behind the host confirmation, and are
+written by First Mate's app crew tools, and the allowlist holds the design
+tokens and the first vendored chart library (see Implementation notes).
+
+## Alternatives considered
+
+**Evaluate model-written code on the server** (a JS sandbox in Node, or
+templates rendered server-side). Most expressive, but it puts untrusted code
+inside the process that holds the session secret, the Dolt reader and the
+dispatch path, which is exactly the authority boundary the contract draws.
+Rejected.
+
+**Raw SQL views.** Flexible and familiar, but it reverses 0003: SQL would be
+built from stored, model-written text, and a member's view could read any
+table the reader can. Rejected; `BrowseFilters` grows when a view needs a new
+filter.
+
+**Run apps in a Sand sandbox.** Strong isolation, but heavy (a microVM per
+app), slow to start, costly, and it has no UI of its own; the result would
+still need a safe way into the page. The browser's sandboxed iframe is the
+isolation this needs, at no cost.
+
+**`srcdoc` iframes.** One less route, but a `srcdoc` document inherits the
+embedding page's CSP, which allows only nonce'd same-origin scripts; running
+inline app code would mean relaxing the policy of every page that embeds an
+app, or computing per-revision hashes into it. A dedicated frame route gives
+the app its own, stricter policy and an access check on the document itself.
+
+**Invent a bridge protocol.** No dependency on a draft specification, but
+MCP Apps already defines the message shapes for exactly this (a UI asking a
+host to call tools), and matching it keeps open serving apps to outside MCP
+clients later. Beadsmith implements only the subset above.
+
+**Load libraries from a CDN.** Convenient for the model, but it needs
+network access from the app and trusts a third party at view time. Rejected
+in favour of vendored, hash-pinned libraries.
+
+**Only views, no surfaces or apps.** Smallest, but dashboards and
+purpose-built tools would still need a redeploy. The tiers let each request
+use the least power that expresses it.
+
+## Implementation notes
+
+Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
+
+- `store.ts` is the one revisioned store (rule 8): tables `grown_things`
+  (slug, kind, owner, published revision) and `grown_revisions` (name,
+  description, spec JSON, author kind, account and chat). Kinds are
+  registered in `GROWN_KINDS` with their spec schema, byte limit,
+  per-owner limit and an optional async `check`; `view` and `surface` are
+  registered, apps add theirs. Visibility and roles (rules 5 and 7) are enforced in the store,
+  not the routes, so the browser API and crew tools share one rule set.
+  Writes are single `batch` calls rather than interactive transactions; the
+  per-owner limit and the next revision number are computed inside the
+  insert, so concurrent writers cannot exceed or share them.
+- `view-spec.ts` is the strict view spec and `runView`, which compiles the
+  filters onto `listProjectIssues`. The read plane orders by last update
+  and applies the row limit, so `sort` orders the rows the limit selected;
+  `limit_reached` tells the reader when that cut applied. An all-projects
+  view skips a project it cannot read and says so, as Ready does.
+- `errors.ts` holds `GrownError`, which `safeError` maps to a response.
+- `grown-api.ts` turns a request into a viewer (an Access service token has
+  no account, so it owns nothing and reads as a member) and a stored thing
+  into the summary the browser reads (`GrownSummary` in `src/lib/grown.ts`,
+  typed per kind as `ViewSummary` and `SurfaceSummary`). Every kind's routes
+  share it, so the request bodies and the summary change in one place. Its
+  `requireGrown` answers "not found" for another kind under the same slug,
+  and every route calls it before any store write, so the views routes never
+  touch a surface and the surfaces routes never touch a view.
+- Routes under [`src/routes/api/views/`](../../src/routes/api/views/) and
+  [`src/routes/api/surfaces/`](../../src/routes/api/surfaces/) add
+  no role rule of their own: their reads are open to any signed-in role and
+  their writes fall to the request gate's admin default
+  ([`roles.ts`](../../src/lib/server/auth/roles.ts)), with the store
+  checking ownership and role again behind it. Running a view is its own
+  route (`/run`), so a view whose project left the catalogue can still be
+  read, reverted or deleted. Surfaces have no run route: a renderer reads
+  each binding through the bridge as the viewer.
+- Pages: [`/views`](../../src/routes/views/) is the catalogue (name,
+  project, author kind, last change, who can see it);
+  `/views/[slug]` runs the view with the Ready page's rows (shared as
+  `issue-rows.svelte`), optionally grouped, or the project board, one board
+  per project for an all-projects view, since a board's columns are one
+  project's statuses. The owner sees the history there with revert and
+  per-revision publish.
+- Saving from the project page: `/p/[id]` offers "Save view" when it has
+  filters, and writes the same record through `/api/views` that
+  `define_view` writes, so people and First Mate share one kind of view.
+  Its filters and presentation map onto a spec (parade is the
+  status-grouped list); table sorting is not in the URL and is not captured.
+  `/views/[slug]` links back to the page with `?saved=<slug>` when the page
+  can show the view exactly (one project, no label, assignee or row limit,
+  no grouping but the parade's), and there the owner can save changed
+  filters as a new revision. The mapping lives in
+  [`src/lib/client/views.ts`](../../src/lib/client/views.ts); the name,
+  slug and description limits are shared with the store from
+  [`src/lib/grown.ts`](../../src/lib/grown.ts).
+
+- Crew tools: [`src/lib/server/crew/view-tools.ts`](../../src/lib/server/crew/view-tools.ts)
+  (`define_view`, `list_views`, `run_view`, `view_history`, `revert_view`)
+  call the same store with the chat owner as viewer and First Mate as
+  author, so they add no rule of their own. `define_view` creates or
+  revises under one slug and returns the view's URL (rule 9); `run_view`
+  returns the rows the view's page shows, so First Mate reuses a view
+  rather than rebuilding its query. The writes need the same admin
+  permission as the `/api/views` writes. There is no publish or share
+  tool (rule 7).
+- Proposed automations (rule 10):
+  [`src/lib/server/crew/automation-tools.ts`](../../src/lib/server/crew/automation-tools.ts)
+  (`define_automation`, `list_automations`) reuse 0019's `createAutomation`
+  and the `POST /api/automations` field schemas, for the chat owner with
+  `dispatch:launch`. The automation store, not the tool, saves an
+  automation that names its proposing chat (`proposed_chat_id`) paused with
+  a reason, so no crew path can create one that fires; resuming clears the
+  reason and keeps the marker, which the browser reads as
+  `proposed_by_first_mate` (never the chat id) and /automations shows.
+  There is no crew tool to resume, edit, run or delete an automation.
+- Surface crew tools:
+  [`src/lib/server/crew/surface-tools.ts`](../../src/lib/server/crew/surface-tools.ts)
+  (`define_surface`, `list_surfaces`, `surface_history`, `revert_surface`).
+  What every kind's tools share (viewer, First Mate author, create-or-revise
+  under one slug, history and revert, the admin write permission, the
+  `/views/<slug>` URL both kinds render at) lives once in
+  [`grown-tools.ts`](../../src/lib/server/crew/grown-tools.ts), which the
+  view tools use too. `define_surface` takes the spec as plain JSON and
+  leaves every check to the store's parse, so a bad tree comes back with the
+  browser API's message and there is one validator. The catalog its
+  description teaches is generated from the catalog schema, so a new
+  component or prop needs no second copy. `list_surfaces` leaves out the
+  trees (up to 32 KB each); the newest `surface_history` revision is the one
+  to edit. No publish tool (rule 7).
+
+- Surface spec: [`surface-spec.ts`](../../src/lib/server/grown/surface-spec.ts).
+  **Renderer choice (the spike):** Beadsmith's own schema and Svelte
+  renderer, in A2UI's shape (a flat list of components, each with an id and
+  its children's ids, under one `root`), rather than json-render's Svelte
+  renderer. The catalog is ten components whose props are already zod
+  objects here; json-render would add a pre-1.0 dependency and its own
+  catalog and action model in front of the bridge allowlist, which this
+  decision needs to own exactly (rule 6). Keeping A2UI's shape leaves room to
+  stream and patch by id, or to speak A2UI to outside clients, later. Each
+  catalog entry is a strict object, so an unknown component or prop is a
+  schema error; the tree checks (one parent each, reachable from the root,
+  no cycles, depth, node, binding and action limits, every reference used
+  and resolved, a component's binding yielding what it shows) run in the
+  same parse. Data bindings name a saved view or a bridge read; buttons name
+  a bridge action. The props are plain text except `Markdown`, which the
+  renderer sends through `markdown-body`.
+- Bridge allowlist: [`bridge.ts`](../../src/lib/server/grown/bridge.ts) names
+  the reads and actions of rule 6 and what each read yields; the tool behind
+  a name is the crew tool itself, loaded on first use through `crew/mcp.ts`
+  (a static import would form a cycle through the state database). Tools
+  that default `project` to the chat's project must name one, since a grown
+  thing has no chat (`show_mission` among them: it reads a project's
+  mission). Tool inputs are checked against the crew tool's own
+  schema by the kind's async `check`, so a bad input is refused when saved.
+- Binding resolution: [`bindings.ts`](../../src/lib/server/grown/bindings.ts)
+  and `GET /api/surfaces/:slug/data` (rule 5). Every binding runs a crew
+  tool's own handler under a `CrewContext` built from the viewer (account,
+  role, no chat scope), after the same `roleCan` check `mcp.ts` makes, so
+  the author's role never carries over. A view binding runs `run_view`
+  under that context, so the store's visibility applies (a member reads
+  only a published view, at its published revision) and a view reads the
+  same rows on its page, in First Mate and on a surface. Bindings resolve
+  independently: one refused or failed binding is an error value beside the
+  others, reduced by `safeError`. Results are bounded by `RESULT_MAX_CHARS`
+  through `boundedJson`; when that is not enough for a list, whole rows are
+  dropped from the end with `truncated` and `total`, so the renderer never
+  receives cut JSON and a stat tile still counts every row. The rate limit
+  is the crew launch cap's sliding window, sized 60 per minute and keyed by
+  viewer and surface; a request takes one call per binding, all or none.
+
+- Surface renderer:
+  [`src/lib/components/surface/`](../../src/lib/components/surface/), one
+  Svelte component per data-reading catalog entry (StatTile, IssueList,
+  IssueBoard, Chart, Button) and `surface-node.svelte`, which draws layout,
+  headings, text and Markdown and recurses through children. Every catalog
+  component has exactly one branch there, with no fallback for an unknown
+  one, since the store refused it on save. Text props are Svelte text
+  (escaped); Markdown goes through `markdown-body`. A surface renders at
+  `/views/<slug>` like a view: slugs are unique across kinds, so the page
+  asks for a view first and, when there is none, for a surface, then reads
+  its bindings once through `/api/surfaces/:slug/data` as the viewer. The
+  issue components reuse `issue-rows` and the project board (read-only: no
+  dispatch or create from a surface board, since a surface's writes go
+  through its buttons and the host confirmation). Binding data is a crew
+  tool's compact result, so
+  [`src/lib/client/surfaces.ts`](../../src/lib/client/surfaces.ts) checks it
+  field by field, and a binding that failed or that a component cannot read
+  shows its reason in place of its data, never as an empty list or a zero.
+  The header, publish, unpublish, delete and the owner's history
+  ([`grown-history.svelte`](../../src/lib/components/grown-history.svelte))
+  are shared with views, and `/views` lists both kinds, newest change
+  first.
+- Surface actions: [`actions.ts`](../../src/lib/server/grown/actions.ts) and
+  `POST /api/surfaces/:slug/actions/:name` (rule 6). A button opens the
+  host's `confirm-dialog`, drawn by
+  [`surface-button.svelte`](../../src/lib/components/surface/surface-button.svelte)
+  from the stored action (`describeBridgeAction` in
+  [`src/lib/client/surfaces.ts`](../../src/lib/client/surfaces.ts)), never
+  from the button's label, so a button labelled "Refresh" that files an
+  issue says it files one; model-written text in the action is quoted and
+  clipped. Only a confirmed press calls the route, naming the revision on
+  screen (a surface revised since is a conflict, so what was confirmed is
+  what runs) and a fresh key per confirmation, which with the surface, the
+  revision and the action names the crew call, so a retried request replays
+  through dispatch's idempotency. The action's crew tool runs with
+  `bridgeContext`, the viewer's account and role after the same `roleCan`
+  check as a binding; that context's `chat_id` is per surface and viewer,
+  keying the crew launch cap, and its `grown_slug` makes `launch` record the
+  surface on the mission (`dispatch_requests.grown_slug`) instead of a chat,
+  so no chat notice is owed. The request gate keeps the route admin-only
+  (the default for writes); a member sees the button disabled with the
+  reason. A mission row links the surface or app that launched it, when the
+  viewer may see that thing (`missionSurfaceNames` in
+  [`mission-names.ts`](../../src/lib/server/mission-names.ts) lists both
+  kinds through the store's visibility).
+
+- Apps, first slice: [`app-spec.ts`](../../src/lib/server/grown/app-spec.ts)
+  registers the `app` kind (spec `{ html, libraries }`; the 256 KB limit is
+  on the document's UTF-8 bytes, and the store's JSON limit sits past what
+  escaping can add, so it never refuses a document that fits), builds the
+  served document (the host's head with the inlined libraries, then the
+  app's bytes unchanged, so nothing on the server reads them) and holds the
+  frame CSP. The allowlist is
+  [`app-libraries.ts`](../../src/lib/server/grown/app-libraries.ts), the one
+  file, like hc's pin ([0021](./0021-hc-terminal-runtime.md)). **Correction
+  to rule 3:** the design tokens are first-party, cut at build time from the
+  `:root` and `:root.dark` blocks of `src/app.css`, and carry no SHA-256:
+  they come from the same reviewed commit as the code serving them, so a pin
+  would guard against no drift and would only make every token change edit
+  two files. Vendored third-party files keep the version and SHA-256 pin,
+  checked before a file is first served (a mismatch refuses to serve), and
+  no inlined library may contain its own closing tag. The routes under
+  [`src/routes/api/apps/`](../../src/routes/api/apps/) match the surfaces
+  ones, plus `GET /api/apps/:slug/frame`, which serves the revision the
+  viewer may see through `requireGrown` and the store, with the app's CSP and
+  `no-store`. `?theme=dark` puts `class="dark"` on the frame's `<html>`,
+  since the frame cannot read the page's theme.
+
+- Apps, host and reads: `/views/<slug>` asks for a view, then a surface,
+  then an app, and frames an app with
+  [`app-frame.svelte`](../../src/lib/components/app/app-frame.svelte):
+  `sandbox="allow-scripts"`, `no-referrer`, the frame route's URL carrying
+  the page's resolved theme (a theme switch reloads the app with the other
+  tokens) and the revision. The bridge is
+  [`src/lib/client/app-bridge.ts`](../../src/lib/client/app-bridge.ts), a
+  plain module so its checks are unit-tested without a browser. It takes a
+  frame only from that iframe's window **and** the opaque origin (`"null"`),
+  at most 64 KB as JSON, shaped as a JSON-RPC 2.0 request or notification;
+  everything else is dropped, and logged unless it came from another
+  window. It answers `ui/initialize` (host context: theme, display mode,
+  the viewer's role), `tools/call`, `ping`, and reads the `initialized` and
+  `size-changed` notifications (the height is clamped). An app opens at
+  `/views/<slug>` rather than as some tool's result, so the host has no
+  `tool-input` or `tool-result` of its own to announce; the result of an
+  app's call is the response to its `tools/call`, an MCP `CallToolResult`
+  with the data as `structuredContent` and JSON text, and a refusal as
+  `isError`. An answer over 64 KB drops the structured copy, then becomes a
+  JSON-RPC error. The host refuses calls past the server's 60 a minute and
+  past four in flight without a request, so a looping app costs nothing.
+  Replies go to the iframe's window with target origin `*`, since an
+  opaque origin has no name; the pages' CSP now says `frame-src 'self'`
+  (it was the `default-src` fallback before), which is what keeps that
+  window from navigating to another origin and carrying data with it.
+  `POST /api/apps/:slug/call` runs the read through `runBridgeRead` in
+  [`bindings.ts`](../../src/lib/server/grown/bindings.ts), the function a
+  surface binding runs, so both kinds share the permission check, input
+  parse, bounding and limiter. An app's arguments arrive per call, so the
+  project rule a surface meets at save time is checked on every call. The
+  request gate lets any signed-in role make that one POST (it is a read
+  with a body); the route itself answers only the bridge reads and
+  `run_view`. `/views` lists apps beside views and surfaces.
+
+- App crew tools:
+  [`src/lib/server/crew/app-tools.ts`](../../src/lib/server/crew/app-tools.ts)
+  (`define_app`, `list_apps`, `app_history`, `revert_app`), on the shared
+  helpers in `grown-tools.ts` with the same admin write permission and
+  `/views/<slug>` URL. `define_app` leaves every check to the store's parse.
+  Its description teaches the bridge methods, the read allowlist and the
+  library allowlist from the constants the host and frame route use, so they
+  cannot drift. A document runs to 256 KB but a crew result to 24,000
+  characters with long fields cut to 2,000, so no app result carries the
+  document as a JSON field (it would come back cut and look whole): results
+  give its libraries and size, and `app_history` with a revision `number`
+  returns that revision's document as plain text, a page at a time with a
+  `next_offset`, which is how First Mate reads an app back before revising
+  it. No publish tool (rule 7).
+
+- App actions: an app's `tools/call` naming a bridge action (the names are
+  in [`src/lib/grown.ts`](../../src/lib/grown.ts), so the browser can tell
+  an action from a read) is held by the host bridge. A member's is refused
+  there with the reason, before any dialog. Otherwise
+  [`app-frame.svelte`](../../src/lib/components/app/app-frame.svelte) draws
+  `confirm-dialog` from the call's name and arguments with the same
+  `describeBridgeAction` a surface button uses, outside the frame; one
+  confirmation is open at a time, so an app cannot stack dialogs, and a
+  declined one answers the app with `isError` and runs nothing. A confirmed
+  call goes to `POST /api/apps/:slug/actions` with exactly the arguments
+  shown, the revision on screen and a fresh key, and the host also tells the
+  person the outcome in a toast, whatever the app shows. Unlike a surface's
+  stored input, an app's arguments are unchecked until the server parses
+  them, so the dialog reads them as text only and clips identifiers as well
+  as quoted text. On the server, `runAppAction` and `runSurfaceAction` in
+  `actions.ts` share one runner (revision check, the viewer's `roleCan`, the
+  project rule, the tool's own schema, `bridgeContext` with `grown_slug`),
+  and the crew call's id carries the key, so a retried request replays
+  through dispatch's idempotency. The route's request body is bounded by the
+  bridge frame limit like `/call` (`parseBridgeBody` in `grown-api.ts`), and
+  the request gate keeps it admin-only. `define_app`'s description teaches
+  the action names and the confirmation.
+
+- The first vendored chart library is Chart.js 4.5.1 (MIT), as `chart.js`
+  in the allowlist: its UMD build, byte for byte from the npm tarball, in
+  [`vendor/chart.js/`](../../vendor/chart.js/) with its licence and a
+  provenance manifest (tarball URL and integrity), pinned by SHA-256 in
+  `app-libraries.ts`. Chosen over smaller libraries (uPlot, Frappe Charts)
+  because one dependency-free file draws every common chart type on a
+  canvas, makes no network requests, and is the chart API models write most
+  fluently. The `@kurkle/color` it bundles is credited from a manifest under
+  `vendor/chart.js/bundled/`. `pnpm run notices` reads every manifest under
+  `vendor/` and reproduces each licence in full in `THIRD_PARTY_NOTICES.md`,
+  since no package directory carries them into the image. A test keeps the
+  pin's version in step with the manifest. An app that does not name it gets
+  none of its 208 KB.
+
+- Rule 10's "change this" is a mode, not a button: an admin turns it on
+  from the top bar's crosshair or `\`, the page becomes an inspector
+  (outlines drawn over it with pointer events off, capture-phase pointer
+  handlers so nothing under the pointer activates, arrows and Enter for the
+  keyboard, tap for touch), and a popover asks what should change. Send is
+  an ordinary File launch on `POST /api/projects/:id/dispatch` with an
+  optional `change_request` carrying the page context
+  ([`src/lib/change-request.ts`](../../src/lib/change-request.ts), built by
+  [`src/lib/client/change-this.ts`](../../src/lib/client/change-this.ts)):
+  URL, route id, title, theme, viewport and up to five elements' selector
+  path, role, accessible name, text, outerHTML snippet, box and, in a dev
+  build, the Svelte component file from `__svelte_meta`. File, not Tackle
+  or a loop, because a request made by pointing is rarely ready to build:
+  filing a grounded bead keeps the code change behind a person's Tackle,
+  and File already runs without a repository map. So it adds no authority:
+  `dispatch:launch` (members never see the toggle and the gate refuses
+  them), the arm, File allowed and the File checkout map all apply as for
+  any File. `prompts.ts` fences the context as data, separately from the
+  request, as JSON so page text cannot pose as a field, and clips it again.
+  The project that tracks Beadsmith's own code is a setting
+  (`change_this.project_id`, `PUT /api/settings/change-this`, admin only),
+  picked the first time an admin sends a request. The crew tool is
+  `request_code_change`: the same File with `{source: "first_mate"}`, into
+  that project. The mode exits after a send; the toast links to the
+  mission.
+
+Still expected for apps: exporting apps as `ui://` resources to outside MCP
+clients is a later follow-on, not v1. See
+the matching row in [`specs/README.md`](../README.md).

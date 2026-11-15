@@ -24,6 +24,10 @@ export default defineConfig({
 					'connect-src': ['self'],
 					'object-src': ['none'],
 					'base-uri': ['self'],
+					// Only same-origin frames: a sandboxed app (ADR-0025) lives at its
+					// frame route, and this also stops the app's frame navigating
+					// itself to another origin to carry what it read away.
+					'frame-src': ['self'],
 					'frame-ancestors': ['none'],
 					'form-action': ['self']
 				}

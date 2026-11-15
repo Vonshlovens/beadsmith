@@ -26,7 +26,12 @@
 		parseStoredIssueView,
 		projectIssuesHref
 	} from '#lib/client/issue-view.js';
-	import { currentProject, currentViewer, projectList } from '#lib/client/projects.svelte.js';
+	import {
+		currentProject,
+		currentViewer,
+		projectList,
+		statusSnapshot
+	} from '#lib/client/projects.svelte.js';
 	import { app_state } from '#lib/client/stores.svelte.js';
 	import { PROJECTS_PATH } from '#lib/client/home.js';
 
@@ -129,6 +134,16 @@
 				(event.target as HTMLElement).blur();
 			}
 		},
+		{
+			// While the mode is on, change-this.svelte's own scope takes `\` to leave it.
+			keys: ['\\'],
+			label: 'Change this: point at the page to request a change',
+			group: 'General',
+			when: () => currentViewer()?.role === 'admin' && statusSnapshot()?.dispatch.enabled === true,
+			run: () => {
+				app_state.change_this_on = true;
+			}
+		},
 		{ keys: ['g p'], label: 'Projects', group: 'Go to', run: () => go(PROJECTS_PATH) },
 		{
 			keys: ['g i'],
@@ -149,6 +164,7 @@
 			}
 		},
 		{ keys: ['g r'], label: 'Ready', group: 'Go to', run: () => go('/ready') },
+		{ keys: ['g v'], label: 'Views', group: 'Go to', run: () => go('/views') },
 		{ keys: ['g f'], label: 'First Mate', group: 'Go to', run: () => go('/first-mate') },
 		{ keys: ['g m'], label: 'Missions', group: 'Go to', run: () => go('/missions') },
 		{ keys: ['g u'], label: 'Automations', group: 'Go to', run: () => go('/automations') },

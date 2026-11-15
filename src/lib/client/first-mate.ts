@@ -499,6 +499,7 @@ export function defaultCommands(ctx: FirstMateContext): FirstMateCommand[] {
 	commands.push(
 		go('go-ready', 'Ready', '/ready', ['ready', 'deck', 'unblocked'], 'g r'),
 		go('go-projects', 'Projects', '/projects', ['projects', 'catalog', 'databases'], 'g p'),
+		go('go-views', 'Views', '/views', ['views', 'saved', 'filters', 'dashboards'], 'g v'),
 		go('go-missions', 'Missions', '/missions', ['missions', 'fleet', 'agents', 'runs'], 'g m'),
 		go('go-activity', 'Activity log', '/activity', ['activity', 'events', 'history', 'log'], 'g a')
 	);

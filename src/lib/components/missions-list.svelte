@@ -2,8 +2,9 @@
 	/**
 	 * Agent missions as rows. Compact mode is the issue page's thread list
 	 * (rows open the thread in the agent dialog); the full list is the
-	 * cross-project Missions page (rows open the thread in First Mate). The
-	 * conversation itself lives in agent-thread.svelte.
+	 * cross-project Missions page (rows open the thread in First Mate, and a
+	 * mission a surface button launched links that surface when the viewer
+	 * may see it). The conversation itself lives in agent-thread.svelte.
 	 */
 	import { tip } from '#lib/client/tooltip.js';
 	import ArrowSquareOutIcon from 'phosphor-svelte/lib/ArrowSquareOutIcon';
@@ -128,6 +129,11 @@
 						>
 					{/if}
 				</span>
+				{#if mission.surface}
+					<p class="f-surface">
+						From <a href="/views/{mission.surface.slug}">{mission.surface.name}</a>
+					</p>
+				{/if}
 				{#if mission.error_message}
 					<p class="err f-err">{mission.error_message}</p>
 				{/if}
@@ -253,6 +259,18 @@
 		display: inline-flex;
 		justify-content: flex-end;
 		min-width: 52px;
+	}
+	/*
+	 * The surface whose button launched it, under the row: a link of its own,
+	 * since the row's main link opens the thread.
+	 */
+	.f-surface {
+		grid-column: 1 / -1;
+		margin: 0;
+		color: var(--tx-dim);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	/* Two lines of the reason in the row; the thread has all of it. */
 	.f-err {

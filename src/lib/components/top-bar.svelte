@@ -15,16 +15,27 @@
 	import MagnifyingGlassIcon from 'phosphor-svelte/lib/MagnifyingGlassIcon';
 	import ClockCounterClockwiseIcon from 'phosphor-svelte/lib/ClockCounterClockwiseIcon';
 	import SteeringWheelIcon from 'phosphor-svelte/lib/SteeringWheelIcon';
+	import CrosshairIcon from 'phosphor-svelte/lib/CrosshairIcon';
 	import { newestStamp } from '#lib/client/activity-groups.js';
 	import ProjectSwitcher from '#lib/components/project-switcher.svelte';
 	import StatusCluster from '#lib/components/status-cluster.svelte';
 	import BrandMark from '#lib/components/brand-mark.svelte';
-	import { currentProject, projectList } from '#lib/client/projects.svelte.js';
+	import {
+		currentProject,
+		currentViewer,
+		projectList,
+		statusSnapshot
+	} from '#lib/client/projects.svelte.js';
 	import { app_state } from '#lib/client/stores.svelte.js';
 	import { FIRST_MATE_PATH } from '#lib/client/first-mate.js';
 	import { PRODUCT_NAME } from '#lib/product.js';
 
 	let query = $state(page.url.searchParams.get('q') ?? '');
+
+	/** "Change this" (ADR-0025 rule 10): admins only, and only while a File could launch. */
+	const change_this_available = $derived(
+		currentViewer()?.role === 'admin' && statusSnapshot()?.dispatch.enabled === true
+	);
 
 	const rail_expanded = $derived(app_state.rail_open || !app_state.rail_collapsed);
 	const on_first_mate_page = $derived(page.url.pathname === FIRST_MATE_PATH);
@@ -137,6 +148,24 @@
 		{#if activity_unseen}<i class="unseen" aria-hidden="true"></i>{/if}
 	</button>
 
+	{#if change_this_available}
+		<!-- data-change-this: while the mode is on, this button still answers clicks. -->
+		<button
+			class="rail-toggle change-this-toggle"
+			class:is-on={app_state.change_this_on}
+			type="button"
+			data-change-this
+			aria-pressed={app_state.change_this_on}
+			aria-label="Change this: point at part of the page to request a change"
+			{@attach tip(
+				app_state.change_this_on ? 'Leave Change this (\\)' : 'Change this: request a change (\\)'
+			)}
+			onclick={() => (app_state.change_this_on = !app_state.change_this_on)}
+		>
+			<CrosshairIcon size={17} weight={app_state.change_this_on ? 'fill' : 'regular'} />
+		</button>
+	{/if}
+
 	<button
 		class="fm-open"
 		type="button"
@@ -153,6 +182,10 @@
 </header>
 
 <style>
+	.change-this-toggle.is-on {
+		color: var(--cyan-tx);
+		background: color-mix(in srgb, var(--cyan) 12%, transparent);
+	}
 	.activity-open {
 		position: relative;
 	}

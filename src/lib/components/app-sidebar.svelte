@@ -17,6 +17,7 @@
 	import LightningIcon from 'phosphor-svelte/lib/LightningIcon';
 	import ListBulletsIcon from 'phosphor-svelte/lib/ListBulletsIcon';
 	import ListChecksIcon from 'phosphor-svelte/lib/ListChecksIcon';
+	import FunnelSimpleIcon from 'phosphor-svelte/lib/FunnelSimpleIcon';
 	import RobotIcon from 'phosphor-svelte/lib/RobotIcon';
 	import SteeringWheelIcon from 'phosphor-svelte/lib/SteeringWheelIcon';
 	import TerminalWindowIcon from 'phosphor-svelte/lib/TerminalWindowIcon';
@@ -94,6 +95,13 @@
 				icon: FoldersIcon,
 				active: path === PROJECTS_PATH,
 				keys: 'g p'
+			},
+			{
+				href: '/views',
+				label: 'Views',
+				icon: FunnelSimpleIcon,
+				active: path === '/views' || path.startsWith('/views/'),
+				keys: 'g v'
 			}
 		);
 		const result: NavSection[] = [{ items: mine }];

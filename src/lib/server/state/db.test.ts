@@ -35,6 +35,8 @@ describe('initStateSchema', () => {
 			'dispatch_requests',
 			'dispatch_turns',
 			'file_checkout_maps',
+			'grown_revisions',
+			'grown_things',
 			'mate_chats',
 			'mate_crew_calls',
 			'mate_events',
@@ -54,8 +56,8 @@ describe('initStateSchema', () => {
 		]);
 	});
 
-	it('declares the application, todo, account, relay audit and automation tables and indexes', () => {
-		expect(STATE_SCHEMA_SQL).toHaveLength(35);
+	it('declares the application, todo, account, relay audit, automation and grown tables and indexes', () => {
+		expect(STATE_SCHEMA_SQL).toHaveLength(38);
 	});
 
 	it('adds run result columns to an existing table', async () => {

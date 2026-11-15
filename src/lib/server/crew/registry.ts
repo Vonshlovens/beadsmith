@@ -13,6 +13,9 @@ import type { DispatchDeps } from '../dispatch/service.js';
 import type { TodoStore } from '../todos/store.js';
 import type { MemoryStore } from '../mate/memory-store.js';
 import type { MetaStore } from '../mate/meta-store.js';
+import type { GrownStore } from '../grown/store.js';
+import type { AutomationStore } from '../automations/store.js';
+import type { StateStore } from '../state/db.js';
 import type { Project } from '#lib/types.js';
 import type { LaunchLimiter } from './launch-limit.js';
 
@@ -37,6 +40,13 @@ export interface CrewContext {
 	 * the owner may read, because the browser does not narrow it either.
 	 */
 	scope: string | null;
+	/**
+	 * The grown thing (its slug) a bridge call came from, when a surface's
+	 * button rather than a chat is calling (ADR-0025 rule 6). Such a call has
+	 * no chat, so a launch records this instead of `chat_id`, and no chat
+	 * notice is owed.
+	 */
+	grown_slug?: string;
 }
 
 /** Server modules the tools call; tests inject fakes, production the defaults. */
@@ -50,8 +60,14 @@ export interface CrewDeps {
 	memories?: () => Promise<MemoryStore>;
 	/** The owner's First Mate meta folder (ADR-0024). */
 	meta?: () => Promise<MetaStore>;
+	/** Saved views and other grown things (ADR-0025). */
+	grown?: () => Promise<GrownStore>;
+	/** Automations First Mate proposes and lists (ADR-0025 rule 10). */
+	automations?: () => Promise<AutomationStore>;
 	/** Per-chat cap on mission launches; defaults to the env-configured one. */
 	launch_limiter?: LaunchLimiter;
+	/** Service settings, for the project that tracks Beadsmith's own code (ADR-0025 rule 10). */
+	settings?: () => Promise<StateStore>;
 }
 
 /**

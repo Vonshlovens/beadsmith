@@ -8,6 +8,7 @@
 	 */
 	import { goto, refreshAll } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
+	import RobotIcon from 'phosphor-svelte/lib/RobotIcon';
 	import RocketLaunchIcon from 'phosphor-svelte/lib/RocketLaunchIcon';
 	import PauseIcon from 'phosphor-svelte/lib/PauseIcon';
 	import PencilSimpleIcon from 'phosphor-svelte/lib/PencilSimpleIcon';
@@ -184,6 +185,10 @@
 			<dd>{automation.overlap === 'queue' ? 'Run it when the last one ends' : 'Skip that run'}</dd>
 			<dt>Runs on</dt>
 			<dd>{automation.provider ?? 'The default runner'}</dd>
+			{#if automation.proposed_by_first_mate}
+				<dt>Proposed by</dt>
+				<dd class="mate"><RobotIcon size={12} aria-hidden="true" />First Mate</dd>
+			{/if}
 		</dl>
 
 		<section class="sec">
@@ -271,6 +276,12 @@
 </div>
 
 <style>
+	.mate {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		color: var(--violet-tx);
+	}
 	.automation {
 		max-width: 1000px;
 	}

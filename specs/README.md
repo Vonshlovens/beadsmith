@@ -129,6 +129,18 @@ reality**. Search `src/` before treating a spec as implemented.
   each chat's context with an agent-written carry-over note instead of
   resuming an ever-growing transcript. Work stays in Beads
   ([ADR-0024](decisions/0024-first-mate-memory-and-context.md)).
+- Accepted, being implemented: **grown capabilities**. The owner and
+  First Mate add views (declarative `BrowseFilters` specs), catalog surfaces
+  (JSON trees over Beadsmith's own component catalog) and sandboxed apps
+  (model-written HTML/JS) as revisioned rows in `state.db`. These are never
+  SQL, and nothing model-written runs in the Node process: app code runs
+  only in the viewer's browser, in an opaque-origin sandboxed iframe with no
+  network access and only vendored, hash-pinned libraries, and reaches
+  Beadsmith through an MCP Apps-shaped tool bridge. Everything runs as the
+  viewer. Writes and launches reuse dispatch and todo authority behind a
+  host-rendered confirmation. Members see only a revision an admin has
+  published
+  ([ADR-0025](decisions/0025-grown-capabilities.md)).
 - Deployment is **one root `compose.yaml` + `.env`** (bridge with token,
   or host network on loopback), GHCR images, Dolt always separate.
   Tailscale is for Cloud Agent VMs, not the app image
@@ -201,6 +213,7 @@ Follow the `architecture` skill at
 | [0021-hc-terminal-runtime.md](decisions/0021-hc-terminal-runtime.md) | Partly: the hc client is in [`src/lib/hc/`](../src/lib/hc/), the session core in [`src/lib/agent-session/`](../src/lib/agent-session/), and Sand missions ([`src/lib/server/dispatch/e2b-provider.ts`](../src/lib/server/dispatch/e2b-provider.ts)) and First Mate chats ([`src/lib/mate-runner/`](../src/lib/mate-runner/)) run on it; the admin relay for Sand is in [`src/lib/server/terminal-relay/`](../src/lib/server/terminal-relay/); the forge guest's hc core is a user service in [`fleet/hosts/forge/guests/mate.nix`](../fleet/hosts/forge/guests/mate.nix); forge chats relay through the mate runner's terminal attach ([`src/lib/mate-runner/server.ts`](../src/lib/mate-runner/server.ts)) | hc terminal runtime for every agent: `hc connect` over the sandbox's own channel, transcript-derived MissionEvents, admin relay with audited attach and take-over |
 | [0022-underclass-model-gateway.md](decisions/0022-underclass-model-gateway.md) | [`fleet/hosts/forge/runtime.nix`](../fleet/hosts/forge/runtime.nix), [`fleet/hosts/forge/model-proxy.mjs`](../fleet/hosts/forge/model-proxy.mjs), [`src/lib/server/underclass/client.ts`](../src/lib/server/underclass/client.ts), [`src/routes/console/model-pool/`](../src/routes/console/model-pool/) | Underclass pool on forge behind the guest filter; admin console reads its API and runs four account actions server-side |
 | [0024-first-mate-memory-and-context.md](decisions/0024-first-mate-memory-and-context.md) | Partly: [`src/lib/server/mate/memory-store.ts`](../src/lib/server/mate/memory-store.ts), [`src/lib/server/crew/memory-tools.ts`](../src/lib/server/crew/memory-tools.ts), [`src/lib/server/mate/meta-store.ts`](../src/lib/server/mate/meta-store.ts), [`src/lib/server/crew/meta-tools.ts`](../src/lib/server/crew/meta-tools.ts) | First Mate memory, meta folder and sliding context, runner-agnostic |
+| [0025-grown-capabilities.md](decisions/0025-grown-capabilities.md) | Partly: the store and view spec in [`src/lib/server/grown/`](../src/lib/server/grown/), the views API and pages ([`src/routes/api/views/`](../src/routes/api/views/), [`src/routes/views/`](../src/routes/views/)) with saving from the project page, the view crew tools ([`src/lib/server/crew/view-tools.ts`](../src/lib/server/crew/view-tools.ts)), First Mate's paused automation proposals ([`src/lib/server/crew/automation-tools.ts`](../src/lib/server/crew/automation-tools.ts)), the surface spec, bridge allowlist, surfaces API ([`src/routes/api/surfaces/`](../src/routes/api/surfaces/)) with binding resolution as the viewer, surface crew tools ([`src/lib/server/crew/surface-tools.ts`](../src/lib/server/crew/surface-tools.ts)), and the surface renderer ([`src/lib/components/surface/`](../src/lib/components/surface/), at `/views/<slug>`) with button actions behind the host confirmation (`POST /api/surfaces/:slug/actions/:name`), and for apps the spec, the pinned library allowlist and the apps API with its sandboxed frame route ([`src/routes/api/apps/`](../src/routes/api/apps/)), framed at `/views/<slug>` with the postMessage bridge for reads ([`src/lib/client/app-bridge.ts`](../src/lib/client/app-bridge.ts), `POST /api/apps/:slug/call`) and for actions behind the host confirmation (`POST /api/apps/:slug/actions`), and written by First Mate's app crew tools ([`src/lib/server/crew/app-tools.ts`](../src/lib/server/crew/app-tools.ts)) with the vendored, hash-pinned Chart.js ([`vendor/chart.js/`](../vendor/chart.js/)), and rule 10's admin-only Change this mode ([`src/lib/components/change-this.svelte`](../src/lib/components/change-this.svelte)) and `request_code_change` crew tool, both a File launch with page context; exporting apps as `ui://` resources not yet | Views, catalog surfaces and sandboxed apps as revisioned data, run as the viewer |
 
 ## UI map
 

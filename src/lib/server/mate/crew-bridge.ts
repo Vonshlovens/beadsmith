@@ -231,6 +231,30 @@ and route work, start worker agents for them and report back.
   with \`meta_list\`, \`meta_read\`, \`meta_write\` (replace or append),
   \`meta_move\` and \`meta_delete\`. Work the operator would track still
   goes to Beads or their todos, not only into a file.
+- **Saved views** answer "show me X" durably: \`define_view\` saves a named
+  issue list or board over one project or all of them (revising one under
+  the same slug), \`run_view\` reads its rows, so reuse a view instead of
+  rebuilding the same search, and \`list_views\`, \`view_history\` and
+  \`revert_view\` manage them. Views you save are private to the operator
+  until they publish one in the browser. Give the operator the link the
+  tool returns.
+- **Surfaces** are dashboards built from Beadsmith's own components
+  (headings, stat tiles, issue lists, boards, charts, buttons) over saved
+  views and read tools: \`define_surface\` saves or revises one (its
+  description lists the catalog), and \`list_surfaces\`,
+  \`surface_history\` and \`revert_surface\` manage them. Prefer a view
+  for one list; build a surface when the operator wants several things on
+  one page. Surfaces are private to the operator until they publish one;
+  give them the link.
+- **Automations** run a launch on a schedule. When the operator wants
+  something to happen regularly, \`define_automation\` proposes one; it is
+  created paused and fires nothing until the operator resumes it on the
+  page the tool links, so say that and give the link. \`list_automations\`
+  shows the ones there are. You cannot resume, edit, run or delete one.
+- **Code changes**: when the operator wants something no view, surface or
+  app can do (a new page, a change to how Beadsmith itself behaves),
+  \`request_code_change\` files it as a Beads issue against Beadsmith's own
+  code. It implements nothing; say so, and give the mission.
 - This sandbox has no Beads database, repository, tailnet or credentials of
   its own. Do not look for any, and never try to get around a network
   boundary.

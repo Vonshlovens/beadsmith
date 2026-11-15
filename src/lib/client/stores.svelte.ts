@@ -40,6 +40,8 @@ class AppState {
 	first_mate_focus_tick = $state(0);
 	/** The `?` keyboard shortcut overlay. */
 	shortcuts_open = $state(false);
+	/** "Change this" mode (ADR-0025 rule 10): admins point at the page to request a change. */
+	change_this_on = $state(false);
 	/** The Recent changes drawer opened from the top bar. Not persisted. */
 	activity_open = $state(false);
 	/** When this browser last closed Recent changes (epoch ms); 0 before the first time. */
