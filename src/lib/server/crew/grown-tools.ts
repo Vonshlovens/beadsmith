@@ -159,8 +159,15 @@ export function grownHistoryTool(kind: GrownKind, name: string, description: str
  * @param kind The kind it changes; another kind's slug is "not found".
  * @param name The tool's name.
  * @param description What the model reads.
+ * @param present How the result shows the reverted thing; apps leave out
+ *   their document, which the result bound would cut.
  */
-export function grownRevertTool(kind: GrownKind, name: string, description: string): CrewTool {
+export function grownRevertTool(
+	kind: GrownKind,
+	name: string,
+	description: string,
+	present: (thing: GrownThing, viewer: GrownViewer) => unknown = compactGrown
+): CrewTool {
 	return defineTool({
 		name,
 		description,
@@ -175,7 +182,7 @@ export function grownRevertTool(kind: GrownKind, name: string, description: stri
 				const store = await grownStore(deps);
 				await requireGrown(store, viewer, kind, input.slug);
 				const thing = await store.revert(viewer, input.slug, input.number, firstMate(ctx));
-				return { reverted_to: input.number, [kind]: compactGrown(thing, viewer) };
+				return { reverted_to: input.number, [kind]: present(thing, viewer) };
 			});
 		}
 	});

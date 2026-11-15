@@ -212,8 +212,9 @@ stored, served by `/api/surfaces`, written by First Mate's surface crew
 tools, their bindings resolved as the viewer, rendered at `/views/<slug>`,
 and their buttons run allowlisted actions as the viewer behind the host
 confirmation; apps are stored, served from their sandboxed frame route,
-framed at `/views/<slug>` and read through the bridge as the viewer, while
-app actions and app crew tools are not yet (see Implementation notes).
+framed at `/views/<slug>`, read through the bridge as the viewer and
+written by First Mate's app crew tools, while app actions are not yet (see
+Implementation notes).
 
 ## Alternatives considered
 
@@ -483,7 +484,22 @@ Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
   with a body); the route itself answers only the bridge reads and
   `run_view`. `/views` lists apps beside views and surfaces.
 
-Still expected for apps: actions behind the host confirmation, the app
-crew tools and the first vendored chart library. Exporting apps as
+- App crew tools:
+  [`src/lib/server/crew/app-tools.ts`](../../src/lib/server/crew/app-tools.ts)
+  (`define_app`, `list_apps`, `app_history`, `revert_app`), on the shared
+  helpers in `grown-tools.ts` with the same admin write permission and
+  `/views/<slug>` URL. `define_app` leaves every check to the store's parse.
+  Its description teaches the bridge methods, the read allowlist and the
+  library allowlist from the constants the host and frame route use, so they
+  cannot drift. A document runs to 256 KB but a crew result to 24,000
+  characters with long fields cut to 2,000, so no app result carries the
+  document as a JSON field (it would come back cut and look whole): results
+  give its libraries and size, and `app_history` with a revision `number`
+  returns that revision's document as plain text, a page at a time with a
+  `next_offset`, which is how First Mate reads an app back before revising
+  it. No publish tool (rule 7).
+
+Still expected for apps: actions behind the host confirmation and the first
+vendored chart library. Exporting apps as
 `ui://` resources to outside MCP clients is a later follow-on, not v1. See
 the matching row in [`specs/README.md`](../README.md).

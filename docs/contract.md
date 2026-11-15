@@ -425,7 +425,10 @@ Sandboxed apps (the same ADR, rule 3) have the same routes under
 app's spec is `{ html, libraries }`: `html` is a model-written document of at
 most 256 KB, stored and served as opaque text, and `libraries` names entries
 of the host's reviewed allowlist (default `["beadsmith-tokens"]`); any other
-key or library is refused. `GET /api/apps/:slug/frame` serves the document
+key or library is refused. First Mate's app crew tools (`define_app`,
+`list_apps`, `app_history`, `revert_app`) use the same store and parse as the
+chat's owner, need the same admin permission, attribute each revision to
+First Mate and the chat, and none of them publishes. `GET /api/apps/:slug/frame` serves the document
 the viewer may see (the owner's latest, else the published revision, else
 `not_found`) as `text/html` behind the app's own CSP: `sandbox allow-scripts`,
 `default-src 'none'`, inline scripts and styles only, `img-src data:`,
