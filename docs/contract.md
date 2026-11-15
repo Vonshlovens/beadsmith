@@ -377,6 +377,16 @@ SQL. First Mate's view crew tools (`define_view`, `list_views`, `run_view`,
 owner, attributing each revision to First Mate and the chat; none of them
 publishes.
 
+Catalog surfaces (the same ADR) have the same routes under
+`/api/surfaces`, with the same roles and bodies, minus `/run`: `GET
+/api/surfaces`, `GET`/`PATCH`/`DELETE /api/surfaces/:slug`, `GET
+/api/surfaces/:slug/history`, `POST /api/surfaces/:slug/revert` and
+`PUT`/`DELETE /api/surfaces/:slug/publish`. A surface's spec is a component
+tree over Beadsmith's own catalog; a component, prop or tool the catalog and
+the bridge allowlist do not name is refused when saved. Slugs are shared
+across kinds, and each set of routes answers `not_found` for the other
+kind's slug.
+
 `GET /api/ready` is the cross-project Ready deck: open issues with no open
 `blocks` dependencies, merged across catalog projects the session can see,
 sorted by priority then recency. Parent-child, related, and discovered-from

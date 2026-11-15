@@ -1,18 +1,27 @@
 /**
- * The browser's side of saved views (ADR-0025 rules 5, 7 and 9): who the
- * request's viewer is, the request bodies the `/api/views` routes accept,
- * and how a stored thing becomes the `ViewSummary` the pages show. The
- * store decides who may see or change what; these helpers only translate.
+ * The browser's side of grown things (ADR-0025 rules 5, 7 and 9): who the
+ * request's viewer is, the request bodies the `/api/views` and
+ * `/api/surfaces` routes accept, and how a stored thing becomes the summary
+ * the pages show. Every kind shares these, so a rule changes in one place.
+ * The store decides who may see or change what; these helpers only
+ * translate.
  */
 import { z } from 'zod';
-import type { ViewRevisionView, ViewSpecShape, ViewSummary } from '#lib/views.js';
+import type { GrownRevisionView, GrownSummary } from '#lib/grown.js';
 import { GrownError } from './errors.js';
-import type { GrownAuthor, GrownRevision, GrownStore, GrownThing, GrownViewer } from './store.js';
+import type {
+	GrownAuthor,
+	GrownKind,
+	GrownRevision,
+	GrownStore,
+	GrownThing,
+	GrownViewer
+} from './store.js';
 
 /**
  * The signed-in account asking, with its own role (rule 5). An Access
  * service token has no account, so it owns nothing and reads as a member
- * would: only published views.
+ * would: only published things.
  * @param locals The request's locals, set by `hooks.server.ts`.
  */
 export function viewerFromLocals(locals: App.Locals): GrownViewer {
@@ -26,7 +35,10 @@ export function viewerFromLocals(locals: App.Locals): GrownViewer {
  */
 export function personAuthor(locals: App.Locals): GrownAuthor {
 	if (locals.user === undefined) {
-		throw new GrownError('forbidden', 'Changing a view needs a signed-in admin account.');
+		throw new GrownError(
+			'forbidden',
+			'Changing a view or surface needs a signed-in admin account.'
+		);
 	}
 	return { kind: 'person', account_id: locals.user.id, chat_id: null };
 }
@@ -34,8 +46,11 @@ export function personAuthor(locals: App.Locals): GrownAuthor {
 const name_schema = z.string().min(1);
 const description_schema = z.string();
 
-/** Create: the store checks the slug, name and description limits and parses the spec. */
-export const view_create_schema = z.strictObject({
+/**
+ * Create: the store checks the slug, name and description limits and parses
+ * the spec against the route's kind, which the body never names.
+ */
+export const grown_create_schema = z.strictObject({
 	slug: z.string().min(1),
 	name: name_schema,
 	description: description_schema.optional(),
@@ -43,7 +58,7 @@ export const view_create_schema = z.strictObject({
 });
 
 /** Revise: any of name, description and spec; the rest carry over from the latest revision. */
-export const view_revise_schema = z
+export const grown_revise_schema = z
 	.strictObject({
 		name: name_schema.optional(),
 		description: description_schema.optional(),
@@ -56,24 +71,25 @@ export const view_revise_schema = z
 
 const revision_number_schema = z.number().int().min(1);
 
-export const view_revert_schema = z.strictObject({ number: revision_number_schema });
+export const grown_revert_schema = z.strictObject({ number: revision_number_schema });
 
 /** Publish a revision; with no number, the latest. */
-export const view_publish_schema = z.strictObject({ number: revision_number_schema.optional() });
+export const grown_publish_schema = z.strictObject({ number: revision_number_schema.optional() });
 
 /**
- * A thing as this viewer sees it.
+ * A thing as this viewer sees it. The caller names the spec type its kind's
+ * schema produced; the store validated the spec on write.
  * @param thing The store's thing (its revision is the one the viewer sees).
  * @param viewer The viewer it was read for.
  */
-export function viewSummary(thing: GrownThing, viewer: GrownViewer): ViewSummary {
+export function grownSummary<Spec>(thing: GrownThing, viewer: GrownViewer): GrownSummary<Spec> {
 	const mine = thing.owner_id === viewer.account_id;
 	const published = thing.published_revision_id !== null;
 	return {
 		slug: thing.slug,
 		name: thing.revision.name,
 		description: thing.revision.description,
-		spec: thing.revision.spec as ViewSpecShape,
+		spec: thing.revision.spec as Spec,
 		revision: thing.revision.number,
 		author_kind: thing.revision.author_kind,
 		mine,
@@ -91,15 +107,15 @@ export function viewSummary(thing: GrownThing, viewer: GrownViewer): ViewSummary
  * @param revision The stored revision.
  * @param published_revision_id The thing's published revision, if any.
  */
-export function revisionView(
+export function grownRevisionView<Spec>(
 	revision: GrownRevision,
 	published_revision_id: string | null
-): ViewRevisionView {
+): GrownRevisionView<Spec> {
 	return {
 		number: revision.number,
 		name: revision.name,
 		description: revision.description,
-		spec: revision.spec as ViewSpecShape,
+		spec: revision.spec as Spec,
 		author_kind: revision.author_kind,
 		...(revision.author_chat_id === null ? {} : { author_chat_id: revision.author_chat_id }),
 		...(revision.reverted_from === null ? {} : { reverted_from: revision.reverted_from }),
@@ -109,21 +125,25 @@ export function revisionView(
 }
 
 /**
- * The view called `slug` as this viewer sees it. Another kind under the same
- * slug, or one the viewer may not see, is "not found" here, so these routes
- * never read or change a surface or an app.
+ * The thing of `kind` called `slug` as this viewer sees it. Slugs are unique
+ * across kinds, so a thing of another kind under the same slug, or one the
+ * viewer may not see, is "not found" here: the views routes never read or
+ * change a surface, and the surfaces routes never touch a view. Every route
+ * calls this before any store write.
  * @param store The grown things store.
  * @param viewer The request's viewer.
- * @param slug The view's slug.
+ * @param kind The route's kind.
+ * @param slug The thing's slug.
  */
-export async function requireView(
+export async function requireGrown(
 	store: GrownStore,
 	viewer: GrownViewer,
+	kind: GrownKind,
 	slug: string
 ): Promise<GrownThing> {
 	const thing = await store.read(viewer, slug);
-	if (thing === undefined || thing.kind !== 'view') {
-		throw new GrownError('not_found', `There is no view called "${slug}".`);
+	if (thing === undefined || thing.kind !== kind) {
+		throw new GrownError('not_found', `There is no ${kind} called "${slug}".`);
 	}
 	return thing;
 }

@@ -4,22 +4,23 @@
  * the owner is an admin (ADR-0025 rule 7); the store enforces both.
  */
 import type { RequestHandler } from './$types';
+import type { ViewSpecShape } from '#lib/views.js';
 import { getGrownStore } from '#lib/server/state/db.js';
 import { errorFromException, jsonResponse } from '#lib/server/security.js';
 import { parseJsonBody } from '#lib/server/validation.js';
 import {
 	personAuthor,
-	requireView,
-	view_revise_schema,
+	requireGrown,
+	grown_revise_schema,
 	viewerFromLocals,
-	viewSummary
-} from '#lib/server/grown/views-api.js';
+	grownSummary
+} from '#lib/server/grown/grown-api.js';
 
 export const GET: RequestHandler = async ({ params, locals }) => {
 	const viewer = viewerFromLocals(locals);
 	try {
-		const thing = await requireView(await getGrownStore(), viewer, params.slug);
-		return jsonResponse({ view: viewSummary(thing, viewer) });
+		const thing = await requireGrown(await getGrownStore(), viewer, 'view', params.slug);
+		return jsonResponse({ view: grownSummary<ViewSpecShape>(thing, viewer) });
 	} catch (error) {
 		return errorFromException(error, 'unavailable');
 	}
@@ -27,17 +28,17 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 
 /** Change any of name, description and spec; the rest carry over. */
 export const PATCH: RequestHandler = async ({ params, request, locals }) => {
-	const body = await parseJsonBody(request, view_revise_schema);
+	const body = await parseJsonBody(request, grown_revise_schema);
 	if (!body.ok) return body.response;
 	const viewer = viewerFromLocals(locals);
 	try {
 		const store = await getGrownStore();
-		await requireView(store, viewer, params.slug);
+		await requireGrown(store, viewer, 'view', params.slug);
 		const thing = await store.revise(viewer, params.slug, {
 			...body.data,
 			author: personAuthor(locals)
 		});
-		return jsonResponse({ view: viewSummary(thing, viewer) });
+		return jsonResponse({ view: grownSummary<ViewSpecShape>(thing, viewer) });
 	} catch (error) {
 		return errorFromException(error);
 	}
@@ -47,7 +48,7 @@ export const DELETE: RequestHandler = async ({ params, locals }) => {
 	const viewer = viewerFromLocals(locals);
 	try {
 		const store = await getGrownStore();
-		await requireView(store, viewer, params.slug);
+		await requireGrown(store, viewer, 'view', params.slug);
 		await store.remove(viewer, params.slug);
 		return new Response(null, { status: 204 });
 	} catch (error) {

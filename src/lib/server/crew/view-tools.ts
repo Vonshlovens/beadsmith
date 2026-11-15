@@ -32,8 +32,8 @@ import {
 	view_spec_schema,
 	type RunViewDeps
 } from '../grown/view-spec.js';
-import { requireView, revisionView, viewSummary } from '../grown/views-api.js';
-import { VIEW_GROUPS, VIEW_PRESENTATIONS, VIEW_SORTS } from '#lib/views.js';
+import { requireGrown, grownRevisionView, grownSummary } from '../grown/grown-api.js';
+import { VIEW_GROUPS, VIEW_PRESENTATIONS, VIEW_SORTS, type ViewSpecShape } from '#lib/views.js';
 import { compactIssue, resolveCrewProject } from './read-tools.js';
 import {
 	CrewToolError,
@@ -83,7 +83,7 @@ async function grown<T>(work: () => Promise<T>): Promise<T> {
 }
 
 function compactView(thing: GrownThing, viewer: GrownViewer) {
-	return { ...viewSummary(thing, viewer), url: viewUrl(thing.slug) };
+	return { ...grownSummary<ViewSpecShape>(thing, viewer), url: viewUrl(thing.slug) };
 }
 
 /**
@@ -200,7 +200,7 @@ export const run_view = defineTool({
 	async handler(ctx, input, deps) {
 		const viewer = viewerOf(ctx);
 		return grown(async () => {
-			const thing = await requireView(await grownStore(deps), viewer, input.slug);
+			const thing = await requireGrown(await grownStore(deps), viewer, 'view', input.slug);
 			// As the run route does: parse again to type the spec and refuse one
 			// today's schema no longer accepts.
 			const result = await runView(view_spec_schema.parse(thing.revision.spec), runDeps(deps));
@@ -243,14 +243,16 @@ export const view_history = defineTool({
 		const viewer = viewerOf(ctx);
 		return grown(async () => {
 			const store = await grownStore(deps);
-			const thing = await requireView(store, viewer, input.slug);
+			const thing = await requireGrown(store, viewer, 'view', input.slug);
 			const revisions = await store.history(viewer, input.slug);
 			return {
 				slug: thing.slug,
 				url: viewUrl(thing.slug),
 				revisions: revisions
 					.slice(0, input.limit)
-					.map((revision) => revisionView(revision, thing.published_revision_id)),
+					.map((revision) =>
+						grownRevisionView<ViewSpecShape>(revision, thing.published_revision_id)
+					),
 				...(revisions.length > input.limit
 					? { note: `${revisions.length - input.limit} older revisions not shown.` }
 					: {})
@@ -274,7 +276,7 @@ export const revert_view = defineTool({
 		const viewer = viewerOf(ctx);
 		return grown(async () => {
 			const store = await grownStore(deps);
-			await requireView(store, viewer, input.slug);
+			await requireGrown(store, viewer, 'view', input.slug);
 			const thing = await store.revert(viewer, input.slug, input.number, firstMate(ctx));
 			return { reverted_to: input.number, view: compactView(thing, viewer) };
 		});

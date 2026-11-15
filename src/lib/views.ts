@@ -5,6 +5,7 @@
  * spec lives with the server (`src/lib/server/grown/view-spec.ts`), which
  * takes its option lists from here.
  */
+import type { GrownRevisionView, GrownSummary } from '#lib/grown.js';
 import type { IssueSummary } from '#lib/types.js';
 
 export const VIEW_SORTS = ['updated', 'created', 'priority', 'id'] as const;
@@ -51,49 +52,10 @@ export interface ViewResult {
 	skipped: { project_id: string; message: string }[];
 }
 
-export type ViewAuthorKind = 'person' | 'first_mate';
+/** A view as this viewer sees it (see `GrownSummary`). */
+export type ViewSummary = GrownSummary<ViewSpecShape>;
 
-/**
- * A view as this viewer sees it: the owner sees the latest revision, anyone
- * else the published one. Owner-only facts (the latest number, whether the
- * published revision is behind) are present only for the owner.
- */
-export interface ViewSummary {
-	slug: string;
-	name: string;
-	description: string;
-	spec: ViewSpecShape;
-	/** The revision shown. */
-	revision: number;
-	/** Who wrote the shown revision. */
-	author_kind: ViewAuthorKind;
-	/** True when the viewer owns it, and so may change, revert and publish it. */
-	mine: boolean;
-	/** True when members can see a revision of it. */
-	published: boolean;
-	/**
-	 * Owner only: true when a revision newer than the published one exists,
-	 * which members do not see until it is published.
-	 */
-	unpublished_changes?: boolean;
-	created_at: string;
-	updated_at: string;
-}
-
-export interface ViewRevisionView {
-	number: number;
-	name: string;
-	description: string;
-	spec: ViewSpecShape;
-	author_kind: ViewAuthorKind;
-	/** The First Mate chat that wrote it. */
-	author_chat_id?: string;
-	/** The revision a revert copied forward. */
-	reverted_from?: number;
-	/** True for the revision members see. */
-	published: boolean;
-	created_at: string;
-}
+export type ViewRevisionView = GrownRevisionView<ViewSpecShape>;
 
 export interface ViewsResponse {
 	views: ViewSummary[];

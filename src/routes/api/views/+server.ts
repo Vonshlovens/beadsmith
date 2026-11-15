@@ -6,21 +6,24 @@
  * auth/roles.ts) and in the store (rule 7).
  */
 import type { RequestHandler } from './$types';
+import type { ViewSpecShape } from '#lib/views.js';
 import { getGrownStore } from '#lib/server/state/db.js';
 import { errorFromException, jsonResponse } from '#lib/server/security.js';
 import { parseJsonBody } from '#lib/server/validation.js';
 import {
 	personAuthor,
-	view_create_schema,
+	grown_create_schema,
 	viewerFromLocals,
-	viewSummary
-} from '#lib/server/grown/views-api.js';
+	grownSummary
+} from '#lib/server/grown/grown-api.js';
 
 export const GET: RequestHandler = async ({ locals }) => {
 	const viewer = viewerFromLocals(locals);
 	try {
 		const things = await (await getGrownStore()).list(viewer, 'view');
-		return jsonResponse({ views: things.map((thing) => viewSummary(thing, viewer)) });
+		return jsonResponse({
+			views: things.map((thing) => grownSummary<ViewSpecShape>(thing, viewer))
+		});
 	} catch (error) {
 		return errorFromException(error, 'unavailable');
 	}
@@ -28,14 +31,14 @@ export const GET: RequestHandler = async ({ locals }) => {
 
 /** A new view, private to its creator until they publish it. */
 export const POST: RequestHandler = async ({ request, locals }) => {
-	const body = await parseJsonBody(request, view_create_schema);
+	const body = await parseJsonBody(request, grown_create_schema);
 	if (!body.ok) return body.response;
 	const viewer = viewerFromLocals(locals);
 	try {
 		const thing = await (
 			await getGrownStore()
 		).create(viewer, { kind: 'view', ...body.data, author: personAuthor(locals) });
-		return jsonResponse({ view: viewSummary(thing, viewer) }, 201);
+		return jsonResponse({ view: grownSummary<ViewSpecShape>(thing, viewer) }, 201);
 	} catch (error) {
 		return errorFromException(error);
 	}

@@ -268,18 +268,23 @@ Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
   `limit_reached` tells the reader when that cut applied. An all-projects
   view skips a project it cannot read and says so, as Ready does.
 - `errors.ts` holds `GrownError`, which `safeError` maps to a response.
-- `views-api.ts` turns a request into a viewer (an Access service token has
+- `grown-api.ts` turns a request into a viewer (an Access service token has
   no account, so it owns nothing and reads as a member) and a stored thing
-  into the `ViewSummary` the browser reads (`src/lib/views.ts`). Its
-  `requireView` answers "not found" for another kind under the same slug, so
-  the views routes never touch a surface or an app.
-- Routes under [`src/routes/api/views/`](../../src/routes/api/views/) add
+  into the summary the browser reads (`GrownSummary` in `src/lib/grown.ts`,
+  typed per kind as `ViewSummary` and `SurfaceSummary`). Every kind's routes
+  share it, so the request bodies and the summary change in one place. Its
+  `requireGrown` answers "not found" for another kind under the same slug,
+  and every route calls it before any store write, so the views routes never
+  touch a surface and the surfaces routes never touch a view.
+- Routes under [`src/routes/api/views/`](../../src/routes/api/views/) and
+  [`src/routes/api/surfaces/`](../../src/routes/api/surfaces/) add
   no role rule of their own: their reads are open to any signed-in role and
   their writes fall to the request gate's admin default
   ([`roles.ts`](../../src/lib/server/auth/roles.ts)), with the store
   checking ownership and role again behind it. Running a view is its own
   route (`/run`), so a view whose project left the catalogue can still be
-  read, reverted or deleted.
+  read, reverted or deleted. Surfaces have no run route: a renderer reads
+  each binding through the bridge as the viewer.
 - Pages: [`/views`](../../src/routes/views/) is the catalogue (name,
   project, author kind, last change, who can see it);
   `/views/[slug]` runs the view with the Ready page's rows (shared as
