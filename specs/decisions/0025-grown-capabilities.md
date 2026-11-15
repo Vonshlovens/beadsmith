@@ -202,6 +202,16 @@ of a hostile document (timing, resource exhaustion in the viewer's tab).
 It holds no data the viewer cannot read, and the CSP and sandbox flags leave
 it no way to send that data anywhere.
 
+The host confirmation is a browser-side gate. The action routes cannot tell
+that a person pressed Confirm, only that the call came from the viewer's own
+session with a current revision and a fresh key. That is enough here because
+a grown thing has no network of its own: a surface's buttons and an app's
+`tools/call` reach the action routes only through host code that runs after
+the confirmation, and the routes still apply the viewer's role, dispatch's
+arm, allow and repository map, and the launch limits. Anything that could
+post to those routes without the host page (a script on the Beadsmith
+origin, a stolen session) is outside what grown things change.
+
 The frame route needs its own CSP and `frame-ancestors 'self'`, the one
 place the app's global `frame-ancestors 'none'` is relaxed, and only for a
 document that is itself sandboxed.
