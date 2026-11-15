@@ -439,3 +439,8 @@ export function setTerminalRelayAuditStore(store: TerminalRelayAuditStore | unde
 export function setAutomationStore(store: AutomationStore | undefined): void {
 	automation_promise = store === undefined ? undefined : Promise.resolve(store);
 }
+
+/** Replace the cached grown things store (tests only). */
+export function setGrownStore(store: GrownStore | undefined): void {
+	grown_promise = store === undefined ? undefined : Promise.resolve(store);
+}

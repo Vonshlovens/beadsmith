@@ -17,7 +17,16 @@ import { listProjectIssues, type IssueFilters, type ReadDeps } from '../read-mod
 import { safeError } from '../security.js';
 import { GrownError } from './errors.js';
 import { label_schema, MAX_LIST_LIMIT, project_id_schema } from '../validation.js';
-import type { IssueSummary, Project } from '#lib/types.js';
+import type { Project } from '#lib/types.js';
+import {
+	VIEW_GROUPS,
+	VIEW_PRESENTATIONS,
+	VIEW_SORTS,
+	type ViewIssue,
+	type ViewResult,
+	type ViewSort,
+	type ViewSpecShape
+} from '#lib/views.js';
 
 /** Most JSON bytes in a view spec (ADR-0025 limits). */
 export const VIEW_SPEC_MAX_BYTES = 4096;
@@ -42,15 +51,6 @@ const assignee_schema = z
 	.max(200)
 	.regex(/^[^\p{Cc}]+$/u, 'an assignee is plain text');
 
-export const VIEW_SORTS = ['updated', 'created', 'priority', 'id'] as const;
-export type ViewSort = (typeof VIEW_SORTS)[number];
-
-export const VIEW_PRESENTATIONS = ['list', 'board'] as const;
-export type ViewPresentation = (typeof VIEW_PRESENTATIONS)[number];
-
-export const VIEW_GROUPS = ['status', 'priority', 'type', 'assignee', 'project'] as const;
-export type ViewGroup = (typeof VIEW_GROUPS)[number];
-
 export const view_filters_schema = z.strictObject({
 	status: z.array(token_schema).min(1).max(16).optional(),
 	type: z.array(token_schema).min(1).max(16).optional(),
@@ -74,6 +74,10 @@ export const view_spec_schema = z.strictObject({
 export type ViewSpec = z.infer<typeof view_spec_schema>;
 export type ViewFilters = z.infer<typeof view_filters_schema>;
 
+/** The browser's copy of the shape (`#lib/views.js`) must stay assignable from the schema's. */
+const _shape_check = (spec: ViewSpec): ViewSpecShape => spec;
+void _shape_check;
+
 /**
  * Compile a parsed spec's filters onto the read plane's filters. Lists become
  * the comma-joined form `buildIssueWhere` splits again; tokens cannot hold a
@@ -91,19 +95,6 @@ export function compileViewFilters(filters: ViewFilters): IssueFilters {
 		label: filters.label,
 		assignee: filters.assignee
 	};
-}
-
-export interface ViewIssue extends IssueSummary {
-	project_id: string;
-	project_name: string;
-}
-
-export interface ViewResult {
-	issues: ViewIssue[];
-	/** True when a project returned a full page, so there may be more rows. */
-	limit_reached: boolean;
-	/** Projects an all-projects view could not read; the rest still show. */
-	skipped: { project_id: string; message: string }[];
 }
 
 export interface RunViewDeps {

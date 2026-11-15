@@ -348,6 +348,26 @@ and effort stay as saved, and the edit never fires a slot from before it;
 and its history but not its missions; `POST /api/automations/:id/run`
 fires it once now through the scheduler's path.
 
+Saved views ([ADR-0025](../specs/decisions/0025-grown-capabilities.md)):
+`GET /api/views` lists the viewer's own views and every published one; an
+owner sees the latest revision of theirs, anyone else the published
+revision. `GET /api/views/:slug` reads one and `GET /api/views/:slug/run`
+runs it as the viewer through the project read path, returning its issues,
+whether a row limit cut them and which projects an all-projects view could
+not read. A view the viewer may not see is `not_found`. The writes are
+admin-only (the request gate's default for an unknown write) and need a
+signed-in account to attribute the revision to: `POST /api/views` `{slug,
+name, description?, spec}` creates a private view, `PATCH /api/views/:slug`
+`{name?, description?, spec?}` adds a revision, `POST
+/api/views/:slug/revert` `{number}` copies an old revision forward, and
+`DELETE /api/views/:slug` removes it with its history; these and `GET
+/api/views/:slug/history` are the owner's alone. `PUT
+/api/views/:slug/publish` `{number?}` (the owner) shows that revision, by
+default the latest, to members; `DELETE /api/views/:slug/publish` (any
+admin) hides it again. A spec is validated against a strict schema (unknown
+keys, SQL-like values and oversized specs are refused) and never becomes
+SQL.
+
 `GET /api/ready` is the cross-project Ready deck: open issues with no open
 `blocks` dependencies, merged across catalog projects the session can see,
 sorted by priority then recency. Parent-child, related, and discovered-from
@@ -453,8 +473,8 @@ written before its first byte; one that cannot be recorded is refused (503).
    data rights on `*.*`; repository access to one repository. Its model and
    repository keys stay outside it, added by a proxy.
 9. Grown capabilities (views, catalog surfaces and sandboxed apps,
-   [ADR-0025](../specs/decisions/0025-grown-capabilities.md); not
-   implemented yet) are stored data, never SQL, and the web process never
+   [ADR-0025](../specs/decisions/0025-grown-capabilities.md); views are
+   implemented, surfaces and apps not yet) are stored data, never SQL, and the web process never
    evaluates, imports or templates them. App code runs only in the viewer's
    browser, in a sandboxed iframe with an opaque origin, no network access and
    only vendored, hash-pinned libraries. Every read or action a grown thing

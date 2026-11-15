@@ -206,9 +206,9 @@ The frame route needs its own CSP and `frame-ancestors 'self'`, the one
 place the app's global `frame-ancestors 'none'` is relaxed, and only for a
 document that is itself sandboxed.
 
-Shipped versus target: the store and the view spec are implemented; the
-catalogue, crew tools, surfaces and apps are not yet (see Implementation
-notes).
+Shipped versus target: the store, the view spec and the views catalogue
+are implemented; crew tools, surfaces and apps are not yet (see
+Implementation notes).
 
 ## Alternatives considered
 
@@ -267,11 +267,27 @@ Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
   `limit_reached` tells the reader when that cut applied. An all-projects
   view skips a project it cannot read and says so, as Ready does.
 - `errors.ts` holds `GrownError`, which `safeError` maps to a response.
+- `views-api.ts` turns a request into a viewer (an Access service token has
+  no account, so it owns nothing and reads as a member) and a stored thing
+  into the `ViewSummary` the browser reads (`src/lib/views.ts`). Its
+  `requireView` answers "not found" for another kind under the same slug, so
+  the views routes never touch a surface or an app.
+- Routes under [`src/routes/api/views/`](../../src/routes/api/views/) add
+  no role rule of their own: their reads are open to any signed-in role and
+  their writes fall to the request gate's admin default
+  ([`roles.ts`](../../src/lib/server/auth/roles.ts)), with the store
+  checking ownership and role again behind it. Running a view is its own
+  route (`/run`), so a view whose project left the catalogue can still be
+  read, reverted or deleted.
+- Pages: [`/views`](../../src/routes/views/) is the catalogue (name,
+  project, author kind, last change, who can see it);
+  `/views/[slug]` runs the view with the Ready page's rows (shared as
+  `issue-rows.svelte`), optionally grouped, or the project board, one board
+  per project for an all-projects view, since a board's columns are one
+  project's statuses. The owner sees the history there with revert and
+  per-revision publish.
 
-Still expected: routes under `src/routes/api/views/` and pages under `src/routes/views/`
-with role rules in
-[`src/lib/server/auth/roles.ts`](../../src/lib/server/auth/roles.ts) and
-role tests for each route; crew tools as a new module registered in
+Still expected: crew tools as a new module registered in
 [`src/lib/server/crew/registry.ts`](../../src/lib/server/crew/registry.ts);
 the vendored library allowlist pinned in one file, like hc's pin
 ([0021](./0021-hc-terminal-runtime.md)). The surface renderer starts with a

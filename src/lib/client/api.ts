@@ -16,6 +16,14 @@ import type {
 	AutomationView
 } from '#lib/automations.js';
 import type {
+	ViewHistoryResponse,
+	ViewResponse,
+	ViewRunResponse,
+	ViewSpecShape,
+	ViewsResponse,
+	ViewSummary
+} from '#lib/views.js';
+import type {
 	DispatchProviderId,
 	AccountRole,
 	AccountView,
@@ -664,6 +672,70 @@ export const api = {
 
 	deleteAutomation(id: string, init?: RequestInitLike) {
 		return request<void>('DELETE', `/automations/${encodeURIComponent(id)}`, init);
+	},
+
+	/** Saved views (ADR-0025): the viewer's own and every published one. */
+	views(init?: RequestInitLike) {
+		return request<ViewsResponse>('GET', '/views', init);
+	},
+
+	view(slug: string, init?: RequestInitLike) {
+		return request<ViewResponse>('GET', `/views/${encodeURIComponent(slug)}`, init);
+	},
+
+	/** Run it as the viewer: the revision they may see, through the project read path. */
+	runView(slug: string, init?: RequestInitLike) {
+		return request<ViewRunResponse>('GET', `/views/${encodeURIComponent(slug)}/run`, init);
+	},
+
+	/** A new view, private to the viewer until they publish it. Admin only. */
+	createView(
+		body: { slug: string; name: string; description?: string; spec: Partial<ViewSpecShape> },
+		init?: RequestInitLike
+	) {
+		return request<ViewResponse>('POST', '/views', { ...init, body });
+	},
+
+	/** A new revision with these fields changed. Owner only. */
+	reviseView(
+		slug: string,
+		body: { name?: string; description?: string; spec?: Partial<ViewSpecShape> },
+		init?: RequestInitLike
+	) {
+		return request<ViewResponse>('PATCH', `/views/${encodeURIComponent(slug)}`, { ...init, body });
+	},
+
+	viewHistory(slug: string, init?: RequestInitLike) {
+		return request<ViewHistoryResponse>('GET', `/views/${encodeURIComponent(slug)}/history`, init);
+	},
+
+	/** A new revision copying revision `number` forward. Owner only. */
+	revertView(slug: string, number: number, init?: RequestInitLike) {
+		return request<ViewResponse>('POST', `/views/${encodeURIComponent(slug)}/revert`, {
+			...init,
+			body: { number }
+		});
+	},
+
+	/** Show revision `number` (default the latest) to members. Owner only. */
+	publishView(slug: string, number?: number, init?: RequestInitLike) {
+		return request<ViewResponse>('PUT', `/views/${encodeURIComponent(slug)}/publish`, {
+			...init,
+			body: number === undefined ? {} : { number }
+		});
+	},
+
+	/** Hide it from members; `null` when it was another admin's view. Any admin. */
+	unpublishView(slug: string, init?: RequestInitLike) {
+		return request<{ view: ViewSummary | null }>(
+			'DELETE',
+			`/views/${encodeURIComponent(slug)}/publish`,
+			init
+		);
+	},
+
+	deleteView(slug: string, init?: RequestInitLike) {
+		return request<void>('DELETE', `/views/${encodeURIComponent(slug)}`, init);
 	},
 
 	missions(

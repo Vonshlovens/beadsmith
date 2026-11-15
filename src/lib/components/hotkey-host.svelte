@@ -149,6 +149,7 @@
 			}
 		},
 		{ keys: ['g r'], label: 'Ready', group: 'Go to', run: () => go('/ready') },
+		{ keys: ['g v'], label: 'Views', group: 'Go to', run: () => go('/views') },
 		{ keys: ['g f'], label: 'First Mate', group: 'Go to', run: () => go('/first-mate') },
 		{ keys: ['g m'], label: 'Missions', group: 'Go to', run: () => go('/missions') },
 		{ keys: ['g u'], label: 'Automations', group: 'Go to', run: () => go('/automations') },
