@@ -2,8 +2,10 @@ import { createClient } from '@libsql/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { requiredPermission, roleCan } from '#lib/server/auth/roles.js';
 import { createGrownStore, type GrownStore } from '#lib/server/grown/store.js';
-import { initStateSchema, setGrownStore } from '#lib/server/state/db.js';
+import { initStateSchema, setGrownStore, setTodoStore } from '#lib/server/state/db.js';
+import { createTodoStore } from '#lib/server/todos/store.js';
 import type {
+	SurfaceDataResponse,
 	SurfaceHistoryResponse,
 	SurfaceResponse,
 	SurfacesResponse,
@@ -14,6 +16,7 @@ import { DELETE, GET as GET_ONE, PATCH } from './[slug]/+server.js';
 import { GET as HISTORY } from './[slug]/history/+server.js';
 import { DELETE as UNPUBLISH, PUT as PUBLISH } from './[slug]/publish/+server.js';
 import { POST as REVERT } from './[slug]/revert/+server.js';
+import { GET as DATA } from './[slug]/data/+server.js';
 import { GET as VIEW_GET, PATCH as VIEW_PATCH } from '../views/[slug]/+server.js';
 import { GET as VIEW_LIST, POST as VIEW_CREATE } from '../views/+server.js';
 
@@ -29,9 +32,13 @@ beforeEach(async () => {
 	await initStateSchema(client);
 	store = createGrownStore(client);
 	setGrownStore(store);
+	setTodoStore(createTodoStore(client));
 });
 
-afterEach(() => setGrownStore(undefined));
+afterEach(() => {
+	setGrownStore(undefined);
+	setTodoStore(undefined);
+});
 
 type Handler = (event: never) => Promise<Response> | Response;
 
@@ -325,5 +332,78 @@ describe('/api/surfaces/:slug/publish', () => {
 		expect((await json<{ surface: SurfaceSummary | null }>(hidden)).surface).toBeNull();
 		expect(await list(MEMBER)).toEqual([]);
 		expect((await list(OWNER))[0]).toMatchObject({ published: false });
+	});
+});
+
+describe('/api/surfaces/:slug/data', () => {
+	/** An admin's dashboard counting the todo list, which only admins may read. */
+	const TODOS = {
+		slug: 'todo-board',
+		name: 'Todo board',
+		spec: {
+			root: 'main',
+			components: [
+				{ id: 'main', component: 'Stack', children: ['open'] },
+				{ id: 'open', component: 'StatTile', label: 'Open todos', count: 'todos' }
+			],
+			data: { todos: { tool: 'list_todos', input: {} } }
+		}
+	};
+
+	function data(user: User | null, query = '', slug = 'todo-board') {
+		return call(DATA, 'GET', `/api/surfaces/${slug}/data${query}`, { slug, user });
+	}
+
+	it('is a read any signed-in role may make', () => {
+		expect(requiredPermission('GET', '/api/surfaces/x/data')).toBeUndefined();
+	});
+
+	it("reads an admin's published surface as a member: the list_todos binding is refused", async () => {
+		expect((await create(TODOS)).status).toBe(201);
+		expect((await data(MEMBER)).status).toBe(404); // not published yet
+		expect(
+			(
+				await call(PUBLISH, 'PUT', '/api/surfaces/todo-board/publish', {
+					slug: 'todo-board',
+					body: {}
+				})
+			).status
+		).toBe(200);
+
+		const as_member = await data(MEMBER);
+		expect(as_member.status).toBe(200);
+		expect(await json<SurfaceDataResponse>(as_member)).toEqual({
+			slug: 'todo-board',
+			revision: 1,
+			bindings: {
+				todos: {
+					ok: false,
+					code: 'forbidden',
+					message: 'list_todos needs an admin account; this surface reads as you.'
+				}
+			}
+		});
+
+		const as_owner = await json<SurfaceDataResponse>(await data(OWNER));
+		expect(as_owner.bindings.todos).toMatchObject({ ok: true, yields: 'todos' });
+	});
+
+	it('refuses an unknown binding and a surface the viewer cannot see', async () => {
+		await create(TODOS);
+		expect((await data(OWNER, '?binding=nope')).status).toBe(400);
+		expect((await data(ADMIN2)).status).toBe(404);
+		expect((await data(OWNER, '', 'missing')).status).toBe(404);
+	});
+
+	it('allows 60 binding reads a minute per viewer and surface, then 429 with Retry-After', async () => {
+		await create({ ...TODOS, slug: 'rate-board' });
+		for (let index = 0; index < 60; index += 1) {
+			expect((await data(OWNER, '', 'rate-board')).status).toBe(200);
+		}
+		const refused = await data(OWNER, '', 'rate-board');
+		expect(refused.status).toBe(429);
+		expect(Number(refused.headers.get('retry-after'))).toBeGreaterThan(0);
+		// Another viewer's budget is their own (this one cannot see it: 404, not 429).
+		expect((await data(ADMIN2, '', 'rate-board')).status).toBe(404);
 	});
 });

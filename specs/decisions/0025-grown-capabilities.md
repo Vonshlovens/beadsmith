@@ -208,8 +208,8 @@ document that is itself sandboxed.
 
 Shipped versus target: the store, the view spec, the views catalogue, the
 view crew tools and proposed automations are implemented; surfaces are
-stored, served by `/api/surfaces` and written by First Mate's surface crew
-tools, but not yet rendered, and apps are not yet
+stored, served by `/api/surfaces`, written by First Mate's surface crew
+tools and their bindings resolved as the viewer, but not yet rendered, and apps are not yet
 (see Implementation notes).
 
 ## Alternatives considered
@@ -361,11 +361,27 @@ Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
   a name is the crew tool itself, loaded on first use through `crew/mcp.ts`
   (a static import would form a cycle through the state database). Tools
   that default `project` to the chat's project must name one, since a grown
-  thing has no chat. Tool inputs are checked against the crew tool's own
+  thing has no chat (`show_mission` among them: it reads a project's
+  mission). Tool inputs are checked against the crew tool's own
   schema by the kind's async `check`, so a bad input is refused when saved.
+- Binding resolution: [`bindings.ts`](../../src/lib/server/grown/bindings.ts)
+  and `GET /api/surfaces/:slug/data` (rule 5). Every binding runs a crew
+  tool's own handler under a `CrewContext` built from the viewer (account,
+  role, no chat scope), after the same `roleCan` check `mcp.ts` makes, so
+  the author's role never carries over. A view binding runs `run_view`
+  under that context, so the store's visibility applies (a member reads
+  only a published view, at its published revision) and a view reads the
+  same rows on its page, in First Mate and on a surface. Bindings resolve
+  independently: one refused or failed binding is an error value beside the
+  others, reduced by `safeError`. Results are bounded by `RESULT_MAX_CHARS`
+  through `boundedJson`; when that is not enough for a list, whole rows are
+  dropped from the end with `truncated` and `total`, so the renderer never
+  receives cut JSON and a stat tile still counts every row. The rate limit
+  is the crew launch cap's sliding window, sized 60 per minute and keyed by
+  viewer and surface; a request takes one call per binding, all or none.
 
 Still expected: the vendored library allowlist pinned in one file, like hc's pin
-([0021](./0021-hc-terminal-runtime.md)); surface binding
-resolution, renderer and actions. Exporting apps as
+([0021](./0021-hc-terminal-runtime.md)); the surface renderer and
+actions. Exporting apps as
 `ui://` resources to outside MCP clients is a later follow-on, not v1. See
 the matching row in [`specs/README.md`](../README.md).

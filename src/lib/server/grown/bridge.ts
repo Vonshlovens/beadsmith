@@ -33,7 +33,7 @@ export const BRIDGE_READS = {
 	list_issues: { needs_project: true, yields: 'issues' },
 	show_issue: { needs_project: true, yields: 'issue' },
 	list_missions: { needs_project: false, yields: 'missions' },
-	show_mission: { needs_project: false, yields: 'mission' },
+	show_mission: { needs_project: true, yields: 'mission' },
 	list_todos: { needs_project: false, yields: 'todos' }
 } satisfies Record<string, BridgeRead>;
 
@@ -53,6 +53,13 @@ export const BRIDGE_ACTIONS = {
 } satisfies Record<string, BridgeEntry>;
 
 export type BridgeReadName = keyof typeof BRIDGE_READS;
+/**
+ * The crew tool a view binding runs. It is not a binding tool of its own (a
+ * surface names the view's slug instead), but resolving a view binding goes
+ * through it so a view reads the same rows on its page, in First Mate and on
+ * a surface.
+ */
+export const BRIDGE_VIEW_TOOL = 'run_view';
 export type BridgeActionName = keyof typeof BRIDGE_ACTIONS;
 
 export const BRIDGE_READ_NAMES = Object.keys(BRIDGE_READS) as [BridgeReadName, ...BridgeReadName[]];
@@ -66,9 +73,11 @@ export const BRIDGE_ACTION_NAMES = Object.keys(BRIDGE_ACTIONS) as [
  * imported: the crew modules import the state database, which imports the
  * grown store, which imports this file, and a static import would evaluate
  * the crew registry before its tools exist.
- * @param name An allowlisted read or action.
+ * @param name An allowlisted read or action, or the view binding's tool.
  */
-export async function bridgeTool(name: BridgeReadName | BridgeActionName): Promise<CrewTool> {
+export async function bridgeTool(
+	name: BridgeReadName | BridgeActionName | typeof BRIDGE_VIEW_TOOL
+): Promise<CrewTool> {
 	// Through `mcp.ts`, the registry's entry point, which loads the tool
 	// modules in the order their own imports need.
 	const { CREW_TOOLS } = await import('../crew/mcp.js');

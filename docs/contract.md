@@ -390,6 +390,20 @@ kind's slug. First Mate's surface crew tools (`define_surface`,
 parse as the chat's owner, attributing each revision to First Mate and the
 chat; none of them publishes.
 
+`GET /api/surfaces/:slug/data` resolves a surface's data bindings as the
+signed-in viewer, for the revision that viewer sees (`?binding=<name>`,
+repeatable, for some of them; every binding otherwise). Any signed-in role
+may call it. A view binding runs through the viewer's own visibility (a
+member reads only a published view) and a tool binding through its crew
+read tool with the viewer's role, so an admin's surface opened by a member
+reads as a member: a `list_todos` binding comes back `forbidden`. Each
+binding answers `{ ok: true, yields, data, truncated? }` or `{ ok: false,
+code, message }` on its own, so one failure does not fail the request; a
+result past the crew tools' 24,000-character bound drops whole rows, keeping
+the full count in `data.total`. Each binding resolved is one bridge call:
+60 per minute per viewer and surface, past which the request is refused
+whole with `rate_limited` (429) and `Retry-After`.
+
 `GET /api/ready` is the cross-project Ready deck: open issues with no open
 `blocks` dependencies, merged across catalog projects the session can see,
 sorted by priority then recency. Parent-child, related, and discovered-from
