@@ -24,6 +24,13 @@ import type {
 	ViewSummary
 } from '#lib/views.js';
 import type {
+	SurfaceDataResponse,
+	SurfaceHistoryResponse,
+	SurfaceResponse,
+	SurfacesResponse,
+	SurfaceSummary
+} from '#lib/surfaces.js';
+import type {
 	DispatchProviderId,
 	AccountRole,
 	AccountView,
@@ -736,6 +743,60 @@ export const api = {
 
 	deleteView(slug: string, init?: RequestInitLike) {
 		return request<void>('DELETE', `/views/${encodeURIComponent(slug)}`, init);
+	},
+
+	/** Catalog surfaces (ADR-0025 rule 2): the viewer's own and every published one. */
+	surfaces(init?: RequestInitLike) {
+		return request<SurfacesResponse>('GET', '/surfaces', init);
+	},
+
+	surface(slug: string, init?: RequestInitLike) {
+		return request<SurfaceResponse>('GET', `/surfaces/${encodeURIComponent(slug)}`, init);
+	},
+
+	/**
+	 * Resolve the bindings of the revision this viewer sees, as the viewer.
+	 * One failed binding is an error value beside the others.
+	 */
+	surfaceData(slug: string, init?: RequestInitLike) {
+		return request<SurfaceDataResponse>('GET', `/surfaces/${encodeURIComponent(slug)}/data`, init);
+	},
+
+	surfaceHistory(slug: string, init?: RequestInitLike) {
+		return request<SurfaceHistoryResponse>(
+			'GET',
+			`/surfaces/${encodeURIComponent(slug)}/history`,
+			init
+		);
+	},
+
+	/** A new revision copying revision `number` forward. Owner only. */
+	revertSurface(slug: string, number: number, init?: RequestInitLike) {
+		return request<SurfaceResponse>('POST', `/surfaces/${encodeURIComponent(slug)}/revert`, {
+			...init,
+			body: { number }
+		});
+	},
+
+	/** Show revision `number` (default the latest) to members. Owner only. */
+	publishSurface(slug: string, number?: number, init?: RequestInitLike) {
+		return request<SurfaceResponse>('PUT', `/surfaces/${encodeURIComponent(slug)}/publish`, {
+			...init,
+			body: number === undefined ? {} : { number }
+		});
+	},
+
+	/** Hide it from members; `null` when it was another admin's surface. Any admin. */
+	unpublishSurface(slug: string, init?: RequestInitLike) {
+		return request<{ surface: SurfaceSummary | null }>(
+			'DELETE',
+			`/surfaces/${encodeURIComponent(slug)}/publish`,
+			init
+		);
+	},
+
+	deleteSurface(slug: string, init?: RequestInitLike) {
+		return request<void>('DELETE', `/surfaces/${encodeURIComponent(slug)}`, init);
 	},
 
 	missions(

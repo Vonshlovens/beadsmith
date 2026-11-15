@@ -1,14 +1,14 @@
 <script lang="ts">
 	/**
-	 * Who can see a saved view (ADR-0025 rule 7), as a dot and a word:
+	 * Who can see a grown thing, a saved view or a surface (ADR-0025 rule 7), as a dot and a word:
 	 * Private (its owner only), Published (members see it), or, for the
 	 * owner, Draft ahead when a newer revision than the published one exists
 	 * and members still see the older one.
 	 */
 	import { tip } from '#lib/client/tooltip.js';
-	import type { ViewSummary } from '#lib/views.js';
+	import type { GrownSummary } from '#lib/grown.js';
 
-	let { view }: { view: ViewSummary } = $props();
+	let { view }: { view: GrownSummary<unknown> } = $props();
 
 	const state = $derived(
 		!view.published

@@ -509,8 +509,8 @@ written before its first byte; one that cannot be recorded is refused (503).
    data rights on `*.*`; repository access to one repository. Its model and
    repository keys stay outside it, added by a proxy.
 9. Grown capabilities (views, catalog surfaces and sandboxed apps,
-   [ADR-0025](../specs/decisions/0025-grown-capabilities.md); views are
-   implemented, surfaces and apps not yet) are stored data, never SQL, and the web process never
+   [ADR-0025](../specs/decisions/0025-grown-capabilities.md); views and
+   surfaces are implemented, surface actions and apps not yet) are stored data, never SQL, and the web process never
    evaluates, imports or templates them. App code runs only in the viewer's
    browser, in a sandboxed iframe with an opaque origin, no network access and
    only vendored, hash-pinned libraries. Every read or action a grown thing

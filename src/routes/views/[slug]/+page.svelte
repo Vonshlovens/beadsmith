@@ -1,28 +1,29 @@
 <script lang="ts">
 	/**
-	 * One saved view (ADR-0025 rules 1, 5, 7 and 9), run as the viewer: its
-	 * rows through the project read path, as a list (optionally grouped) or a
-	 * board per project. Its owner also sees the history, newest first, and
-	 * reverts (a new revision copying an old one forward), publishes a
-	 * revision, or deletes it. Any admin may unpublish a view members see.
+	 * One grown thing (ADR-0025 rules 1, 2, 5, 7 and 9), read as the viewer.
+	 * A view shows its rows through the project read path, as a list
+	 * (optionally grouped) or a board per project; a catalog surface is drawn
+	 * natively from its component tree with its bindings resolved as the
+	 * viewer. The owner also sees the history, newest first, and reverts (a
+	 * new revision copying an old one forward), publishes a revision, or
+	 * deletes it. Any admin may unpublish one members see.
 	 */
 	import { goto, refreshAll } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
-	import ArrowCounterClockwiseIcon from 'phosphor-svelte/lib/ArrowCounterClockwiseIcon';
 	import EyeIcon from 'phosphor-svelte/lib/EyeIcon';
 	import EyeSlashIcon from 'phosphor-svelte/lib/EyeSlashIcon';
 	import FunnelSimpleIcon from 'phosphor-svelte/lib/FunnelSimpleIcon';
-	import RobotIcon from 'phosphor-svelte/lib/RobotIcon';
 	import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
 	import ConfirmDialog from '#lib/components/confirm-dialog.svelte';
 	import EmptyState from '#lib/components/empty-state.svelte';
+	import GrownHistory from '#lib/components/grown-history.svelte';
 	import IssueRows from '#lib/components/issue-rows.svelte';
 	import IssuesBoard from '#lib/components/issues-board.svelte';
 	import PageHeader from '#lib/components/page-header.svelte';
+	import SurfaceTree from '#lib/components/surface/surface-tree.svelte';
 	import ViewStateBadge from '#lib/components/view-state-badge.svelte';
 	import { agentAvailability } from '#lib/client/agent.js';
 	import { api, errorMessage } from '#lib/client/api.js';
-	import { absoluteStamp, relativeShort } from '#lib/client/format.js';
 	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
 	import { stepFocus } from '#lib/client/list-focus.js';
 	import { currentViewer, projectList, statusSnapshot } from '#lib/client/projects.svelte.js';
@@ -47,6 +48,10 @@
 	let confirm_unpublish = $state(false);
 
 	const view = $derived(data.view);
+	const surface = $derived(data.surface);
+	/** Whichever kind this slug is; the header, history and dialogs treat both alike. */
+	const thing = $derived(view ?? surface);
+	const kind_word = $derived(view !== null ? 'view' : 'surface');
 	const result = $derived(data.result);
 	const is_admin = $derived(currentViewer()?.role === 'admin');
 	const names = $derived(new Map(projectList().map((p) => [p.id, p.name])));
@@ -57,14 +62,47 @@
 	);
 	const boards = $derived(result === null ? [] : viewBoardProjects(result.issues));
 	const agent_visible = $derived(agentAvailability(statusSnapshot()).visible);
-	const latest = $derived(data.revisions[0]?.number);
-	const can_unpublish = $derived(is_admin && view?.published === true);
+	const can_unpublish = $derived(is_admin && thing?.published === true);
 	/** The project page with this view's filters, when that page can show them. */
 	const project_href = $derived(view === null ? null : projectPageHref(view.slug, view.spec));
 	const meta = $derived(
-		result === null
+		thing === null
 			? undefined
-			: `${result.issues.length}${result.limit_reached ? '+' : ''} · r${view?.revision}`
+			: result !== null
+				? `${result.issues.length}${result.limit_reached ? '+' : ''} · r${thing.revision}`
+				: `r${thing.revision}`
+	);
+	const meta_label = $derived(
+		thing === null
+			? undefined
+			: result !== null
+				? `${result.issues.length} issues${result.limit_reached ? ' (row limit reached)' : ''}, revision ${thing.revision}`
+				: `Revision ${thing.revision}`
+	);
+	/** j/k step through issue rows; a board brings its own keys. */
+	const has_rows = $derived(
+		view !== null
+			? view.spec.presentation !== 'board'
+			: surface !== null &&
+					surface.spec.components.some((c) => c.component === 'IssueList') &&
+					!surface.spec.components.some((c) => c.component === 'IssueBoard')
+	);
+
+	/** The owner's and admins' operations, for whichever kind this is. */
+	const ops = $derived(
+		view !== null
+			? {
+					revert: (n: number) => api.revertView(data.slug, n),
+					publish: (n?: number) => api.publishView(data.slug, n),
+					unpublish: async () => (await api.unpublishView(data.slug)).view,
+					remove: () => api.deleteView(data.slug)
+				}
+			: {
+					revert: (n: number) => api.revertSurface(data.slug, n),
+					publish: (n?: number) => api.publishSurface(data.slug, n),
+					unpublish: async () => (await api.unpublishSurface(data.slug)).surface,
+					remove: () => api.deleteSurface(data.slug)
+				}
 	);
 
 	async function refresh() {
@@ -92,25 +130,25 @@
 	}
 
 	function revert(number: number) {
-		void act(() => api.revertView(data.slug, number), `Reverted to r${number}`, 'Could not revert');
+		void act(() => ops.revert(number), `Reverted to r${number}`, 'Could not revert');
 	}
 
 	function publish(number?: number) {
 		void act(
-			() => api.publishView(data.slug, number),
+			() => ops.publish(number),
 			number === undefined ? 'Published: members see it now' : `Published r${number}`,
 			'Could not publish'
 		);
 	}
 
 	async function unpublish() {
-		if (busy || view === null) return;
+		if (busy || thing === null) return;
 		busy = true;
 		try {
-			const { view: after } = await api.unpublishView(data.slug);
-			toast.success(`${view.name} is hidden from members`);
+			const after = await ops.unpublish();
+			toast.success(`${thing.name} is hidden from members`);
 			if (after === null) {
-				// Another admin's view: nobody but its owner can see it now.
+				// Another admin's: nobody but its owner can see it now.
 				await goto('/views');
 			} else {
 				await refreshAll();
@@ -123,11 +161,11 @@
 	}
 
 	async function remove() {
-		if (busy || view === null) return;
+		if (busy || thing === null) return;
 		busy = true;
 		try {
-			await api.deleteView(data.slug);
-			toast.success(`${view.name} deleted`);
+			await ops.remove();
+			toast.success(`${thing.name} deleted`);
 			await goto('/views');
 		} catch (error) {
 			toast.error('Could not delete it', { description: errorMessage(error) });
@@ -145,7 +183,7 @@
 	}
 
 	useHotkeys(() =>
-		view?.spec.presentation === 'board'
+		!has_rows
 			? []
 			: [
 					{
@@ -164,14 +202,14 @@
 	);
 </script>
 
-<svelte:head><title>{view?.name ?? 'View'} · Views · {PRODUCT_NAME}</title></svelte:head>
+<svelte:head><title>{thing?.name ?? 'View'} · Views · {PRODUCT_NAME}</title></svelte:head>
 
 <div class="wrap is-wide view-page">
-	{#if view === null}
+	{#if thing === null}
 		<div class="banner banner-err" role="alert">
 			<i class="dot dot-blocked" style="margin-top:5px" aria-hidden="true"></i>
 			<div class="banner-bd">
-				<b>This view could not be loaded.</b>
+				<b>This could not be loaded.</b>
 				<div class="mt-2">{data.error ?? 'It may have been deleted or unpublished.'}</div>
 			</div>
 			<div class="banner-acts">
@@ -180,18 +218,10 @@
 			</div>
 		</div>
 	{:else}
-		<PageHeader
-			title={view.name}
-			{meta}
-			meta_label={result === null
-				? undefined
-				: `${result.issues.length} issues${result.limit_reached ? ' (row limit reached)' : ''}, revision ${view.revision}`}
-			onrefresh={refresh}
-			{refreshing}
-		>
+		<PageHeader title={thing.name} {meta} {meta_label} onrefresh={refresh} {refreshing}>
 			{#snippet actions()}
-				<ViewStateBadge {view} />
-				{#if project_href !== null}
+				<ViewStateBadge view={thing} />
+				{#if view !== null && project_href !== null}
 					<a
 						class="btn btn-sm btn-ghost"
 						href={project_href}
@@ -204,7 +234,7 @@
 						<FunnelSimpleIcon size={13} aria-hidden="true" />Open in project
 					</a>
 				{/if}
-				{#if view.mine && (!view.published || view.unpublished_changes)}
+				{#if thing.mine && (!thing.published || thing.unpublished_changes)}
 					<button
 						class="btn btn-sm btn-primary"
 						type="button"
@@ -224,12 +254,12 @@
 						<EyeSlashIcon size={13} aria-hidden="true" />Unpublish
 					</button>
 				{/if}
-				{#if view.mine}
+				{#if thing.mine}
 					<button
 						class="btn btn-sm btn-ghost btn-icon"
 						type="button"
 						disabled={busy}
-						aria-label="Delete {view.name}"
+						aria-label="Delete {thing.name}"
 						{@attach tip('Delete')}
 						onclick={() => (confirm_delete = true)}
 					>
@@ -239,27 +269,39 @@
 			{/snippet}
 		</PageHeader>
 
-		{#if view.description}
-			<p class="v-desc">{view.description}</p>
+		{#if thing.description}
+			<p class="v-desc">{thing.description}</p>
 		{/if}
-		<ul class="v-facts" aria-label="What this view shows">
-			{#each facts as fact (fact)}
-				<li>{fact}</li>
-			{/each}
-		</ul>
+		{#if view !== null}
+			<ul class="v-facts" aria-label="What this view shows">
+				{#each facts as fact (fact)}
+					<li>{fact}</li>
+				{/each}
+			</ul>
+		{/if}
 
 		{#if data.run_error}
 			<div class="banner banner-err" role="alert">
 				<i class="dot dot-blocked" style="margin-top:5px" aria-hidden="true"></i>
 				<div class="banner-bd">
-					<b>This view could not run.</b>
+					<b>This {kind_word}'s data could not be read.</b>
 					<div class="mt-2">{data.run_error}</div>
 				</div>
 				<div class="banner-acts">
 					<button class="btn btn-sm" type="button" onclick={refresh}>Retry now</button>
 				</div>
 			</div>
-		{:else if result !== null}
+		{/if}
+
+		{#if surface !== null}
+			<div class="sf-body" bind:this={rows_el}>
+				<SurfaceTree
+					spec={surface.spec}
+					bindings={data.surface_data?.bindings ?? null}
+					name={surface.name}
+				/>
+			</div>
+		{:else if view !== null && result !== null}
 			{#if result.skipped.length > 0}
 				<div class="banner banner-warn" role="status">
 					<div class="banner-bd">
@@ -321,94 +363,30 @@
 			{/if}
 		{/if}
 
-		{#if view.mine}
-			<section class="sec" aria-labelledby="view-history">
-				<div class="sec-hd">
-					<h2 class="lbl" id="view-history">History</h2>
-					<span class="rule"></span>
-					<span class="meta">newest first</span>
-				</div>
-				{#if data.revisions.length === 0}
-					<p class="hint">The history could not be loaded. Refresh to try again.</p>
-				{:else}
-					<ol class="panel revs">
-						{#each data.revisions as rev (rev.number)}
-							<li class="rev">
-								<span class="rev-n mono-num">r{rev.number}</span>
-								<span class="rev-what">
-									<span class="rev-name">{rev.name}</span>
-									<span class="rev-how">
-										{#if rev.author_kind === 'first_mate'}
-											<span class="v-mate"
-												><RobotIcon size={12} aria-hidden="true" />First Mate</span
-											>
-										{:else}
-											You
-										{/if}
-										{#if rev.reverted_from !== undefined}
-											· reverted to r{rev.reverted_from}
-										{/if}
-									</span>
-								</span>
-								<span class="rev-when mono-num" {@attach tip(absoluteStamp(rev.created_at))}
-									>{relativeShort(rev.created_at)}</span
-								>
-								<span class="rev-tags">
-									{#if rev.number === latest}
-										<span class="badge badge-closed">Current</span>
-									{/if}
-									{#if rev.published}
-										<span class="badge badge-open"
-											><i class="dot dot-open" aria-hidden="true"></i>Published</span
-										>
-									{/if}
-								</span>
-								<span class="rev-acts">
-									{#if !rev.published}
-										<button
-											class="btn btn-sm btn-ghost"
-											type="button"
-											disabled={busy}
-											aria-label="Publish r{rev.number}"
-											onclick={() => publish(rev.number)}
-										>
-											<EyeIcon size={13} aria-hidden="true" />Publish
-										</button>
-									{/if}
-									{#if rev.number !== latest}
-										<button
-											class="btn btn-sm btn-ghost"
-											type="button"
-											disabled={busy}
-											aria-label="Revert to r{rev.number}"
-											{@attach tip(
-												'Adds a new revision with this one’s name, description and filters'
-											)}
-											onclick={() => revert(rev.number)}
-										>
-											<ArrowCounterClockwiseIcon size={13} aria-hidden="true" />Revert
-										</button>
-									{/if}
-								</span>
-							</li>
-						{/each}
-					</ol>
-				{/if}
-			</section>
+		{#if thing.mine}
+			<GrownHistory
+				revisions={data.revisions}
+				{busy}
+				revert_help={view !== null
+					? 'Adds a new revision with this one’s name, description and filters'
+					: 'Adds a new revision with this one’s name, description and layout'}
+				onrevert={revert}
+				onpublish={publish}
+			/>
 		{/if}
 
 		<ConfirmDialog
 			bind:open={confirm_delete}
-			title="Delete {view.name}?"
-			description="The view and its whole history are removed, for you and for any member it was published to. Issues are not touched."
-			confirm_label="Delete view"
+			title="Delete {thing.name}?"
+			description="The {kind_word} and its whole history are removed, for you and for any member it was published to. Issues are not touched."
+			confirm_label="Delete {kind_word}"
 			destructive
 			onconfirm={remove}
 		/>
 		<ConfirmDialog
 			bind:open={confirm_unpublish}
-			title="Unpublish {view.name}?"
-			description={view.mine
+			title="Unpublish {thing.name}?"
+			description={thing.mine
 				? 'Members stop seeing it. You can publish it again from here.'
 				: 'Members stop seeing it, and so do you: only its owner can publish it again.'}
 			confirm_label="Unpublish"
@@ -442,82 +420,13 @@
 		color: var(--tx-mid);
 		font-size: var(--t-xs);
 	}
+	.sf-body {
+		margin: var(--s-4) 0 var(--s-6);
+	}
 	.sec-hd h2.lbl {
 		margin: 0;
 	}
 	.sec-hd a.lbl {
 		color: inherit;
-	}
-	.v-mate {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		color: var(--violet-tx);
-	}
-	.revs {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-	}
-	.rev {
-		display: grid;
-		grid-template-columns: 3em minmax(0, 1fr) 4em auto auto;
-		align-items: center;
-		gap: var(--s-3);
-		min-height: 44px;
-		padding: 4px var(--s-3) 4px var(--s-4);
-		border-bottom: 1px solid var(--line);
-		font-size: var(--t-xs);
-	}
-	.rev:last-child {
-		border-bottom: 0;
-	}
-	.rev:hover,
-	.rev:focus-within {
-		background: var(--s3);
-	}
-	.rev-n {
-		color: var(--tx-dim);
-	}
-	.rev-what {
-		display: flex;
-		flex-direction: column;
-		gap: 1px;
-		min-width: 0;
-	}
-	.rev-name {
-		color: var(--tx-hi);
-		font-size: var(--t-sm);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.rev-how,
-	.rev-when {
-		color: var(--tx-dim);
-	}
-	.rev-when {
-		text-align: right;
-	}
-	.rev-tags,
-	.rev-acts {
-		display: inline-flex;
-		gap: var(--s-2);
-		justify-content: flex-end;
-	}
-	@media (max-width: 720px) {
-		.rev {
-			grid-template-columns: 3em minmax(0, 1fr) auto;
-			row-gap: 4px;
-			padding: 8px var(--s-3);
-		}
-		.rev-tags {
-			grid-column: 2;
-			justify-content: flex-start;
-		}
-		.rev-acts {
-			grid-column: 2 / -1;
-			justify-content: flex-start;
-		}
 	}
 </style>

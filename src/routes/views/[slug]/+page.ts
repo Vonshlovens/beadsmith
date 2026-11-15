@@ -1,36 +1,65 @@
 /**
- * One saved view, run as the viewer, and for its owner the history. A view
- * that cannot run (its project left the catalogue, Dolt is down) still shows
- * its name and history, so the owner can revert or change it.
+ * One grown thing at `/views/<slug>` (ADR-0025): a saved view, run as the
+ * viewer, or a catalog surface with its bindings resolved as the viewer.
+ * Slugs are unique across kinds, so the page asks for a view first (the
+ * common case) and, when no view has the slug, for a surface. Either kind
+ * that cannot read its data (a project left the catalogue, Dolt is down)
+ * still shows its name and, for its owner, its history, so the owner can
+ * revert or change it.
  */
-import { api, errorMessage } from '#lib/client/api.js';
+import { api, ApiError, errorMessage } from '#lib/client/api.js';
+import type { SurfaceDataResponse, SurfaceRevisionView, SurfaceSummary } from '#lib/surfaces.js';
 import type { ViewResult, ViewRevisionView, ViewSummary } from '#lib/views.js';
 import type { PageLoad } from './$types';
 
+const notFound = (error: unknown) => error instanceof ApiError && error.code === 'not_found';
+
 export const load: PageLoad = async ({ fetch, params }) => {
+	const slug = params.slug;
 	let view: ViewSummary | null = null;
 	let result: ViewResult | null = null;
-	let revisions: ViewRevisionView[] = [];
+	let surface: SurfaceSummary | null = null;
+	let surface_data: SurfaceDataResponse | null = null;
+	let revisions: (ViewRevisionView | SurfaceRevisionView)[] = [];
 	let error: string | null = null;
 	let run_error: string | null = null;
 	try {
-		({ view, result } = await api.runView(params.slug, { fetch }));
+		({ view, result } = await api.runView(slug, { fetch }));
 	} catch (thrown) {
-		// Either there is no such view, or it exists and did not run (its
-		// project left the catalogue, say): reading it alone tells which.
+		// No such view, a surface under this slug, or a view that did not run
+		// (its project left the catalogue, say): reading it alone tells which.
 		try {
-			view = (await api.view(params.slug, { fetch })).view;
+			view = (await api.view(slug, { fetch })).view;
 			run_error = errorMessage(thrown);
 		} catch (again) {
-			error = errorMessage(again);
+			if (!notFound(again)) {
+				error = errorMessage(again);
+			} else {
+				try {
+					surface = (await api.surface(slug, { fetch })).surface;
+				} catch (last) {
+					error = errorMessage(last);
+				}
+			}
 		}
 	}
-	if (view?.mine) {
+	if (surface !== null) {
 		try {
-			revisions = (await api.viewHistory(params.slug, { fetch })).revisions;
-		} catch {
-			/* the page still shows the view; history says it could not load */
+			surface_data = await api.surfaceData(slug, { fetch });
+		} catch (thrown) {
+			run_error = errorMessage(thrown);
 		}
 	}
-	return { slug: params.slug, view, result, revisions, error, run_error };
+	if (view?.mine || surface?.mine) {
+		try {
+			revisions = (
+				view !== null
+					? await api.viewHistory(slug, { fetch })
+					: await api.surfaceHistory(slug, { fetch })
+			).revisions;
+		} catch {
+			/* the page still shows it; the history says it could not load */
+		}
+	}
+	return { slug, view, result, surface, surface_data, revisions, error, run_error };
 };

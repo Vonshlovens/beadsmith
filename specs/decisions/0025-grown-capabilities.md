@@ -209,7 +209,8 @@ document that is itself sandboxed.
 Shipped versus target: the store, the view spec, the views catalogue, the
 view crew tools and proposed automations are implemented; surfaces are
 stored, served by `/api/surfaces`, written by First Mate's surface crew
-tools and their bindings resolved as the viewer, but not yet rendered, and apps are not yet
+tools, their bindings resolved as the viewer and rendered at `/views/<slug>`,
+but their buttons do not run actions yet, and apps are not yet
 (see Implementation notes).
 
 ## Alternatives considered
@@ -380,8 +381,32 @@ Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
   is the crew launch cap's sliding window, sized 60 per minute and keyed by
   viewer and surface; a request takes one call per binding, all or none.
 
+- Surface renderer:
+  [`src/lib/components/surface/`](../../src/lib/components/surface/), one
+  Svelte component per data-reading catalog entry (StatTile, IssueList,
+  IssueBoard, Chart, Button) and `surface-node.svelte`, which draws layout,
+  headings, text and Markdown and recurses through children. Every catalog
+  component has exactly one branch there, with no fallback for an unknown
+  one, since the store refused it on save. Text props are Svelte text
+  (escaped); Markdown goes through `markdown-body`. A surface renders at
+  `/views/<slug>` like a view: slugs are unique across kinds, so the page
+  asks for a view first and, when there is none, for a surface, then reads
+  its bindings once through `/api/surfaces/:slug/data` as the viewer. The
+  issue components reuse `issue-rows` and the project board (read-only: no
+  dispatch or create from a surface board, since a surface's writes go
+  through its buttons and the host confirmation). Binding data is a crew
+  tool's compact result, so
+  [`src/lib/client/surfaces.ts`](../../src/lib/client/surfaces.ts) checks it
+  field by field, and a binding that failed or that a component cannot read
+  shows its reason in place of its data, never as an empty list or a zero.
+  The header, publish, unpublish, delete and the owner's history
+  ([`grown-history.svelte`](../../src/lib/components/grown-history.svelte))
+  are shared with views, and `/views` lists both kinds, newest change
+  first. Buttons render with a visible note that they do not run yet;
+  wiring them to the bridge actions behind the host confirmation is the
+  next step.
+
 Still expected: the vendored library allowlist pinned in one file, like hc's pin
-([0021](./0021-hc-terminal-runtime.md)); the surface renderer and
-actions. Exporting apps as
+([0021](./0021-hc-terminal-runtime.md)); surface actions. Exporting apps as
 `ui://` resources to outside MCP clients is a later follow-on, not v1. See
 the matching row in [`specs/README.md`](../README.md).

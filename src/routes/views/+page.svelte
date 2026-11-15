@@ -1,9 +1,10 @@
 <script lang="ts">
 	/**
-	 * Saved views (ADR-0025 rule 9): each row answers "what does this show,
-	 * who wrote it, and who can see it". An admin sees their own views and
-	 * every published one; a member sees only published ones. The row opens
-	 * the view, where its owner revises, reverts and publishes it.
+	 * Saved views and catalog surfaces (ADR-0025 rule 9): each row answers
+	 * "what does this show, who wrote it, and who can see it". An admin sees
+	 * their own and every published one; a member sees only published ones.
+	 * Both kinds share one list, newest change first, since both open at
+	 * /views/<slug>, where the owner reverts, publishes and deletes them.
 	 */
 	import { refreshAll } from '$app/navigation';
 	import RobotIcon from 'phosphor-svelte/lib/RobotIcon';
@@ -15,7 +16,9 @@
 	import { stepFocus } from '#lib/client/list-focus.js';
 	import { currentViewer, projectList } from '#lib/client/projects.svelte.js';
 	import { tip } from '#lib/client/tooltip.js';
+	import { describeSurfaceSpec } from '#lib/client/surfaces.js';
 	import { describeViewSpec } from '#lib/client/views.js';
+	import type { GrownSummary } from '#lib/grown.js';
 	import { PRODUCT_NAME } from '#lib/product.js';
 	import type { PageProps } from './$types';
 
@@ -27,11 +30,33 @@
 	const is_admin = $derived(currentViewer()?.role === 'admin');
 	const names = $derived(new Map(projectList().map((p) => [p.id, p.name])));
 	const projectName = (id: string) => names.get(id) ?? id;
-	const mine = $derived(data.views.filter((v) => v.mine).length);
+	interface Row {
+		thing: GrownSummary<unknown>;
+		/** The project or scope, or "Surface". */
+		where: string;
+		what: string;
+	}
+
+	const rows = $derived(
+		[
+			...data.views.map((view): Row => {
+				const [where, ...what] = describeViewSpec(view.spec, projectName);
+				return { thing: view, where, what: view.description || what.join(' · ') };
+			}),
+			...data.surfaces.map((surface): Row => ({
+				thing: surface,
+				where: 'Surface',
+				what: surface.description || describeSurfaceSpec(surface.spec)
+			}))
+		].sort(
+			(a, b) =>
+				b.thing.updated_at.localeCompare(a.thing.updated_at) ||
+				a.thing.slug.localeCompare(b.thing.slug)
+		)
+	);
+	const mine = $derived(rows.filter((row) => row.thing.mine).length);
 	const meta = $derived(
-		[String(data.views.length), is_admin && mine > 0 ? `${mine} yours` : '']
-			.filter(Boolean)
-			.join(' · ')
+		[String(rows.length), is_admin && mine > 0 ? `${mine} yours` : ''].filter(Boolean).join(' · ')
 	);
 
 	async function refresh() {
@@ -65,41 +90,45 @@
 	<PageHeader
 		title="Views"
 		{meta}
-		meta_label="{data.views.length} views{is_admin ? `, ${mine} of them yours` : ''}"
+		meta_label="{rows.length} views and surfaces{is_admin ? `, ${mine} of them yours` : ''}"
 		onrefresh={refresh}
 		{refreshing}
 	/>
 
-	{#if data.error}
-		<div class="banner banner-err" role="alert">
-			<i class="dot dot-blocked" style="margin-top:5px" aria-hidden="true"></i>
-			<div class="banner-bd">
-				<b>Views could not be loaded.</b>
-				<div class="mt-2">{data.error}</div>
+	{#each [{ what: 'Views', message: data.error }, { what: 'Surfaces', message: data.surfaces_error }] as failed (failed.what)}
+		{#if failed.message}
+			<div class="banner banner-err" role="alert">
+				<i class="dot dot-blocked" style="margin-top:5px" aria-hidden="true"></i>
+				<div class="banner-bd">
+					<b>{failed.what} could not be loaded.</b>
+					<div class="mt-2">{failed.message}</div>
+				</div>
+				<div class="banner-acts">
+					<button class="btn btn-sm" type="button" onclick={refresh}>Retry now</button>
+				</div>
 			</div>
-			<div class="banner-acts">
-				<button class="btn btn-sm" type="button" onclick={refresh}>Retry now</button>
-			</div>
-		</div>
-	{:else if data.views.length === 0}
+		{/if}
+	{/each}
+	{#if data.error && data.surfaces_error}
+		<!-- Both lists failed; the banners say so, and nothing here is an empty catalogue. -->
+	{:else if rows.length === 0}
 		<EmptyState
 			title="No saved views yet"
 			description={is_admin
-				? 'A view is a named filter of issues, shown as a list or a board, in one project or all of them. Views you save stay private until you publish them.'
-				: 'A view is a named filter of issues. Views an admin publishes show up here.'}
+				? 'A view is a named filter of issues, shown as a list or a board. A surface is a dashboard First Mate builds from tiles, lists, boards and charts. Both stay private until you publish them.'
+				: 'Views and dashboards an admin publishes show up here.'}
 		>
 			{#snippet actions()}
 				<a class="btn btn-sm" href="/projects">Open projects</a>
 			{/snippet}
 		</EmptyState>
 	{:else}
-		<ul class="list panel" aria-label="Saved views" bind:this={list_el}>
-			{#each data.views as view (view.slug)}
-				{@const [where, ...what] = describeViewSpec(view.spec, projectName)}
+		<ul class="list panel" aria-label="Saved views and surfaces" bind:this={list_el}>
+			{#each rows as { thing: view, where, what } (view.slug)}
 				<li class="v-row">
 					<a class="v-main" href="/views/{view.slug}">
 						<span class="v-name">{view.name}</span>
-						<span class="v-what">{view.description || what.join(' · ')}</span>
+						<span class="v-what">{what}</span>
 					</a>
 					<span class="v-proj">{where}</span>
 					<span class="v-by">
