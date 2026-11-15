@@ -1,6 +1,7 @@
 import { createClient } from '@libsql/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { initStateSchema } from '../state/db.js';
+import { createStateStore, initStateSchema, type StateStore } from '../state/db.js';
+import { setChangeThisProjectId } from '../change-this.js';
 import { createDispatchStore, type DispatchStore } from '../dispatch/store.js';
 import type { AgentProvider } from '../dispatch/provider.js';
 import type { DispatchDeps } from '../dispatch/service.js';
@@ -76,6 +77,7 @@ function fakeDolt(): DoltClient {
 }
 
 let dispatch_store: DispatchStore;
+let settings_store: StateStore;
 let todo_store: TodoStore;
 let launches: ReturnType<typeof vi.fn<AgentProvider['launch']>>;
 let provider: AgentProvider;
@@ -101,6 +103,7 @@ function crewDeps(dispatch: DispatchDeps = dispatchDeps()): CrewDeps {
 		read: { dolt: fakeDolt(), dolt_configured: true },
 		dispatch,
 		todos: async () => todo_store,
+		settings: async () => settings_store,
 		launch_limiter: limiter
 	};
 }
@@ -110,6 +113,7 @@ beforeEach(async () => {
 	await initStateSchema(client);
 	dispatch_store = createDispatchStore(client);
 	todo_store = createTodoStore(client);
+	settings_store = createStateStore(client);
 	let n = 0;
 	launches = vi.fn<AgentProvider['launch']>(async () => ({
 		agent_id: `agent-${++n}`,
@@ -278,6 +282,29 @@ describe('mission tools', () => {
 			idempotency_key: launchKey(ADMIN, 'file_issue', { id: 'use:toolu_1' }),
 			payload: { operation: 'file', notes: 'The relay drops frames.', labels: ['crew'] }
 		});
+	});
+
+	it('request_code_change files into the project chosen as Beadsmith’s own', async () => {
+		expect(await refused('request_code_change', { request: 'Add CSV export' })).toMatch(
+			/No project is set/
+		);
+		await setChangeThisProjectId(settings_store, 'd_beta');
+		const result = await ok(
+			'request_code_change',
+			{ request: 'Add CSV export to the issue list', page: '/p/[id]' },
+			{ tool_use_id: 'toolu_change' }
+		);
+		expect(result).toMatchObject({ launched: true, operation: 'file', project: { id: 'd_beta' } });
+		const record = await dispatch_store.get(result.mission_id);
+		expect(record?.payload).toMatchObject({
+			operation: 'file',
+			notes: 'Add CSV export to the issue list\n\nPage: /p/[id]',
+			change_request: { source: 'first_mate' }
+		});
+		// A member is refused, as the File route refuses them.
+		expect(await refused('request_code_change', { request: 'x' }, { ctx: MEMBER })).toMatch(
+			/admin/
+		);
 	});
 
 	it('a retried call with the same tool use id launches once', async () => {

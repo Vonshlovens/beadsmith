@@ -26,7 +26,12 @@
 		parseStoredIssueView,
 		projectIssuesHref
 	} from '#lib/client/issue-view.js';
-	import { currentProject, currentViewer, projectList } from '#lib/client/projects.svelte.js';
+	import {
+		currentProject,
+		currentViewer,
+		projectList,
+		statusSnapshot
+	} from '#lib/client/projects.svelte.js';
 	import { app_state } from '#lib/client/stores.svelte.js';
 	import { PROJECTS_PATH } from '#lib/client/home.js';
 
@@ -127,6 +132,16 @@
 					return false;
 				}
 				(event.target as HTMLElement).blur();
+			}
+		},
+		{
+			// While the mode is on, change-this.svelte's own scope takes `\` to leave it.
+			keys: ['\\'],
+			label: 'Change this: point at the page to request a change',
+			group: 'General',
+			when: () => currentViewer()?.role === 'admin' && statusSnapshot()?.dispatch.enabled === true,
+			run: () => {
+				app_state.change_this_on = true;
 			}
 		},
 		{ keys: ['g p'], label: 'Projects', group: 'Go to', run: () => go(PROJECTS_PATH) },

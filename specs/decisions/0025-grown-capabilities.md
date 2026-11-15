@@ -539,6 +539,32 @@ Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
   pin's version in step with the manifest. An app that does not name it gets
   none of its 208 KB.
 
+- Rule 10's "change this" is a mode, not a button: an admin turns it on
+  from the top bar's crosshair or `\`, the page becomes an inspector
+  (outlines drawn over it with pointer events off, capture-phase pointer
+  handlers so nothing under the pointer activates, arrows and Enter for the
+  keyboard, tap for touch), and a popover asks what should change. Send is
+  an ordinary File launch on `POST /api/projects/:id/dispatch` with an
+  optional `change_request` carrying the page context
+  ([`src/lib/change-request.ts`](../../src/lib/change-request.ts), built by
+  [`src/lib/client/change-this.ts`](../../src/lib/client/change-this.ts)):
+  URL, route id, title, theme, viewport and up to five elements' selector
+  path, role, accessible name, text, outerHTML snippet, box and, in a dev
+  build, the Svelte component file from `__svelte_meta`. File, not Tackle
+  or a loop, because a request made by pointing is rarely ready to build:
+  filing a grounded bead keeps the code change behind a person's Tackle,
+  and File already runs without a repository map. So it adds no authority:
+  `dispatch:launch` (members never see the toggle and the gate refuses
+  them), the arm, File allowed and the File checkout map all apply as for
+  any File. `prompts.ts` fences the context as data, separately from the
+  request, as JSON so page text cannot pose as a field, and clips it again.
+  The project that tracks Beadsmith's own code is a setting
+  (`change_this.project_id`, `PUT /api/settings/change-this`, admin only),
+  picked the first time an admin sends a request. The crew tool is
+  `request_code_change`: the same File with `{source: "first_mate"}`, into
+  that project. The mode exits after a send; the toast links to the
+  mission.
+
 Still expected for apps: exporting apps as `ui://` resources to outside MCP
 clients is a later follow-on, not v1. See
 the matching row in [`specs/README.md`](../README.md).

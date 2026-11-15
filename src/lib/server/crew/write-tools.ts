@@ -25,7 +25,8 @@ import {
 	type EnqueueDispatchInput
 } from '../dispatch/service.js';
 import { getProjectIssue } from '../read-model.js';
-import { getTodoStore } from '../state/db.js';
+import { getStateStore, getTodoStore } from '../state/db.js';
+import { changeThisProjectId } from '../change-this.js';
 import { routeTodo } from '../todos/route.js';
 import type { TodoStore } from '../todos/store.js';
 import {
@@ -38,6 +39,7 @@ import {
 	todo_priority_schema,
 	todo_tags_schema
 } from '../validation.js';
+import { CHANGE_REQUEST_LIMITS } from '#lib/change-request.js';
 import { getLaunchLimiter } from './launch-limit.js';
 import { compactMission, compactTodo, resolveCrewProject } from './read-tools.js';
 import {
@@ -331,6 +333,60 @@ export const file_issue = defineTool({
 	}
 });
 
+/**
+ * ADR-0025 rule 10: when no view, surface or app can do what the owner asks,
+ * the ask becomes code. This is the same File launch "Change this" sends, into
+ * the project the owner chose as Beadsmith's own, so it adds no authority:
+ * dispatch:launch, arm, File allowed and the File checkout map all apply.
+ */
+export const request_code_change = defineTool({
+	name: 'request_code_change',
+	description:
+		'Ask for a change to the Beadsmith app itself, for something a view, surface or app ' +
+		'cannot do. Starts a File mission in the project that tracks Beadsmith’s own code ' +
+		'(the one the owner chose for "Change this"): an agent files one grounded Beads issue ' +
+		'for the change; nothing is implemented. Use it only after trying the grown tools.',
+	input: z.strictObject({
+		request: z
+			.string()
+			.trim()
+			.min(1)
+			.max(6000)
+			.describe('What should change in Beadsmith and why, in the owner’s words where possible.'),
+		page: z
+			.string()
+			.trim()
+			.max(CHANGE_REQUEST_LIMITS.url)
+			.optional()
+			.describe('The Beadsmith page or route it is about, when there is one.'),
+		project: project_ref_schema
+			.optional()
+			.describe('Override the configured project. Omit to use the owner’s choice.')
+	}),
+	permission: DISPATCH_PERMISSION,
+	async handler(ctx, input, deps, call) {
+		const configured =
+			input.project ?? (await changeThisProjectId(await (deps.settings ?? getStateStore)()));
+		if (configured === null) {
+			throw new CrewToolError(
+				'No project is set as Beadsmith’s own code. Ask the owner to send one request with ' +
+					'"Change this" in the browser (it asks which project), or pass project.'
+			);
+		}
+		const project = await resolveCrewProject(ctx, deps, configured);
+		return launch(ctx, deps, call, 'request_code_change', {
+			project,
+			payload: {
+				operation: 'file',
+				// The page is the owner's reference, not captured context, so it
+				// rides in the fenced notes.
+				notes: input.page === undefined ? input.request : `${input.request}\n\nPage: ${input.page}`,
+				change_request: { source: 'first_mate' }
+			}
+		});
+	}
+});
+
 export const comment_issue = defineTool({
 	name: 'comment_issue',
 	description:
@@ -471,6 +527,7 @@ export const WRITE_TOOLS: CrewTool[] = [
 	complete_todo,
 	route_todo,
 	file_issue,
+	request_code_change,
 	comment_issue,
 	tackle_issue,
 	discuss_issue,

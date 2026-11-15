@@ -32,6 +32,7 @@ import type {
 	AppToolCallResponse
 } from '#lib/apps.js';
 import type { BridgeActionName } from '#lib/grown.js';
+import type { ChangeRequest } from '#lib/change-request.js';
 import type {
 	SurfaceActionResponse,
 	SurfaceDataResponse,
@@ -399,6 +400,19 @@ export const api = {
 		});
 	},
 
+	/** The project "Change this" files into; null until an admin picks one. */
+	changeThisProject(init?: RequestInitLike) {
+		return request<{ project_id: string | null }>('GET', '/settings/change-this', init);
+	},
+
+	/** Choose (or, with null, forget) the project "Change this" files into. Admin only. */
+	setChangeThisProject(project_id: string | null, init?: RequestInitLike) {
+		return request<{ project_id: string | null }>('PUT', '/settings/change-this', {
+			...init,
+			body: { project_id }
+		});
+	},
+
 	/** Persist the UI theme preference so the next page load paints it. */
 	setTheme(theme: ThemePreference, init?: RequestInitLike) {
 		return request<{ theme: ThemePreference }>('POST', '/settings/theme', {
@@ -460,6 +474,8 @@ export const api = {
 			priority?: number;
 			labels?: string[];
 			status?: string;
+			/** "Change this" page context (ADR-0025 rule 10). */
+			change_request?: ChangeRequest;
 		} & AgentChoice,
 		init?: RequestInitLike
 	) {

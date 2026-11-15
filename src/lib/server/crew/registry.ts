@@ -15,6 +15,7 @@ import type { MemoryStore } from '../mate/memory-store.js';
 import type { MetaStore } from '../mate/meta-store.js';
 import type { GrownStore } from '../grown/store.js';
 import type { AutomationStore } from '../automations/store.js';
+import type { StateStore } from '../state/db.js';
 import type { Project } from '#lib/types.js';
 import type { LaunchLimiter } from './launch-limit.js';
 
@@ -65,6 +66,8 @@ export interface CrewDeps {
 	automations?: () => Promise<AutomationStore>;
 	/** Per-chat cap on mission launches; defaults to the env-configured one. */
 	launch_limiter?: LaunchLimiter;
+	/** Service settings, for the project that tracks Beadsmith's own code (ADR-0025 rule 10). */
+	settings?: () => Promise<StateStore>;
 }
 
 /**

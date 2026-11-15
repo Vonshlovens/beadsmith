@@ -7,6 +7,7 @@ import type {
 import type { StatusKey } from '#lib/client/format.js';
 import type { RalphHarness, RalphMode } from '#lib/ralph.js';
 import type { LoopEnd } from './provider.js';
+import type { ChangeRequest } from '#lib/change-request.js';
 
 /**
  * The model and reasoning effort a launch asked for. Each is one of the
@@ -27,6 +28,12 @@ export interface FilePayload extends AgentChoice {
 	priority?: number;
 	labels?: string[];
 	status?: StatusKey;
+	/**
+	 * A "Change this" request (ADR-0025 rule 10): the page and elements an
+	 * admin pointed at, or First Mate's code-change ask. The File prompt
+	 * fences it as data; the notes stay the request itself.
+	 */
+	change_request?: ChangeRequest;
 }
 
 /** Board column a Tackle-family launch is aiming at. Omitted = /tackle (start work). */

@@ -643,6 +643,61 @@ describe('enqueueDispatch', () => {
 		expect(launch).not.toHaveBeenCalled();
 	});
 
+	it('treats a Change this request as a File: same arm and allow, page context in the prompt', async () => {
+		const launch = vi.fn(async () => ({ agent_id: 'bc-change' }));
+		const provider = providerWithLaunch(launch);
+		const payload = {
+			operation: 'file' as const,
+			notes: 'Rename this button.',
+			change_request: {
+				source: 'page' as const,
+				page: {
+					url: 'https://beadsmith.example.test/ready',
+					route_id: '/ready',
+					title: 'Ready',
+					theme: 'light' as const,
+					viewport: { width: 800, height: 600 }
+				}
+			}
+		};
+		const input = (key: string) => ({
+			idempotency_key: key,
+			project: PROJECT,
+			actor: 'web',
+			payload
+		});
+
+		await expect(
+			enqueueDispatch(input('idem-change-01'), {
+				store,
+				provider,
+				configured: true,
+				policy: { armed: false, allow: ALLOW_ALL.allow }
+			})
+		).rejects.toMatchObject({ message: DISARMED_DISPATCH_MESSAGE });
+		await expect(
+			enqueueDispatch(input('idem-change-02'), {
+				store,
+				provider,
+				configured: true,
+				policy: { armed: true, allow: { file: false, tackle: true } }
+			})
+		).rejects.toMatchObject({ message: FILE_NOT_ALLOWED_MESSAGE });
+		expect(launch).not.toHaveBeenCalled();
+
+		const filed = await enqueueDispatch(input('idem-change-03'), {
+			store,
+			provider,
+			configured: true,
+			policy: ALLOW_ALL,
+			schedule_background: NO_BACKGROUND
+		});
+		expect(filed.request.status).toBe('launched');
+		const prompt = (launch.mock.calls[0] as unknown as [{ prompt: string }])[0].prompt;
+		expect(prompt).toContain('"route_id": "/ready"');
+		expect(prompt).toContain('Rename this button.');
+	});
+
 	it('still fails unmapped Tackle even when Tackle is allowed', async () => {
 		const launch = vi.fn();
 		const provider = providerWithLaunch(launch);

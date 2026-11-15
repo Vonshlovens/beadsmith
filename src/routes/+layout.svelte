@@ -13,6 +13,7 @@
 	import touchIcon from '#lib/assets/beadsmith-touch-icon.png';
 	import ActivityDrawer from '#lib/components/activity-drawer.svelte';
 	import AppSidebar from '#lib/components/app-sidebar.svelte';
+	import ChangeThis from '#lib/components/change-this.svelte';
 	import FirstMate from '#lib/components/first-mate.svelte';
 	import TopBar from '#lib/components/top-bar.svelte';
 	import { Toaster } from '#lib/components/ui/sonner/index.js';
@@ -79,6 +80,7 @@
 
 	<FirstMate />
 	<ActivityDrawer />
+	<ChangeThis />
 {:else}
 	{@render children?.()}
 {/if}

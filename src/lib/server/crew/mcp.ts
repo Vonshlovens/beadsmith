@@ -51,7 +51,8 @@ const INSTRUCTIONS =
 	'started (operation, project, issue, mission id). Launches per chat are rate limited. ' +
 	'Saved views (define_view, run_view), surfaces (define_surface) and apps (define_app) are ' +
 	'private to the owner and return a page URL. ' +
-	'define_automation proposes a scheduled launch, created paused until the owner resumes it.';
+	'define_automation proposes a scheduled launch, created paused until the owner resumes it. ' +
+	'When none of those can do it, request_code_change files a change to Beadsmith itself.';
 
 /** JSON-RPC 2.0 error codes used here. */
 export const JSONRPC_ERRORS = {

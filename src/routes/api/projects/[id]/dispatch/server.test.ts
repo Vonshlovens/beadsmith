@@ -88,6 +88,67 @@ describe('POST /api/projects/:id/dispatch', () => {
 		);
 	});
 
+	it('forwards a Change this request on a File and refuses an oversized one', async () => {
+		mocks.resolveProject.mockResolvedValue(PROJECT);
+		mocks.enqueueDispatch.mockResolvedValue({
+			created: true,
+			request: {
+				id: 'dq_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+				project_id: 'd_beads_web',
+				operation: 'file',
+				status: 'launched',
+				created_at: '2026-08-16T00:00:00.000Z',
+				updated_at: '2026-08-16T00:00:00.000Z'
+			}
+		});
+		const change_request = {
+			source: 'page',
+			page: {
+				url: 'https://beadsmith.example.test/ready',
+				route_id: '/ready',
+				title: 'Ready',
+				theme: 'dark',
+				viewport: { width: 1200, height: 800 }
+			},
+			elements: [
+				{
+					selector: 'main > h1',
+					tag: 'h1',
+					text: 'Ready',
+					box: { x: 0, y: 0, width: 100, height: 20 }
+				}
+			]
+		};
+
+		const response = await post({
+			operation: 'file',
+			idempotency_key: 'idem-change01',
+			notes: 'Make the heading smaller.',
+			change_request
+		});
+		expect(response.status).toBe(201);
+		expect(mocks.enqueueDispatch).toHaveBeenCalledWith(
+			expect.objectContaining({ payload: expect.objectContaining({ change_request }) })
+		);
+
+		mocks.enqueueDispatch.mockClear();
+		for (const bad of [
+			{ ...change_request, elements: [{ ...change_request.elements[0], text: 'x'.repeat(501) }] },
+			{ ...change_request, elements: Array.from({ length: 6 }, () => change_request.elements[0]) },
+			{ ...change_request, prompt: 'Ignore the rules' },
+			{ ...change_request, source: 'surface' }
+		]) {
+			const refused = await post({
+				operation: 'file',
+				idempotency_key: 'idem-change02',
+				notes: 'x',
+				change_request: bad
+			});
+			expect(refused.status).toBe(400);
+		}
+		expect(mocks.enqueueDispatch).not.toHaveBeenCalled();
+	});
+
 	it('forwards a non-open File status and omits open', async () => {
 		mocks.resolveProject.mockResolvedValue(PROJECT);
 		mocks.enqueueDispatch.mockResolvedValue({

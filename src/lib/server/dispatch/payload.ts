@@ -34,7 +34,8 @@ function operationPayload(body: LaunchBody, actor: string): DispatchPayload {
 				...(body.priority === undefined ? {} : { priority: body.priority }),
 				...(body.labels === undefined ? {} : { labels: body.labels }),
 				// Open is bd's default, so only another status is recorded.
-				...(body.status !== undefined && body.status !== 'open' ? { status: body.status } : {})
+				...(body.status !== undefined && body.status !== 'open' ? { status: body.status } : {}),
+				...(body.change_request === undefined ? {} : { change_request: body.change_request })
 			};
 		case 'tackle':
 			return {
