@@ -452,6 +452,16 @@ written before its first byte; one that cannot be recorded is refused (503).
    no wider than its scope: Dolt writes on named project databases, never
    data rights on `*.*`; repository access to one repository. Its model and
    repository keys stay outside it, added by a proxy.
+9. Grown capabilities (views, catalog surfaces and sandboxed apps,
+   [ADR-0025](../specs/decisions/0025-grown-capabilities.md); not
+   implemented yet) are stored data, never SQL, and the web process never
+   evaluates, imports or templates them. App code runs only in the viewer's
+   browser, in a sandboxed iframe with an opaque origin, no network access and
+   only vendored, hash-pinned libraries. Every read or action a grown thing
+   makes runs as the signed-in viewer, never as its author. Writes and
+   launches go through existing todo and dispatch authority behind a
+   confirmation that Beadsmith renders. Members see only a revision an admin
+   has published.
 
 ## Observability and failure behavior
 

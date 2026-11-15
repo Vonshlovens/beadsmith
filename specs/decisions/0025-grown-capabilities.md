@@ -1,0 +1,266 @@
+# 0025. Grown capabilities: views, catalog surfaces and sandboxed apps as revisioned data
+
+Date: 2026-11-14
+
+## Status
+
+accepted, being implemented. Builds on
+[0003](./0003-dolt-read-plane.md) (views compile through the existing
+parameterized read plane, unchanged), [0004](./0004-service-local-sqlite.md)
+(grown things are app-owned rows in `state.db`),
+[0011](./0011-accounts-and-roles.md) (roles),
+[0006](./0006-durable-agent-dispatch.md) and
+[0020](./0020-first-mate-crew-tools.md) (every write or launch reuses their
+authority), and borrows the owner-curation rule of
+[0024](./0024-first-mate-memory-and-context.md) (rule 8).
+
+## Context
+
+First Mate can use Beadsmith through crew tools (0020) but cannot extend it.
+A new view of the work, a dashboard for one project or a small purpose-built
+tool all go through the repository: a mission, a pull request, CI, an image
+and a redeploy. For a question like "show me everything blocked on review in
+these three projects, as a board" that is far too heavy, and the answer is
+then frozen into code everyone sees.
+
+The goal is a layer of **definitions** that the running product holds, that
+the owner and First Mate grow by talking, and that afterwards run with no
+model in the loop: they show up in a catalogue, have a history and can be
+rolled back. The danger is just as clear. Anything First Mate writes may have
+been shaped by prompt injection (an issue body, a mission transcript), and
+the product's authority boundary ([`docs/contract.md`](../../docs/contract.md))
+rests on the web process never running untrusted code, building SQL only from
+validated parts, and authorizing every action as a signed-in account.
+
+Today's code that this decision leans on:
+
+- The read plane builds every issue query from `BrowseFilters` with bound
+  parameters (`buildIssueWhere` in
+  [`src/lib/server/dolt/client.ts`](../../src/lib/server/dolt/client.ts)).
+- Crew tools are defined once, with zod inputs and a `permission` each, in
+  [`src/lib/server/crew/`](../../src/lib/server/crew/); they run as the
+  chat's owner (0020 rule 3).
+- Roles and the request gate are in
+  [`src/lib/server/auth/roles.ts`](../../src/lib/server/auth/roles.ts);
+  unknown API writes default to admin.
+- The app's CSP (`vite.config.ts`) allows only same-origin scripts with
+  SvelteKit's nonces and sets `frame-ancestors 'none'`.
+
+Out of scope: editing Beads from grown things (Beads writes stay delegated
+to missions, contract invariant 1), sharing grown things between Beadsmith
+instances, and exporting apps to outside MCP clients (a later follow-on,
+below).
+
+## Decision
+
+Beadsmith gains a revisioned store of **grown things** in three tiers, from
+most to least constrained. A request goes to the lowest tier that can
+express it.
+
+1. **Views** are declarative specs: a scope (one project or all), browse
+   filters (`BrowseFilters`), a sort and a presentation (list or board,
+   optional grouping). A view runs by compiling its spec through the
+   existing browse path, the same one the project page uses. A view never
+   holds SQL, column names or expressions; its spec is a strict zod schema
+   that rejects unknown keys, and every value reaches Dolt as a bound
+   parameter (0003 unchanged).
+2. **Catalog surfaces** are a JSON component tree, in the style of the A2UI
+   protocol and Vercel's json-render, over a **catalog of Beadsmith
+   components** (layout, headings, text, stat tiles, issue lists and boards,
+   charts, buttons) whose props are zod-typed. Data comes from bindings to
+   saved views or allowlisted read tools; buttons bind to allowlisted
+   actions. Svelte renders the tree natively, and a node that names a
+   component or prop the catalog does not define is rejected when saved,
+   not skipped when rendered. Surface data is never interpreted as code or
+   markup (text is text; Markdown goes through the app's sanitizing
+   renderer, [`markdown-body`](../../src/lib/components/markdown-body.svelte)).
+3. **Sandboxed apps** are model-written HTML, CSS and JavaScript, stored as
+   data, for what the catalog cannot express. An app's code runs **only in
+   the viewer's browser**, inside a sandboxed iframe, and talks to Beadsmith
+   only over the bridge (rule 6):
+   - The iframe is `<iframe sandbox="allow-scripts">` with no
+     `allow-same-origin`, `allow-top-navigation`, `allow-popups`,
+     `allow-forms` or `allow-modals`, so the app runs in an opaque origin:
+     it cannot read Beadsmith's cookies, storage or DOM, navigate the page
+     or open windows.
+   - Its document is served by a dedicated frame route that checks the
+     viewer may see the app, with its own response CSP: `sandbox
+     allow-scripts`, `default-src 'none'`, inline scripts and styles only,
+     `img-src data:`, `connect-src 'none'`, `form-action 'none'`,
+     `base-uri 'none'` and `frame-ancestors 'self'`. The `sandbox`
+     directive keeps the document sandboxed even if it is opened directly.
+     No network request is possible from the app: no `fetch`, XHR,
+     WebSocket, external script, stylesheet, font or image.
+   - **No network-loaded code, ever.** The host inlines into the app
+     document a vendored allowlist of libraries, each pinned by version and
+     SHA-256 in one file in the repository, starting with Beadsmith's
+     design-token CSS and one chart library. Extending the allowlist is a
+     repository change through review, never something First Mate or an app
+     can do.
+4. **Nothing model-written runs in the Node process.** No tier evaluates,
+   imports, templates or compiles stored content on the server. Views and
+   surfaces are parsed as data against schemas; app code is opaque bytes the
+   server stores and serves to the sandboxed frame. This is the line in the
+   contract, not an implementation detail.
+5. **Everything runs as the viewer.** A grown thing has an owner (its
+   author's account) but no authority of its own. Running a view, resolving
+   a surface binding or answering an app's tool call happens as the
+   signed-in account looking at it, with that account's role and visibility,
+   through the same checks the browser path uses. The author's role never
+   carries over: an admin's app opened by a member reads as a member and
+   cannot launch anything.
+6. **The bridge is MCP Apps' wire shape, with Beadsmith as the only host.**
+   Surfaces and apps reach Beadsmith through one tool bridge. For apps it is
+   the MCP Apps (SEP-1865) shape over `postMessage` JSON-RPC: `ui/initialize`,
+   `tools/call`, and the tool-input and tool-result notifications. The host
+   page accepts messages only from its own iframe's window, validates each
+   frame against a schema and a size limit, and forwards an allowed call to a
+   Beadsmith endpoint under the viewer's session. Surfaces call the same
+   endpoint directly. The bridge has an allowlist:
+   - **Reads:** the crew read tools that make sense outside a chat (projects,
+     ready work, issues, an issue, missions, a mission) and running a saved
+     view, each keeping its own `permission`, so `list_todos` answers admins
+     only. Chat-bound tools (memory, meta folder, mission follow-ups and
+     notices) are not on it.
+   - **Actions:** only ones that reuse existing authority: todo changes and
+     mission launches through dispatch, under the global arm, per-project
+     allow and repository map (0006), with the viewer's role checked as the
+     HTTP gate checks it. A launch records the grown thing it came from.
+   - **Host-side confirmation:** every action that writes or launches shows
+     a confirmation the host renders (the app's
+     [`confirm-dialog`](../../src/lib/components/confirm-dialog.svelte)),
+     naming the operation, project and issue, outside the iframe and the
+     surface tree. The grown thing cannot draw, skip or pre-answer it. Reads
+     need no confirmation.
+7. **Owner-private by default; members see only what an admin publishes.**
+   Creating and revising grown things is admin-only in this version (First
+   Mate is admin-only, and unknown writes already default to admin). A new
+   thing is visible to its owner alone. Sharing **publishes one revision**:
+   members see the published revision, the owner sees the latest. A later
+   revision, whether a person or First Mate wrote it, stays owner-only until
+   an admin publishes it, so an agent never changes what members see without
+   an admin action. Publishing and unpublishing are browser actions by a
+   signed-in admin; there is no crew tool for them. The owner publishes;
+   any admin may unpublish a thing members can see.
+8. **Revisions are append-only.** Every create, revise and revert writes a
+   new revision; a revert copies an old revision forward. Each revision
+   records its author kind (person or First Mate), the account and, for
+   First Mate, the chat. One store holds all three tiers, distinguished by
+   kind, each kind with its own spec schema, so there is one revision and
+   visibility implementation rather than three.
+9. **The owner can see and change everything.** A catalogue lists the
+   owner's grown things and the published ones, with author kind, project,
+   last change and published state; each has a history with revert, publish
+   and delete. First Mate's writes show in the chat as crew activity lines
+   like any other crew call, and the tools that create or revise a grown
+   thing return its URL.
+10. **When the grown layer cannot express a request, it becomes code.** An
+    admin-only "change this" action, and a crew tool, dispatch a mission
+    against the Beadsmith repository through existing dispatch with the page
+    and request as context. Automations First Mate proposes are created
+    paused, and only a person resumes them (0019's automations are already
+    data).
+
+### Limits
+
+Writes over a limit are refused with a message saying what to do, never
+truncated.
+
+| What | Limit |
+| --- | --- |
+| Grown things per owner | 200 views, 100 surfaces, 50 apps |
+| Name | 80 characters |
+| Slug | 64 characters, `^[a-z0-9]+(-[a-z0-9]+)*$`, unique across all owners (it is the URL) |
+| Description | 500 characters |
+| Revisions kept per thing | the newest 50, plus the published one; older revisions are dropped whole, never edited |
+| View spec | 4 KB of JSON; text search up to 200 characters; row limit up to the read plane's `MAX_LIMIT` (1,000) |
+| Surface tree | 32 KB of JSON, 200 nodes, depth 8, 12 data bindings |
+| App document | 256 KB of model-written HTML, CSS and JS, not counting inlined libraries |
+| Bridge frame | 64 KB per message in either direction; malformed or oversized frames are dropped and logged |
+| Bridge tool calls | 60 per minute per open surface or app; results bounded by the crew tools' `RESULT_MAX_CHARS` |
+| Launches from grown things | one host confirmation per launch, within dispatch's existing idempotency and the viewer's launch limits |
+
+## Consequences
+
+The owner and First Mate can answer "show me X" in seconds with something
+durable, reviewable and reversible, and First Mate can reuse its own views
+as tools instead of rebuilding queries. The common case (a filtered list or
+board) is the safest tier and runs entirely through code that already
+exists.
+
+Grown things are a new place for a prompt-injected chat to leave something
+behind. Mitigations: nothing runs on the server, nothing runs with the
+author's authority, apps have no network and no Beadsmith origin, actions
+need a host confirmation, members never see an unpublished revision, and
+the owner sees every change with its author and can revert or delete it.
+What a grown thing can still do is show the viewer misleading content built
+from data the viewer could read anyway; publishing is the admin's review
+point for that.
+
+An opaque-origin iframe is not a perfect barrier against every side channel
+of a hostile document (timing, resource exhaustion in the viewer's tab).
+It holds no data the viewer cannot read, and the CSP and sandbox flags leave
+it no way to send that data anywhere.
+
+The frame route needs its own CSP and `frame-ancestors 'self'`, the one
+place the app's global `frame-ancestors 'none'` is relaxed, and only for a
+document that is itself sandboxed.
+
+Shipped versus target: nothing in this decision is implemented yet. Views
+come first, then the catalogue, crew tools, surfaces and apps.
+
+## Alternatives considered
+
+**Evaluate model-written code on the server** (a JS sandbox in Node, or
+templates rendered server-side). Most expressive, but it puts untrusted code
+inside the process that holds the session secret, the Dolt reader and the
+dispatch path, which is exactly the authority boundary the contract draws.
+Rejected.
+
+**Raw SQL views.** Flexible and familiar, but it reverses 0003: SQL would be
+built from stored, model-written text, and a member's view could read any
+table the reader can. Rejected; `BrowseFilters` grows when a view needs a new
+filter.
+
+**Run apps in a Sand sandbox.** Strong isolation, but heavy (a microVM per
+app), slow to start, costly, and it has no UI of its own; the result would
+still need a safe way into the page. The browser's sandboxed iframe is the
+isolation this needs, at no cost.
+
+**`srcdoc` iframes.** One less route, but a `srcdoc` document inherits the
+embedding page's CSP, which allows only nonce'd same-origin scripts; running
+inline app code would mean relaxing the policy of every page that embeds an
+app, or computing per-revision hashes into it. A dedicated frame route gives
+the app its own, stricter policy and an access check on the document itself.
+
+**Invent a bridge protocol.** No dependency on a draft specification, but
+MCP Apps already defines the message shapes for exactly this (a UI asking a
+host to call tools), and matching it keeps open serving apps to outside MCP
+clients later. Beadsmith implements only the subset above.
+
+**Load libraries from a CDN.** Convenient for the model, but it needs
+network access from the app and trusts a third party at view time. Rejected
+in favour of vendored, hash-pinned libraries.
+
+**Only views, no surfaces or apps.** Smallest, but dashboards and
+purpose-built tools would still need a redeploy. The tiers let each request
+use the least power that expresses it.
+
+## Implementation notes
+
+Not yet implemented. Expected places: the store and spec schemas in a
+module beside the mate stores
+([`src/lib/server/mate/meta-store.ts`](../../src/lib/server/mate/meta-store.ts)
+is the pattern), tables in
+[`src/lib/server/state/schema.ts`](../../src/lib/server/state/schema.ts);
+routes under `src/routes/api/views/` and pages under `src/routes/views/`
+with role rules in
+[`src/lib/server/auth/roles.ts`](../../src/lib/server/auth/roles.ts) and
+role tests for each route; crew tools as a new module registered in
+[`src/lib/server/crew/registry.ts`](../../src/lib/server/crew/registry.ts);
+the vendored library allowlist pinned in one file, like hc's pin
+([0021](./0021-hc-terminal-runtime.md)). The surface renderer starts with a
+short spike (json-render's Svelte renderer versus Beadsmith's own renderer
+with an A2UI-compatible shape); record the choice here. Exporting apps as
+`ui://` resources to outside MCP clients is a later follow-on, not v1. See
+the matching row in [`specs/README.md`](../README.md).
