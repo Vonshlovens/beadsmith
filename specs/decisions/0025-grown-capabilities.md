@@ -207,9 +207,9 @@ place the app's global `frame-ancestors 'none'` is relaxed, and only for a
 document that is itself sandboxed.
 
 Shipped versus target: the store, the view spec, the views catalogue, the
-view crew tools and proposed automations are implemented; surfaces and apps
-are not yet (see
-Implementation notes).
+view crew tools and proposed automations are implemented; the surface spec
+is stored but surfaces are not yet served or rendered, and apps are not yet
+(see Implementation notes).
 
 ## Alternatives considered
 
@@ -255,9 +255,9 @@ Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
 - `store.ts` is the one revisioned store (rule 8): tables `grown_things`
   (slug, kind, owner, published revision) and `grown_revisions` (name,
   description, spec JSON, author kind, account and chat). Kinds are
-  registered in `GROWN_KINDS` with their spec schema, byte limit and
-  per-owner limit; only `view` is registered until surfaces and apps add
-  theirs. Visibility and roles (rules 5 and 7) are enforced in the store,
+  registered in `GROWN_KINDS` with their spec schema, byte limit,
+  per-owner limit and an optional async `check`; `view` and `surface` are
+  registered, apps add theirs. Visibility and roles (rules 5 and 7) are enforced in the store,
   not the routes, so the browser API and crew tools share one rule set.
   Writes are single `batch` calls rather than interactive transactions; the
   per-owner limit and the next revision number are computed inside the
@@ -320,9 +320,32 @@ Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
   `proposed_by_first_mate` (never the chat id) and /automations shows.
   There is no crew tool to resume, edit, run or delete an automation.
 
+- Surface spec: [`surface-spec.ts`](../../src/lib/server/grown/surface-spec.ts).
+  **Renderer choice (the spike):** Beadsmith's own schema and Svelte
+  renderer, in A2UI's shape (a flat list of components, each with an id and
+  its children's ids, under one `root`), rather than json-render's Svelte
+  renderer. The catalog is ten components whose props are already zod
+  objects here; json-render would add a pre-1.0 dependency and its own
+  catalog and action model in front of the bridge allowlist, which this
+  decision needs to own exactly (rule 6). Keeping A2UI's shape leaves room to
+  stream and patch by id, or to speak A2UI to outside clients, later. Each
+  catalog entry is a strict object, so an unknown component or prop is a
+  schema error; the tree checks (one parent each, reachable from the root,
+  no cycles, depth, node, binding and action limits, every reference used
+  and resolved, a component's binding yielding what it shows) run in the
+  same parse. Data bindings name a saved view or a bridge read; buttons name
+  a bridge action. The props are plain text except `Markdown`, which the
+  renderer sends through `markdown-body`.
+- Bridge allowlist: [`bridge.ts`](../../src/lib/server/grown/bridge.ts) names
+  the reads and actions of rule 6 and what each read yields; the tool behind
+  a name is the crew tool itself, loaded on first use through `crew/mcp.ts`
+  (a static import would form a cycle through the state database). Tools
+  that default `project` to the chat's project must name one, since a grown
+  thing has no chat. Tool inputs are checked against the crew tool's own
+  schema by the kind's async `check`, so a bad input is refused when saved.
+
 Still expected: the vendored library allowlist pinned in one file, like hc's pin
-([0021](./0021-hc-terminal-runtime.md)). The surface renderer starts with a
-short spike (json-render's Svelte renderer versus Beadsmith's own renderer
-with an A2UI-compatible shape); record the choice here. Exporting apps as
+([0021](./0021-hc-terminal-runtime.md)); the surfaces API, binding
+resolution, renderer, actions and crew tools. Exporting apps as
 `ui://` resources to outside MCP clients is a later follow-on, not v1. See
 the matching row in [`specs/README.md`](../README.md).

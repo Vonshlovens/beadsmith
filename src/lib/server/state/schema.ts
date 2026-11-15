@@ -462,7 +462,7 @@ export const mateMetaFiles = sqliteTable(
 );
 
 /**
- * Grown things (ADR-0025 rule 8): views now, surfaces and apps later, one
+ * Grown things (ADR-0025 rule 8): views and surfaces now, apps later, one
  * row per thing with its owner and published revision. Keep in step with
  * `GROWN_SCHEMA_SQL` in `grown/store.ts`.
  */

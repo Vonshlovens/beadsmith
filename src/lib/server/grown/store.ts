@@ -1,6 +1,6 @@
 /**
  * The grown things store (ADR-0025 rules 7 and 8): one revisioned store for
- * every tier (views now; surfaces and apps add a kind with their own spec
+ * every tier (views and surfaces now; apps add a kind with their own spec
  * schema), so there is one revision and visibility implementation rather
  * than three. App-owned rows in `state.db`.
  *
@@ -25,6 +25,12 @@ import type { AccountRole } from '../auth/roles.js';
 import { GrownError } from './errors.js';
 import { view_spec_schema, VIEW_SPEC_MAX_BYTES } from './view-spec.js';
 import {
+	surface_spec_schema,
+	SURFACE_SPEC_MAX_BYTES,
+	surfaceToolProblems,
+	type SurfaceSpec
+} from './surface-spec.js';
+import {
 	GROWN_DESCRIPTION_MAX,
 	GROWN_NAME_MAX,
 	GROWN_SLUG_MAX,
@@ -37,14 +43,25 @@ interface KindDefinition {
 	max_bytes: number;
 	/** Things of this kind one owner may keep. */
 	per_owner: number;
+	/**
+	 * Checks the schema cannot make synchronously, run on the parsed spec;
+	 * returns the problems, empty when there are none.
+	 */
+	check?: (spec: never) => Promise<string[]>;
 }
 
 /**
- * Every kind the store accepts. A kind is added with its spec schema (the
- * surface and app beads add theirs); a write naming any other kind is refused.
+ * Every kind the store accepts. A kind is added with its spec schema (apps
+ * add theirs); a write naming any other kind is refused.
  */
 export const GROWN_KINDS = {
-	view: { schema: view_spec_schema, max_bytes: VIEW_SPEC_MAX_BYTES, per_owner: 200 }
+	view: { schema: view_spec_schema, max_bytes: VIEW_SPEC_MAX_BYTES, per_owner: 200 },
+	surface: {
+		schema: surface_spec_schema,
+		max_bytes: SURFACE_SPEC_MAX_BYTES,
+		per_owner: 100,
+		check: (spec: SurfaceSpec) => surfaceToolProblems(spec)
+	}
 } satisfies Record<string, KindDefinition>;
 
 export type GrownKind = keyof typeof GROWN_KINDS;
@@ -213,15 +230,20 @@ function checkDescription(description: string): string {
  * Parse a spec against its kind's schema and size limit, returning the
  * canonical JSON stored (defaults filled in, keys in schema order).
  */
-export function parseGrownSpec(kind: GrownKind, spec: unknown): { spec: unknown; json: string } {
-	const definition = GROWN_KINDS[kind];
+export async function parseGrownSpec(
+	kind: GrownKind,
+	spec: unknown
+): Promise<{ spec: unknown; json: string }> {
+	const definition: KindDefinition = GROWN_KINDS[kind];
 	const parsed = definition.schema.safeParse(spec);
-	if (!parsed.success) {
-		const problems = parsed.error.issues
-			.slice(0, 5)
-			.map((issue) => `${issue.path.join('.') || 'spec'}: ${issue.message}`)
-			.join('; ');
-		throw new GrownError('bad_request', `The ${kind} spec is invalid: ${problems}.`);
+	const problems = parsed.success
+		? ((await definition.check?.(parsed.data as never)) ?? [])
+		: parsed.error.issues.map((issue) => `${issue.path.join('.') || 'spec'}: ${issue.message}`);
+	if (!parsed.success || problems.length > 0) {
+		throw new GrownError(
+			'bad_request',
+			`The ${kind} spec is invalid: ${problems.slice(0, 5).join('; ')}.`
+		);
 	}
 	const json = JSON.stringify(parsed.data);
 	const bytes = Buffer.byteLength(json, 'utf8');
@@ -418,7 +440,7 @@ export function createGrownStore(client: Client, now: () => Date = () => new Dat
 			checkSlug(input.slug);
 			const name = checkName(input.name);
 			const description = checkDescription(input.description ?? '');
-			const { json } = parseGrownSpec(kind, input.spec);
+			const { json } = await parseGrownSpec(kind, input.spec);
 			const stamp = now().toISOString();
 			const id = newId('gt');
 			const limit = GROWN_KINDS[kind].per_owner;
@@ -495,7 +517,7 @@ export function createGrownStore(client: Client, now: () => Date = () => new Dat
 			const json =
 				input.spec === undefined
 					? JSON.stringify(current.spec)
-					: parseGrownSpec(thing.kind, input.spec).json;
+					: (await parseGrownSpec(thing.kind, input.spec)).json;
 			await client.batch(
 				appendStatements(
 					thing.id,
@@ -517,7 +539,7 @@ export function createGrownStore(client: Client, now: () => Date = () => new Dat
 				);
 			}
 			// Re-parse, so a revert never restores a spec today's schema refuses.
-			const { json } = parseGrownSpec(thing.kind, old.spec);
+			const { json } = await parseGrownSpec(thing.kind, old.spec);
 			await client.batch(
 				appendStatements(
 					thing.id,
