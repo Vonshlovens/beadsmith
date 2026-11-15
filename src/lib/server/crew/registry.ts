@@ -13,6 +13,7 @@ import type { DispatchDeps } from '../dispatch/service.js';
 import type { TodoStore } from '../todos/store.js';
 import type { MemoryStore } from '../mate/memory-store.js';
 import type { MetaStore } from '../mate/meta-store.js';
+import type { GrownStore } from '../grown/store.js';
 import type { Project } from '#lib/types.js';
 import type { LaunchLimiter } from './launch-limit.js';
 
@@ -50,6 +51,8 @@ export interface CrewDeps {
 	memories?: () => Promise<MemoryStore>;
 	/** The owner's First Mate meta folder (ADR-0024). */
 	meta?: () => Promise<MetaStore>;
+	/** Saved views and other grown things (ADR-0025). */
+	grown?: () => Promise<GrownStore>;
 	/** Per-chat cap on mission launches; defaults to the env-configured one. */
 	launch_limiter?: LaunchLimiter;
 }

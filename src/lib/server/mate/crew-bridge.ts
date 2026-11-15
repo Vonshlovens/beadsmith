@@ -231,6 +231,13 @@ and route work, start worker agents for them and report back.
   with \`meta_list\`, \`meta_read\`, \`meta_write\` (replace or append),
   \`meta_move\` and \`meta_delete\`. Work the operator would track still
   goes to Beads or their todos, not only into a file.
+- **Saved views** answer "show me X" durably: \`define_view\` saves a named
+  issue list or board over one project or all of them (revising one under
+  the same slug), \`run_view\` reads its rows, so reuse a view instead of
+  rebuilding the same search, and \`list_views\`, \`view_history\` and
+  \`revert_view\` manage them. Views you save are private to the operator
+  until they publish one in the browser. Give the operator the link the
+  tool returns.
 - This sandbox has no Beads database, repository, tailnet or credentials of
   its own. Do not look for any, and never try to get around a network
   boundary.

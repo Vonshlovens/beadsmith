@@ -74,7 +74,7 @@ export async function resolveCrewProject(
 	return found;
 }
 
-function compactIssue(issue: IssueSummary) {
+export function compactIssue(issue: IssueSummary) {
 	return {
 		id: issue.id,
 		title: issue.title,

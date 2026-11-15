@@ -287,9 +287,17 @@ Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
   project's statuses. The owner sees the history there with revert and
   per-revision publish.
 
-Still expected: crew tools as a new module registered in
-[`src/lib/server/crew/registry.ts`](../../src/lib/server/crew/registry.ts);
-the vendored library allowlist pinned in one file, like hc's pin
+- Crew tools: [`src/lib/server/crew/view-tools.ts`](../../src/lib/server/crew/view-tools.ts)
+  (`define_view`, `list_views`, `run_view`, `view_history`, `revert_view`)
+  call the same store with the chat owner as viewer and First Mate as
+  author, so they add no rule of their own. `define_view` creates or
+  revises under one slug and returns the view's URL (rule 9); `run_view`
+  returns the rows the view's page shows, so First Mate reuses a view
+  rather than rebuilding its query. The writes need the same admin
+  permission as the `/api/views` writes. There is no publish or share
+  tool (rule 7).
+
+Still expected: the vendored library allowlist pinned in one file, like hc's pin
 ([0021](./0021-hc-terminal-runtime.md)). The surface renderer starts with a
 short spike (json-render's Svelte renderer versus Beadsmith's own renderer
 with an A2UI-compatible shape); record the choice here. Exporting apps as

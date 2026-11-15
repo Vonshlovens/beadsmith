@@ -366,7 +366,10 @@ name, description?, spec}` creates a private view, `PATCH /api/views/:slug`
 default the latest, to members; `DELETE /api/views/:slug/publish` (any
 admin) hides it again. A spec is validated against a strict schema (unknown
 keys, SQL-like values and oversized specs are refused) and never becomes
-SQL.
+SQL. First Mate's view crew tools (`define_view`, `list_views`, `run_view`,
+`view_history`, `revert_view`) go through the same store as the chat's
+owner, attributing each revision to First Mate and the chat; none of them
+publishes.
 
 `GET /api/ready` is the cross-project Ready deck: open issues with no open
 `blocks` dependencies, merged across catalog projects the session can see,

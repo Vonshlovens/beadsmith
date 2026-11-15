@@ -342,7 +342,12 @@ const CREW_TOOL_VERBS: Record<string, readonly [running: string, done: string]> 
 	meta_read: ['Reading a note', 'Read a note'],
 	meta_write: ['Writing a note', 'Wrote a note'],
 	meta_move: ['Moving a note', 'Moved a note'],
-	meta_delete: ['Deleting a note', 'Deleted a note']
+	meta_delete: ['Deleting a note', 'Deleted a note'],
+	define_view: ['Saving a view', 'Saved a view'],
+	list_views: ['Listing views', 'Listed views'],
+	run_view: ['Running a view', 'Ran a view'],
+	view_history: ['Reading a view’s history', 'Read a view’s history'],
+	revert_view: ['Reverting a view', 'Reverted a view']
 };
 
 /** Crew tools whose call can start a mission this chat owns. */
