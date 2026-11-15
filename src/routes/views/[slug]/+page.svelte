@@ -11,6 +11,7 @@
 	import ArrowCounterClockwiseIcon from 'phosphor-svelte/lib/ArrowCounterClockwiseIcon';
 	import EyeIcon from 'phosphor-svelte/lib/EyeIcon';
 	import EyeSlashIcon from 'phosphor-svelte/lib/EyeSlashIcon';
+	import FunnelSimpleIcon from 'phosphor-svelte/lib/FunnelSimpleIcon';
 	import RobotIcon from 'phosphor-svelte/lib/RobotIcon';
 	import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
 	import ConfirmDialog from '#lib/components/confirm-dialog.svelte';
@@ -27,7 +28,12 @@
 	import { currentViewer, projectList, statusSnapshot } from '#lib/client/projects.svelte.js';
 	import { app_state } from '#lib/client/stores.svelte.js';
 	import { tip } from '#lib/client/tooltip.js';
-	import { describeViewSpec, groupViewIssues, viewBoardProjects } from '#lib/client/views.js';
+	import {
+		describeViewSpec,
+		groupViewIssues,
+		projectPageHref,
+		viewBoardProjects
+	} from '#lib/client/views.js';
 	import { PRODUCT_NAME } from '#lib/product.js';
 	import type { ReadyIssue } from '#lib/types.js';
 	import type { PageProps } from './$types';
@@ -53,6 +59,8 @@
 	const agent_visible = $derived(agentAvailability(statusSnapshot()).visible);
 	const latest = $derived(data.revisions[0]?.number);
 	const can_unpublish = $derived(is_admin && view?.published === true);
+	/** The project page with this view's filters, when that page can show them. */
+	const project_href = $derived(view === null ? null : projectPageHref(view.slug, view.spec));
 	const meta = $derived(
 		result === null
 			? undefined
@@ -183,6 +191,19 @@
 		>
 			{#snippet actions()}
 				<ViewStateBadge {view} />
+				{#if project_href !== null}
+					<a
+						class="btn btn-sm btn-ghost"
+						href={project_href}
+						{@attach tip(
+							view.mine && is_admin
+								? 'Open on the project page, change the filters there and save them as a new revision'
+								: 'Open on the project page with these filters'
+						)}
+					>
+						<FunnelSimpleIcon size={13} aria-hidden="true" />Open in project
+					</a>
+				{/if}
 				{#if view.mine && (!view.published || view.unpublished_changes)}
 					<button
 						class="btn btn-sm btn-primary"

@@ -24,6 +24,12 @@ import type { z } from 'zod';
 import type { AccountRole } from '../auth/roles.js';
 import { GrownError } from './errors.js';
 import { view_spec_schema, VIEW_SPEC_MAX_BYTES } from './view-spec.js';
+import {
+	GROWN_DESCRIPTION_MAX,
+	GROWN_NAME_MAX,
+	GROWN_SLUG_MAX,
+	GROWN_SLUG_PATTERN
+} from '#lib/grown.js';
 
 interface KindDefinition {
 	schema: z.ZodType;
@@ -43,10 +49,7 @@ export const GROWN_KINDS = {
 
 export type GrownKind = keyof typeof GROWN_KINDS;
 
-export const GROWN_NAME_MAX = 80;
-export const GROWN_SLUG_MAX = 64;
-export const GROWN_SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-export const GROWN_DESCRIPTION_MAX = 500;
+export { GROWN_DESCRIPTION_MAX, GROWN_NAME_MAX, GROWN_SLUG_MAX, GROWN_SLUG_PATTERN };
 export const GROWN_REVISIONS_KEPT = 50;
 
 export type GrownAuthorKind = 'person' | 'first_mate';

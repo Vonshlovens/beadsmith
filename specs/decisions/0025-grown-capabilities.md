@@ -286,6 +286,18 @@ Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
   per project for an all-projects view, since a board's columns are one
   project's statuses. The owner sees the history there with revert and
   per-revision publish.
+- Saving from the project page: `/p/[id]` offers "Save view" when it has
+  filters, and writes the same record through `/api/views` that
+  `define_view` writes, so people and First Mate share one kind of view.
+  Its filters and presentation map onto a spec (parade is the
+  status-grouped list); table sorting is not in the URL and is not captured.
+  `/views/[slug]` links back to the page with `?saved=<slug>` when the page
+  can show the view exactly (one project, no label, assignee or row limit,
+  no grouping but the parade's), and there the owner can save changed
+  filters as a new revision. The mapping lives in
+  [`src/lib/client/views.ts`](../../src/lib/client/views.ts); the name,
+  slug and description limits are shared with the store from
+  [`src/lib/grown.ts`](../../src/lib/grown.ts).
 
 - Crew tools: [`src/lib/server/crew/view-tools.ts`](../../src/lib/server/crew/view-tools.ts)
   (`define_view`, `list_views`, `run_view`, `view_history`, `revert_view`)

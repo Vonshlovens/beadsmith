@@ -23,6 +23,8 @@
 	import MagnifyingGlassIcon from 'phosphor-svelte/lib/MagnifyingGlassIcon';
 	import ShapesIcon from 'phosphor-svelte/lib/ShapesIcon';
 	import CellSignalHighIcon from 'phosphor-svelte/lib/CellSignalHighIcon';
+	import BookmarkSimpleIcon from 'phosphor-svelte/lib/BookmarkSimpleIcon';
+	import { toast } from 'svelte-sonner';
 	import XIcon from 'phosphor-svelte/lib/XIcon';
 	import EmptyState from '#lib/components/empty-state.svelte';
 	import FileIssueDialog from '#lib/components/file-issue-dialog.svelte';
@@ -30,6 +32,7 @@
 	import IssuesDataTable from '#lib/components/issues-data-table/issues-data-table.svelte';
 	import IssuesParade from '#lib/components/issues-parade.svelte';
 	import PriorityChip from '#lib/components/priority-chip.svelte';
+	import SaveViewDialog from '#lib/components/save-view-dialog.svelte';
 	import SkeletonRows from '#lib/components/skeleton-rows.svelte';
 	import {
 		clampWidth,
@@ -73,7 +76,15 @@
 		type IssueView
 	} from '#lib/client/issue-view.js';
 	import { useHotkeys } from '#lib/client/hotkeys.svelte.js';
-	import { currentProject, statusSnapshot } from '#lib/client/projects.svelte.js';
+	import { currentProject, currentViewer, statusSnapshot } from '#lib/client/projects.svelte.js';
+	import { api, errorMessage } from '#lib/client/api.js';
+	import {
+		projectPageForView,
+		SAVED_VIEW_PARAM,
+		sameViewSpec,
+		viewSpecFromProjectPage
+	} from '#lib/client/views.js';
+	import type { ViewSummary } from '#lib/views.js';
 	import { app_state } from '#lib/client/stores.svelte.js';
 	import { run_place } from '#lib/client/agent-runner.svelte.js';
 	import { loopAvailability } from '#lib/client/loop.js';
@@ -623,6 +634,81 @@
 		return applyFilters({ [key]: [...set].join(',') });
 	}
 
+	/*
+	 * Saved views (ADR-0025 rule 1). `?saved=<slug>` says which view this
+	 * page has open (the view page's "Open in project" sets it). The page
+	 * offers to save its filters as a new view, and, when its owner has
+	 * changed the filters of an open view, to save them as a new revision.
+	 * Creating and revising are admin-only, as `/api/views` enforces.
+	 */
+	const is_admin = $derived(currentViewer()?.role === 'admin');
+	const saved_slug = $derived(page.url.searchParams.get(SAVED_VIEW_PARAM));
+	let saved_view = $state<ViewSummary | null>(null);
+	let save_open = $state(false);
+	let updating_view = $state(false);
+
+	$effect(() => {
+		const slug = saved_slug;
+		if (!browser || slug === null) {
+			saved_view = null;
+			return;
+		}
+		let stale = false;
+		api.view(slug).then(
+			({ view: found }) => {
+				if (!stale) saved_view = found;
+			},
+			() => {
+				// Gone or hidden: the page simply stops naming it.
+				if (!stale) saved_view = null;
+			}
+		);
+		return () => {
+			stale = true;
+		};
+	});
+
+	/** The open view, when it is this project's and this page can show it. */
+	const open_view = $derived(
+		saved_view !== null && projectPageForView(saved_view.spec)?.project_id === data.project_id
+			? saved_view
+			: null
+	);
+	const page_spec = $derived(
+		viewSpecFromProjectPage(data.project_id, data.filters, view, open_view?.spec)
+	);
+	const can_update_view = $derived(
+		is_admin && open_view !== null && open_view.mine && !sameViewSpec(page_spec, open_view.spec)
+	);
+	/** Save is offered in context: when there are filters to keep, or a view is open. */
+	const save_visible = $derived(
+		is_admin && (active_filter_count > 0 || data.filters.include_closed || open_view !== null)
+	);
+
+	/** Track a view just saved, so the page names it and offers its updates. */
+	function openSaved(saved: ViewSummary) {
+		saved_view = saved;
+		void applyFilters({ [SAVED_VIEW_PARAM]: saved.slug });
+	}
+
+	async function updateOpenView() {
+		if (open_view === null || updating_view) return;
+		updating_view = true;
+		try {
+			const { view: after } = await api.reviseView(open_view.slug, { spec: page_spec });
+			saved_view = after;
+			toast.success(`Updated ${after.name}`, {
+				description: after.published
+					? `r${after.revision}. Members still see the published revision until you publish this one.`
+					: `r${after.revision}.`
+			});
+		} catch (error) {
+			toast.error('Could not update the view', { description: errorMessage(error) });
+		} finally {
+			updating_view = false;
+		}
+	}
+
 	/** Clear every filter but keep the project. */
 	function clearFilters() {
 		return applyFilters({ status: '', type: '', priority: '', q: '', include_closed: '' });
@@ -860,7 +946,67 @@
 			</button>
 		{/if}
 
+		{#if open_view !== null}
+			<a
+				class="filt is-on saved-name"
+				href="/views/{open_view.slug}"
+				aria-label="Open saved view {open_view.name}{can_update_view
+					? ', filters changed here'
+					: ''}"
+				{@attach tip(
+					can_update_view
+						? `${open_view.name}: these filters differ from it`
+						: `Saved view ${open_view.name}`
+				)}
+			>
+				<BookmarkSimpleIcon size={13} weight="fill" aria-hidden="true" />
+				<span class="v">{open_view.name}</span>
+				{#if can_update_view}<span class="edited" aria-hidden="true">·</span>{/if}
+			</a>
+		{/if}
+
 		<span class="spacer"></span>
+		{#if save_visible}
+			{#if can_update_view && open_view !== null}
+				<DropdownMenu.Root>
+					<DropdownMenu.Trigger>
+						{#snippet child({ props })}
+							<button
+								{...props}
+								class="btn btn-sm"
+								type="button"
+								disabled={updating_view}
+								{@attach tip(`Save these filters to ${open_view.name}, or as a new view`)}
+							>
+								<BookmarkSimpleIcon size={14} aria-hidden="true" /><span class="file-tx"
+									>{updating_view ? 'Saving…' : 'Update view'}</span
+								>
+								<CaretDownIcon size={11} weight="bold" aria-hidden="true" />
+							</button>
+						{/snippet}
+					</DropdownMenu.Trigger>
+					<DropdownMenu.Content class="ui-menu" align="end" sideOffset={6}>
+						<DropdownMenu.Item class="ui-menu-item" onSelect={() => void updateOpenView()}>
+							Update {open_view.name}
+							<span class="hint">new revision</span>
+						</DropdownMenu.Item>
+						<DropdownMenu.Item class="ui-menu-item" onSelect={() => (save_open = true)}>
+							Save as a new view…
+						</DropdownMenu.Item>
+					</DropdownMenu.Content>
+				</DropdownMenu.Root>
+			{:else if open_view === null || !open_view.mine}
+				<button
+					class="btn btn-sm"
+					type="button"
+					onclick={() => (save_open = true)}
+					aria-label="Save view"
+					{@attach tip('Save these filters as a view')}
+				>
+					<BookmarkSimpleIcon size={14} aria-hidden="true" /><span class="file-tx">Save view</span>
+				</button>
+			{/if}
+		{/if}
 		{#if view === 'list' && sort.column !== null}
 			<button
 				class="filt-clear"
@@ -977,6 +1123,15 @@
 		/>
 	{/if}
 </div>
+
+{#if is_admin}
+	<SaveViewDialog
+		bind:open={save_open}
+		spec={page_spec}
+		project_name={project?.name ?? data.project_id}
+		onsaved={openSaved}
+	/>
+{/if}
 
 {#if file_enabled}
 	<FileIssueDialog
@@ -1120,6 +1275,21 @@
 	}
 	.filt-clear:hover {
 		color: var(--em-400);
+	}
+	.saved-name {
+		max-width: 220px;
+		text-decoration: none;
+	}
+	.saved-name .v {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		display: block;
+	}
+	/* The open view's filters were changed here and not saved yet. */
+	.edited {
+		color: var(--em-300);
+		font-weight: 700;
 	}
 
 	/* The menu's "this is checked but the window is too narrow" aside. */
