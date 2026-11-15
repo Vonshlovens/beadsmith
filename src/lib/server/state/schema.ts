@@ -73,6 +73,8 @@ export const dispatchRequests = sqliteTable('dispatch_requests', {
 	gitPrUrl: text('git_pr_url'),
 	/** First Mate chat that launched it through a crew tool; null otherwise. */
 	chatId: text('chat_id'),
+	/** Catalog surface whose button launched it (ADR-0025 rule 6); null otherwise. */
+	grownSlug: text('grown_slug'),
 	/** Why a loop's current run ended; null while it runs or when ralph recorded none. */
 	loopStopReason: text('loop_stop_reason'),
 	/** 1/0 once a loop's current run has ended; null otherwise. */

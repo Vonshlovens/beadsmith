@@ -99,10 +99,17 @@ async function underLimit<T extends { created: boolean }>(
 	const limiter = deps.launch_limiter ?? getLaunchLimiter();
 	const taken = limiter.acquire(ctx.chat_id);
 	if (!taken.ok) {
+		// A surface button's caller is a person on the page, not a chat.
+		const who =
+			ctx.grown_slug === undefined ? 'this chat may start' : 'this surface may start for you';
+		const fallback =
+			ctx.grown_slug === undefined
+				? ', or ask the owner to start it from Beadsmith'
+				: ', or start it from the issue page';
 		throw new CrewToolError(
-			`Launch limit reached: this chat may start ${limiter.count} missions per ` +
+			`Launch limit reached: ${who} ${limiter.count} missions per ` +
 				`${minutes(limiter.window_ms)} minutes. Try again in about ` +
-				`${minutes(taken.retry_after_ms)} minutes, or ask the owner to start it from Beadsmith.`
+				`${minutes(taken.retry_after_ms)} minutes${fallback}.`
 		);
 	}
 	try {
@@ -148,13 +155,20 @@ async function requireIssue(
 	return detail.issue;
 }
 
-/** Launch one mission as the owner, keyed on this call and stamped with the chat. */
+/**
+ * Launch one mission as the caller, keyed on this call and stamped with where
+ * it came from: the chat, or for a surface button the surface (ADR-0025
+ * rule 6), which has no chat to tell the outcome to.
+ */
 async function launch(
 	ctx: CrewContext,
 	deps: CrewDeps,
 	call: CrewCall,
 	tool: string,
-	input: Omit<EnqueueDispatchInput, 'idempotency_key' | 'actor' | 'chat_id' | 'provider'>
+	input: Omit<
+		EnqueueDispatchInput,
+		'idempotency_key' | 'actor' | 'chat_id' | 'grown_slug' | 'provider'
+	>
 ) {
 	const result = await underLimit(ctx, deps, () =>
 		enqueueDispatch(
@@ -162,7 +176,9 @@ async function launch(
 				...input,
 				idempotency_key: launchKey(ctx, tool, call),
 				actor: ctx.actor,
-				chat_id: ctx.chat_id
+				...(ctx.grown_slug === undefined
+					? { chat_id: ctx.chat_id }
+					: { grown_slug: ctx.grown_slug })
 			},
 			deps.dispatch
 		)

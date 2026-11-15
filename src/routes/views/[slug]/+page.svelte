@@ -299,6 +299,9 @@
 					spec={surface.spec}
 					bindings={data.surface_data?.bindings ?? null}
 					name={surface.name}
+					slug={surface.slug}
+					revision={surface.revision}
+					can_act={is_admin}
 				/>
 			</div>
 		{:else if view !== null && result !== null}

@@ -117,6 +117,11 @@ export interface DispatchRecord {
 	 * outcome is told once, across restarts.
 	 */
 	chat_notice?: string;
+	/**
+	 * Catalog surface (its slug) whose button launched it (ADR-0025 rule 6).
+	 * Kept after the surface is deleted, as the record of where it came from.
+	 */
+	grown_slug?: string;
 	/** A loop's current run has ended and why; absent while it runs (ADR-0019 rule 4). */
 	loop_end?: LoopEnd;
 	/** An operator asked the current loop run to stop after its iteration. */

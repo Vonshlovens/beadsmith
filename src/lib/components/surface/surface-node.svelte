@@ -8,7 +8,7 @@
 	 * sanitizing renderer.
 	 */
 	import MarkdownBody from '#lib/components/markdown-body.svelte';
-	import type { SurfaceNode } from '#lib/client/surfaces.js';
+	import type { SurfaceHost, SurfaceNode } from '#lib/client/surfaces.js';
 	import type { SurfaceBindingResult } from '#lib/surfaces.js';
 	import SurfaceButton from './surface-button.svelte';
 	import SurfaceChart from './surface-chart.svelte';
@@ -21,11 +21,12 @@
 		id: string;
 		nodes: Map<string, SurfaceNode>;
 		bindings: Record<string, SurfaceBindingResult> | null;
+		host: SurfaceHost;
 		/** The surface's name, for the accessible names of its lists. */
 		surface_name: string;
 	}
 
-	let { id, nodes, bindings, surface_name }: Props = $props();
+	let { id, nodes, bindings, host, surface_name }: Props = $props();
 
 	const node = $derived(nodes.get(id));
 	const result = (name: string) => bindings?.[name];
@@ -41,7 +42,7 @@
 		class:sf-nowrap={node.component === 'Row' && !node.wrap}
 	>
 		{#each node.children as child (child)}
-			<Self id={child} {nodes} {bindings} {surface_name} />
+			<Self id={child} {nodes} {bindings} {host} {surface_name} />
 		{/each}
 	</div>
 {:else if node.component === 'Heading'}
@@ -64,7 +65,14 @@
 {:else if node.component === 'Chart'}
 	<SurfaceChart by={node.by} title={node.title} result={result(node.data)} />
 {:else if node.component === 'Button'}
-	<SurfaceButton label={node.label} tone={node.tone} />
+	<SurfaceButton
+		label={node.label}
+		tone={node.tone}
+		name={node.action}
+		action={host.actions[node.action]}
+		{host}
+		{surface_name}
+	/>
 {/if}
 
 <style>

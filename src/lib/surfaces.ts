@@ -50,3 +50,14 @@ export interface SurfaceDataResponse {
 	revision: number;
 	bindings: Record<string, SurfaceBindingResult>;
 }
+
+/**
+ * `POST /api/surfaces/:slug/actions/:name`: a button's action run as the
+ * viewer after the host confirmation. `result` is the action crew tool's
+ * result (the todo, or the mission it launched or replayed).
+ */
+export interface SurfaceActionResponse {
+	slug: string;
+	action: string;
+	result: unknown;
+}

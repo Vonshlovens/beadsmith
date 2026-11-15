@@ -17,6 +17,7 @@ import { GET as HISTORY } from './[slug]/history/+server.js';
 import { DELETE as UNPUBLISH, PUT as PUBLISH } from './[slug]/publish/+server.js';
 import { POST as REVERT } from './[slug]/revert/+server.js';
 import { GET as DATA } from './[slug]/data/+server.js';
+import { POST as ACTION } from './[slug]/actions/[name]/+server.js';
 import { GET as VIEW_GET, PATCH as VIEW_PATCH } from '../views/[slug]/+server.js';
 import { GET as VIEW_LIST, POST as VIEW_CREATE } from '../views/+server.js';
 
@@ -46,13 +47,16 @@ function call(
 	handler: Handler,
 	method: string,
 	path: string,
-	options: { body?: unknown; slug?: string; user?: User | null } = {}
+	options: { body?: unknown; slug?: string; name?: string; user?: User | null } = {}
 ): Promise<Response> {
 	const url = new URL(`http://localhost${path}`);
 	const user = options.user === undefined ? OWNER : options.user;
 	const event = {
 		url,
-		params: options.slug === undefined ? {} : { slug: options.slug },
+		params: {
+			...(options.slug === undefined ? {} : { slug: options.slug }),
+			...(options.name === undefined ? {} : { name: options.name })
+		},
 		locals: user === null ? { role: 'member' } : { user, role: user.role },
 		request: new Request(url, {
 			method,
@@ -111,7 +115,8 @@ describe('/api/surfaces roles', () => {
 			['DELETE', '/api/surfaces/x'],
 			['POST', '/api/surfaces/x/revert'],
 			['PUT', '/api/surfaces/x/publish'],
-			['DELETE', '/api/surfaces/x/publish']
+			['DELETE', '/api/surfaces/x/publish'],
+			['POST', '/api/surfaces/x/actions/go']
 		] as const) {
 			const permission = requiredPermission(method, path);
 			expect(permission, `${method} ${path}`).toEqual({ console: ['manage'] });
@@ -405,5 +410,72 @@ describe('/api/surfaces/:slug/data', () => {
 		expect(Number(refused.headers.get('retry-after'))).toBeGreaterThan(0);
 		// Another viewer's budget is their own (this one cannot see it: 404, not 429).
 		expect((await data(ADMIN2, '', 'rate-board')).status).toBe(404);
+	});
+});
+
+describe('/api/surfaces/:slug/actions/:name', () => {
+	/** A published dashboard with one button that adds a todo. */
+	const TODO_BUTTON = {
+		slug: 'todo-button',
+		name: 'Todo button',
+		spec: {
+			root: 'main',
+			components: [
+				{ id: 'main', component: 'Stack', children: ['go'] },
+				{ id: 'go', component: 'Button', label: 'Remember', action: 'add' }
+			],
+			actions: { add: { tool: 'create_todo', input: { title: 'Follow up' } } }
+		}
+	};
+	const KEY = '9b2f8c1e-7a4d-4e1b-9c3a-2f6d8e0b1a5c';
+
+	function press(user: User | null, body: unknown = { revision: 1, key: KEY }, name = 'add') {
+		return call(ACTION, 'POST', `/api/surfaces/todo-button/actions/${name}`, {
+			slug: 'todo-button',
+			name,
+			body,
+			user
+		});
+	}
+
+	async function publish() {
+		const response = await call(PUBLISH, 'PUT', '/api/surfaces/todo-button/publish', {
+			slug: 'todo-button',
+			body: {}
+		});
+		expect(response.status).toBe(200);
+	}
+
+	it('runs the action as the owner after the confirmation', async () => {
+		expect((await create(TODO_BUTTON)).status).toBe(201);
+		const response = await press(OWNER);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			slug: 'todo-button',
+			action: 'add',
+			result: { todo: { title: 'Follow up' } }
+		});
+	});
+
+	it('refuses a member past the gate, and a caller with no account', async () => {
+		await create(TODO_BUTTON);
+		await publish();
+		expect((await press(MEMBER)).status).toBe(403);
+		expect((await press(null)).status).toBe(403);
+	});
+
+	it('hides an unpublished surface from another admin', async () => {
+		await create(TODO_BUTTON);
+		expect((await press(ADMIN2)).status).toBe(404);
+		await publish();
+		expect((await press(ADMIN2)).status).toBe(200);
+	});
+
+	it('refuses a stale revision, an unknown action and a malformed body', async () => {
+		await create(TODO_BUTTON);
+		expect((await press(OWNER, { revision: 2, key: KEY })).status).toBe(409);
+		expect((await press(OWNER, undefined, 'nope')).status).toBe(404);
+		expect((await press(OWNER, { revision: 1 })).status).toBe(400);
+		expect((await press(OWNER, { revision: 1, key: KEY, input: { title: 'x' } })).status).toBe(400);
 	});
 });

@@ -39,6 +39,13 @@ export interface CrewContext {
 	 * the owner may read, because the browser does not narrow it either.
 	 */
 	scope: string | null;
+	/**
+	 * The grown thing (its slug) a bridge call came from, when a surface's
+	 * button rather than a chat is calling (ADR-0025 rule 6). Such a call has
+	 * no chat, so a launch records this instead of `chat_id`, and no chat
+	 * notice is owed.
+	 */
+	grown_slug?: string;
 }
 
 /** Server modules the tools call; tests inject fakes, production the defaults. */

@@ -209,8 +209,9 @@ document that is itself sandboxed.
 Shipped versus target: the store, the view spec, the views catalogue, the
 view crew tools and proposed automations are implemented; surfaces are
 stored, served by `/api/surfaces`, written by First Mate's surface crew
-tools, their bindings resolved as the viewer and rendered at `/views/<slug>`,
-but their buttons do not run actions yet, and apps are not yet
+tools, their bindings resolved as the viewer, rendered at `/views/<slug>`,
+and their buttons run allowlisted actions as the viewer behind the host
+confirmation; apps are not yet
 (see Implementation notes).
 
 ## Alternatives considered
@@ -402,11 +403,30 @@ Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
   The header, publish, unpublish, delete and the owner's history
   ([`grown-history.svelte`](../../src/lib/components/grown-history.svelte))
   are shared with views, and `/views` lists both kinds, newest change
-  first. Buttons render with a visible note that they do not run yet;
-  wiring them to the bridge actions behind the host confirmation is the
-  next step.
+  first.
+- Surface actions: [`actions.ts`](../../src/lib/server/grown/actions.ts) and
+  `POST /api/surfaces/:slug/actions/:name` (rule 6). A button opens the
+  host's `confirm-dialog`, drawn by
+  [`surface-button.svelte`](../../src/lib/components/surface/surface-button.svelte)
+  from the stored action (`describeSurfaceAction` in
+  [`src/lib/client/surfaces.ts`](../../src/lib/client/surfaces.ts)), never
+  from the button's label, so a button labelled "Refresh" that files an
+  issue says it files one; model-written text in the action is quoted and
+  clipped. Only a confirmed press calls the route, naming the revision on
+  screen (a surface revised since is a conflict, so what was confirmed is
+  what runs) and a fresh key per confirmation, which with the surface, the
+  revision and the action names the crew call, so a retried request replays
+  through dispatch's idempotency. The action's crew tool runs with
+  `bridgeContext`, the viewer's account and role after the same `roleCan`
+  check as a binding; that context's `chat_id` is per surface and viewer,
+  keying the crew launch cap, and its `grown_slug` makes `launch` record the
+  surface on the mission (`dispatch_requests.grown_slug`) instead of a chat,
+  so no chat notice is owed. The request gate keeps the route admin-only
+  (the default for writes); a member sees the button disabled with the
+  reason. The surface's slug is recorded but not yet shown on the missions
+  page.
 
 Still expected: the vendored library allowlist pinned in one file, like hc's pin
-([0021](./0021-hc-terminal-runtime.md)); surface actions. Exporting apps as
+([0021](./0021-hc-terminal-runtime.md)). Exporting apps as
 `ui://` resources to outside MCP clients is a later follow-on, not v1. See
 the matching row in [`specs/README.md`](../README.md).

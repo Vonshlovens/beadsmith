@@ -404,6 +404,20 @@ the full count in `data.total`. Each binding resolved is one bridge call:
 60 per minute per viewer and surface, past which the request is refused
 whole with `rate_limited` (429) and `Retry-After`.
 
+`POST /api/surfaces/:slug/actions/:name` runs one of a surface's button
+actions as the signed-in viewer, after the confirmation the page draws from
+the stored action (the operation, project and issue, never the button's
+label). The body is `{ revision, key }`: the revision the person confirmed,
+so a surface revised since is refused with `conflict` (409), and one key per
+confirmation, so a retried request replays the first mission rather than
+starting another. Admin-only at the request gate (the default for writes);
+behind it the action's crew tool checks the viewer's role again, and a
+launch goes through dispatch's arm, per-project allow and repository map. A
+mission launched this way records the surface's slug instead of a chat.
+Each action is one bridge call against the same per-viewer, per-surface
+limit, and launches share the crew launch cap, per viewer and surface. The
+answer is `{ slug, action, result }`, `result` being the crew tool's own.
+
 `GET /api/ready` is the cross-project Ready deck: open issues with no open
 `blocks` dependencies, merged across catalog projects the session can see,
 sorted by priority then recency. Parent-child, related, and discovered-from
@@ -510,7 +524,7 @@ written before its first byte; one that cannot be recorded is refused (503).
    repository keys stay outside it, added by a proxy.
 9. Grown capabilities (views, catalog surfaces and sandboxed apps,
    [ADR-0025](../specs/decisions/0025-grown-capabilities.md); views and
-   surfaces are implemented, surface actions and apps not yet) are stored data, never SQL, and the web process never
+   surfaces are implemented, apps not yet) are stored data, never SQL, and the web process never
    evaluates, imports or templates them. App code runs only in the viewer's
    browser, in a sandboxed iframe with an opaque origin, no network access and
    only vendored, hash-pinned libraries. Every read or action a grown thing

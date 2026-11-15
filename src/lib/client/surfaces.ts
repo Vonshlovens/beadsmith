@@ -176,3 +176,155 @@ export function describeSurfaceSpec(spec: SurfaceSpecShape): string {
 		.map(({ n, words }) => (n === 1 ? words[0] : `${n} ${words[1]}`))
 		.join(' · ');
 }
+
+export type SurfaceActionShape = SurfaceSpecShape['actions'][string];
+
+/** What a surface's buttons need from the page that draws it. */
+export interface SurfaceHost {
+	slug: string;
+	/** The revision on screen; an action names it so what was confirmed is what runs. */
+	revision: number;
+	actions: SurfaceSpecShape['actions'];
+	/** False for a member: every action needs an admin today (ADR-0025 rule 6). */
+	can_act: boolean;
+}
+
+/** What the host confirmation says before a surface button runs (ADR-0025 rule 6). */
+export interface SurfaceActionConfirm {
+	title: string;
+	/** Names the operation, project and issue, and that it runs as the viewer. */
+	description: string;
+	confirm_label: string;
+	destructive: boolean;
+}
+
+/** Model-written text quoted in a confirmation, clipped so it cannot crowd out the facts. */
+function quoted(value: unknown, max = 160): string | undefined {
+	const raw = text(value)?.trim();
+	if (raw === undefined || raw.length === 0) return undefined;
+	const one_line = raw.replace(/\s+/g, ' ');
+	return `“${one_line.length > max ? `${one_line.slice(0, max - 1)}…` : one_line}”`;
+}
+
+const DISCUSS_WORDS: Record<string, [string, string]> = {
+	discuss: ['discuss mission', 'answers or asks about'],
+	elaborate: ['elaborate mission', 'fleshes out the description and acceptance criteria of'],
+	close: ['close mission', 'closes, if it is done,']
+};
+
+/**
+ * The host confirmation for one surface action, built from the stored action
+ * itself, never from anything the surface draws: the button's label is not
+ * in it, so a button labelled "Refresh" that files an issue says it files an
+ * issue. Every text the action carries is quoted and clipped.
+ * @param action The action the button names, from the revision on screen.
+ * @param surface_name The surface's name, said as where the action came from.
+ */
+export function describeSurfaceAction(
+	action: SurfaceActionShape,
+	surface_name: string
+): SurfaceActionConfirm {
+	const input = action.input as Record<string, unknown>;
+	const project = text(input.project) ?? 'its project';
+	const issue = text(input.issue_id) ?? 'the issue';
+	const as_you = `It runs as you, from the surface “${surface_name}”.`;
+	const todo = text(input.todo_id) ?? 'the todo';
+	switch (action.tool) {
+		case 'create_todo':
+			return {
+				title: 'Add a todo?',
+				description: `Adds ${quoted(input.title) ?? 'a todo'} to your todo list. ${as_you}`,
+				confirm_label: 'Add todo',
+				destructive: false
+			};
+		case 'update_todo': {
+			const fields = Object.keys(input).filter((key) => key !== 'todo_id');
+			const archives = input.status === 'archived';
+			return {
+				title: archives ? 'Archive a todo?' : 'Change a todo?',
+				description: archives
+					? `Archives todo ${todo}, which hides it from your list. ${as_you}`
+					: `Changes ${fields.length > 0 ? fields.join(', ') : 'nothing'} on todo ${todo}. ${as_you}`,
+				confirm_label: archives ? 'Archive todo' : 'Change todo',
+				destructive: archives
+			};
+		}
+		case 'complete_todo':
+			return {
+				title: 'Complete a todo?',
+				description: `Marks todo ${todo} done. ${as_you}`,
+				confirm_label: 'Mark done',
+				destructive: false
+			};
+		case 'file_issue':
+			return {
+				title: 'Start a File mission?',
+				description:
+					`An agent files one new Beads issue in ${project}` +
+					`${quoted(input.title) === undefined ? '' : ` titled ${quoted(input.title)}`}` +
+					` from the notes ${quoted(input.notes) ?? ''}. ${as_you}`,
+				confirm_label: 'Start File mission',
+				destructive: false
+			};
+		case 'comment_issue':
+			return {
+				title: 'Start a comment mission?',
+				description:
+					`An agent comments on ${issue} in ${project}: ` +
+					`${quoted(input.text) ?? ''}. ${as_you}`,
+				confirm_label: 'Start comment mission',
+				destructive: false
+			};
+		case 'tackle_issue':
+			return {
+				title: 'Start a Tackle mission?',
+				description:
+					`A repo worker implements ${issue} in ${project}’s mapped repository and, ` +
+					`if the project is set to, opens a pull request. ${as_you}`,
+				confirm_label: 'Start Tackle mission',
+				destructive: false
+			};
+		case 'discuss_issue': {
+			const intent = text(input.intent) ?? 'discuss';
+			const [name, verb] = DISCUSS_WORDS[intent] ?? DISCUSS_WORDS.discuss;
+			const message = quoted(input.message);
+			return {
+				title: `Start a ${name}?`,
+				description:
+					`An agent ${verb} ${issue} in ${project}` +
+					`${message === undefined ? '' : `, with the message ${message}`}. ${as_you}`,
+				confirm_label: `Start ${name}`,
+				destructive: intent === 'close'
+			};
+		}
+	}
+}
+
+/**
+ * What a finished surface action tells the person: the todo, or the mission
+ * it launched (or replayed). The result is a crew tool's compact result, so
+ * it is read field by field.
+ * @param result The `result` of `POST /api/surfaces/:slug/actions/:name`.
+ */
+export function surfaceActionOutcome(result: unknown): { message: string; mission: boolean } {
+	if (!isRecord(result)) return { message: 'Done.', mission: false };
+	if (isRecord(result.todo)) {
+		const title = quoted(result.todo.title);
+		return {
+			message: title === undefined ? 'Todo saved.' : `Todo ${title} saved.`,
+			mission: false
+		};
+	}
+	const operation = text(result.operation);
+	if (operation === undefined) return { message: 'Done.', mission: false };
+	const project = isRecord(result.project) ? text(result.project.name) : undefined;
+	const issue = text(result.issue_id);
+	const where = [issue, project === undefined ? undefined : `in ${project}`]
+		.filter((part) => part !== undefined)
+		.join(' ');
+	const started = result.launched === false ? 'was already started' : 'started';
+	return {
+		message: `${operation[0].toUpperCase()}${operation.slice(1)} mission ${started}${where === '' ? '' : ` for ${where}`}.`,
+		mission: true
+	};
+}

@@ -62,9 +62,11 @@ export interface BindingDeps {
 type BridgeToolName = BridgeReadName | typeof BRIDGE_VIEW_TOOL;
 
 /**
- * The context a bridge read runs a crew tool under: the viewer's account and
- * role. A grown thing has no chat, so `chat_id` names the surface (it appears
- * only in logs and per-chat limits, and read tools use neither), and `scope`
+ * The context a bridge read or action runs a crew tool under: the viewer's
+ * account and role. A grown thing has no chat, so `chat_id` names the
+ * surface and the viewer (it keys the per-chat launch limit and a launch's
+ * idempotency, so one viewer's clicks never replay or spend another's), and
+ * `grown_slug` makes a launch record the surface instead of a chat. `scope`
  * is null: the bridge allowlist makes every project-defaulting tool name its
  * project at save time.
  * @param viewer The signed-in viewer.
@@ -75,8 +77,9 @@ export function bridgeContext(viewer: BridgeViewer, slug: string): CrewContext {
 		account_id: viewer.account_id,
 		actor: viewer.actor,
 		role: viewer.role,
-		chat_id: `surface:${slug}`,
-		scope: null
+		chat_id: `surface:${slug}:${viewer.account_id}`,
+		scope: null,
+		grown_slug: slug
 	};
 }
 

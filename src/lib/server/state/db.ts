@@ -101,6 +101,8 @@ const DISPATCH_COLUMN_MIGRATIONS = [
 	{ name: 'provider', sql: 'ALTER TABLE dispatch_requests ADD COLUMN provider TEXT' },
 	// The First Mate chat whose crew tool launched the mission (ADR-0020 rule 5).
 	{ name: 'chat_id', sql: 'ALTER TABLE dispatch_requests ADD COLUMN chat_id TEXT' },
+	// The catalog surface whose button launched it (ADR-0025 rule 6).
+	{ name: 'grown_slug', sql: 'ALTER TABLE dispatch_requests ADD COLUMN grown_slug TEXT' },
 	// The outcome that chat was last told (`chatNoticeKey`), so it hears each once.
 	{
 		name: 'chat_notice',

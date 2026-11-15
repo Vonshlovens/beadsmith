@@ -24,6 +24,7 @@ import type {
 	ViewSummary
 } from '#lib/views.js';
 import type {
+	SurfaceActionResponse,
 	SurfaceDataResponse,
 	SurfaceHistoryResponse,
 	SurfaceResponse,
@@ -760,6 +761,24 @@ export const api = {
 	 */
 	surfaceData(slug: string, init?: RequestInitLike) {
 		return request<SurfaceDataResponse>('GET', `/surfaces/${encodeURIComponent(slug)}/data`, init);
+	},
+
+	/**
+	 * Run a button's action as the viewer, after the host confirmation.
+	 * `revision` is the one on screen (a surface revised since is refused);
+	 * `key` is one per confirmation, so a retry replays rather than repeats.
+	 */
+	runSurfaceAction(
+		slug: string,
+		action: string,
+		body: { revision: number; key: string },
+		init?: RequestInitLike
+	) {
+		return request<SurfaceActionResponse>(
+			'POST',
+			`/surfaces/${encodeURIComponent(slug)}/actions/${encodeURIComponent(action)}`,
+			{ ...init, body }
+		);
 	},
 
 	surfaceHistory(slug: string, init?: RequestInitLike) {

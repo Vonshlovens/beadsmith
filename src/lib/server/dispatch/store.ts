@@ -27,6 +27,8 @@ export interface CreateDispatchInput {
 	payload: DispatchPayload;
 	/** First Mate chat launching it through a crew tool. */
 	chat_id?: string;
+	/** Catalog surface whose button launched it (ADR-0025 rule 6). */
+	grown_slug?: string;
 	now?: () => Date;
 }
 
@@ -206,7 +208,7 @@ export function chatNoticeKey(
 const DISPATCH_SELECT = `SELECT
 	id, idempotency_key, project_id, dolt_database, operation, actor, payload_json,
 	status, provider, agent_id, agent_url, run_id, error_message,
-	result_summary, duration_ms, git_pr_url, chat_id, chat_notice,
+	result_summary, duration_ms, git_pr_url, chat_id, chat_notice, grown_slug,
 	loop_stop_reason, loop_needs_person, loop_stop_requested_at, generation,
 	created_at, updated_at
 FROM dispatch_requests`;
@@ -285,6 +287,7 @@ function rowToRecord(row: Record<string, unknown>): DispatchRecord {
 		git_pr_url: asText(row.git_pr_url),
 		chat_id: asText(row.chat_id),
 		chat_notice: asText(row.chat_notice),
+		grown_slug: asText(row.grown_slug),
 		...rowToLoopEnd(row),
 		...(asText(row.loop_stop_requested_at) === undefined ? {} : { loop_stop_requested: true }),
 		generation: asNonNegativeInteger(row.generation) ?? 0,
@@ -335,8 +338,8 @@ export function createDispatchStore(client: Client): DispatchStore {
 				await client.execute({
 					sql: `INSERT INTO dispatch_requests (
 						id, idempotency_key, project_id, dolt_database, operation, actor, payload_json,
-						chat_id, status, created_at, updated_at
-					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
+						chat_id, grown_slug, status, created_at, updated_at
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
 					args: [
 						id,
 						input.idempotency_key,
@@ -346,6 +349,7 @@ export function createDispatchStore(client: Client): DispatchStore {
 						input.actor,
 						JSON.stringify(input.payload),
 						input.chat_id ?? null,
+						input.grown_slug ?? null,
 						now,
 						now
 					]
