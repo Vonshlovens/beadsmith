@@ -1,0 +1,6 @@
+{
+	"name": "@kurkle/color",
+	"version": "0.3.2",
+	"license": "MIT",
+	"description": "Bundled inside chart.umd.min.js (its banner names this version); listed for its licence."
+}

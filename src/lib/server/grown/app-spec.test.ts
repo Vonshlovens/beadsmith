@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
 	APP_LIBRARIES,
@@ -31,6 +32,23 @@ describe('app library allowlist', () => {
 				expect(sha256(text), name).toBe(library.sha256);
 			}
 		}
+	});
+
+	it('keeps each vendored pin in step with its provenance and licence under vendor/', () => {
+		const vendored = APP_LIBRARY_NAMES.filter((name) => APP_LIBRARIES[name].origin === 'vendored');
+		expect(vendored).toContain('chart.js');
+		for (const name of vendored) {
+			const library = APP_LIBRARIES[name] as AppLibrary & { origin: 'vendored' };
+			const dir = new URL(`../../../../vendor/${name}/`, import.meta.url);
+			const manifest = JSON.parse(readFileSync(new URL('package.json', dir), 'utf8')) as {
+				name: string;
+				version: string;
+			};
+			expect(manifest, name).toMatchObject({ name, version: library.version });
+			// pnpm run notices reproduces this file in THIRD_PARTY_NOTICES.md.
+			expect(existsSync(new URL('LICENSE.md', dir)), name).toBe(true);
+		}
+		expect(appLibraryText('chart.js')).toContain('Chart.js v4.5.1');
 	});
 
 	it('refuses to serve a vendored file whose bytes do not match its SHA-256', () => {
@@ -117,6 +135,20 @@ describe('app document', () => {
 				'</head>',
 				html
 			].join('\n')
+		);
+	});
+
+	it('inlines a vendored script only into an app that names it', () => {
+		const html = '<canvas id="c"></canvas>';
+		const charted = appDocument({ html, libraries: ['beadsmith-tokens', 'chart.js'] }, 'light');
+		expect(charted).toContain(
+			`<script data-library="chart.js">${appLibraryText('chart.js')}</script>`
+		);
+		expect(charted.indexOf('data-library="beadsmith-tokens"')).toBeLessThan(
+			charted.indexOf('data-library="chart.js"')
+		);
+		expect(appDocument({ html, libraries: ['beadsmith-tokens'] }, 'light')).not.toContain(
+			'chart.js'
 		);
 	});
 

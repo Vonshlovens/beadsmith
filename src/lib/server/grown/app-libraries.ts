@@ -20,6 +20,7 @@
  */
 import { createHash } from 'node:crypto';
 import app_css from '../../../app.css?raw';
+import chart_js from '../../../../vendor/chart.js/chart.umd.min.js?raw';
 
 export type AppLibraryType = 'css' | 'js';
 
@@ -71,6 +72,25 @@ export const APP_LIBRARIES = {
 		summary:
 			"Beadsmith's colour, type and spacing tokens as CSS variables (--bg, --s1..--s5, --tx, --tx-hi, --tx-mid, --line, --em-500, --danger, --mint, --amber, --t-sm..--t-2xl, --s-1..--s-8, --r-1..--r-3), light and dark, and a body on the app's paper and ink.",
 		source: () => designTokenCss(app_css)
+	},
+	/*
+	 * Chart.js's UMD build, byte for byte from the npm tarball (provenance in
+	 * `vendor/chart.js/package.json`). Chosen because it draws line, bar,
+	 * pie, doughnut and scatter charts from one file with no dependencies to
+	 * load, makes no network requests, draws on a canvas (nothing the frame's
+	 * CSP blocks), and is the chart API models write most fluently. Its
+	 * trailing `sourceMappingURL` comment is left in place so the bytes stay
+	 * upstream's: only devtools reads it, and the frame's CSP refuses the
+	 * fetch.
+	 */
+	'chart.js': {
+		origin: 'vendored',
+		type: 'js',
+		summary:
+			'Chart.js 4.5.1 as the global `Chart` (line, bar, pie, doughnut, radar, scatter on a <canvas>). Read colours from the token variables with getComputedStyle so charts follow the theme.',
+		version: '4.5.1',
+		sha256: '48444a82d4edcb5bec0f1965faacdde18d9c17db3063d042abada2f705c9f54a',
+		source: () => chart_js
 	}
 } satisfies Record<string, AppLibrary>;
 

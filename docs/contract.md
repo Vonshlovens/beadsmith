@@ -424,7 +424,9 @@ Sandboxed apps (the same ADR, rule 3) have the same routes under
 `POST /api/apps/:slug/revert` and `PUT`/`DELETE /api/apps/:slug/publish`. An
 app's spec is `{ html, libraries }`: `html` is a model-written document of at
 most 256 KB, stored and served as opaque text, and `libraries` names entries
-of the host's reviewed allowlist (default `["beadsmith-tokens"]`); any other
+of the host's reviewed allowlist (`beadsmith-tokens`, the design-token
+CSS, and `chart.js`, a vendored, hash-pinned Chart.js; default
+`["beadsmith-tokens"]`); any other
 key or library is refused. First Mate's app crew tools (`define_app`,
 `list_apps`, `app_history`, `revert_app`) use the same store and parse as the
 chat's owner, need the same admin permission, attribute each revision to

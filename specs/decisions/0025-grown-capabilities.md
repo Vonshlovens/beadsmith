@@ -214,8 +214,8 @@ and their buttons run allowlisted actions as the viewer behind the host
 confirmation; apps are stored, served from their sandboxed frame route,
 framed at `/views/<slug>`, read through the bridge as the viewer, run
 allowlisted actions as the viewer behind the host confirmation, and are
-written by First Mate's app crew tools; the first vendored chart library is
-not yet in the allowlist (see Implementation notes).
+written by First Mate's app crew tools, and the allowlist holds the design
+tokens and the first vendored chart library (see Implementation notes).
 
 ## Alternatives considered
 
@@ -525,6 +525,20 @@ Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
   the request gate keeps it admin-only. `define_app`'s description teaches
   the action names and the confirmation.
 
-Still expected for apps: the first vendored chart library. Exporting apps as
-`ui://` resources to outside MCP clients is a later follow-on, not v1. See
+- The first vendored chart library is Chart.js 4.5.1 (MIT), as `chart.js`
+  in the allowlist: its UMD build, byte for byte from the npm tarball, in
+  [`vendor/chart.js/`](../../vendor/chart.js/) with its licence and a
+  provenance manifest (tarball URL and integrity), pinned by SHA-256 in
+  `app-libraries.ts`. Chosen over smaller libraries (uPlot, Frappe Charts)
+  because one dependency-free file draws every common chart type on a
+  canvas, makes no network requests, and is the chart API models write most
+  fluently. The `@kurkle/color` it bundles is credited from a manifest under
+  `vendor/chart.js/bundled/`. `pnpm run notices` reads every manifest under
+  `vendor/` and reproduces each licence in full in `THIRD_PARTY_NOTICES.md`,
+  since no package directory carries them into the image. A test keeps the
+  pin's version in step with the manifest. An app that does not name it gets
+  none of its 208 KB.
+
+Still expected for apps: exporting apps as `ui://` resources to outside MCP
+clients is a later follow-on, not v1. See
 the matching row in [`specs/README.md`](../README.md).
