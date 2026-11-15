@@ -17,6 +17,7 @@ import { createTodoStore, TODO_SCHEMA_SQL, type TodoStore } from '../todos/store
 import { createMateStore, MATE_SCHEMA_SQL, type MateStore } from '../mate/store.js';
 import { createMemoryStore, MEMORY_SCHEMA_SQL, type MemoryStore } from '../mate/memory-store.js';
 import { createMetaStore, META_SCHEMA_SQL, type MetaStore } from '../mate/meta-store.js';
+import { createGrownStore, GROWN_SCHEMA_SQL, type GrownStore } from '../grown/store.js';
 import {
 	createTerminalRelayAuditStore,
 	TERMINAL_RELAY_SCHEMA_SQL,
@@ -87,6 +88,7 @@ export const STATE_SCHEMA_SQL: string[] = [
 	...MATE_SCHEMA_SQL,
 	...MEMORY_SCHEMA_SQL,
 	...META_SCHEMA_SQL,
+	...GROWN_SCHEMA_SQL,
 	...AUTH_SCHEMA_SQL,
 	...TERMINAL_RELAY_SCHEMA_SQL,
 	...AUTOMATION_SCHEMA_SQL
@@ -220,6 +222,7 @@ let todo_promise: Promise<TodoStore> | undefined;
 let mate_promise: Promise<MateStore> | undefined;
 let memory_promise: Promise<MemoryStore> | undefined;
 let meta_promise: Promise<MetaStore> | undefined;
+let grown_promise: Promise<GrownStore> | undefined;
 let relay_audit_promise: Promise<TerminalRelayAuditStore> | undefined;
 let automation_promise: Promise<AutomationStore> | undefined;
 let state_ok = false;
@@ -246,6 +249,7 @@ async function openStateClient(): Promise<Client> {
 			mate_promise = undefined;
 			memory_promise = undefined;
 			meta_promise = undefined;
+			grown_promise = undefined;
 			relay_audit_promise = undefined;
 			automation_promise = undefined;
 			throw error;
@@ -339,6 +343,14 @@ export async function getMetaStore(): Promise<MetaStore> {
 	return meta_promise;
 }
 
+/** Open (once) the grown things store on the same database (ADR-0025). */
+export async function getGrownStore(): Promise<GrownStore> {
+	if (grown_promise === undefined) {
+		grown_promise = openStateClient().then((client) => createGrownStore(client));
+	}
+	return grown_promise;
+}
+
 /** Open (once) the terminal relay's audit store on the same database (ADR-0021). */
 export async function getTerminalRelayAuditStore(): Promise<TerminalRelayAuditStore> {
 	if (relay_audit_promise === undefined) {
@@ -374,6 +386,7 @@ export function setStateStore(store: StateStore | undefined): void {
 		mate_promise = undefined;
 		memory_promise = undefined;
 		meta_promise = undefined;
+		grown_promise = undefined;
 		relay_audit_promise = undefined;
 		automation_promise = undefined;
 		state_ok = false;

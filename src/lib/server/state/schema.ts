@@ -459,3 +459,46 @@ export const mateMetaFiles = sqliteTable(
 	},
 	(table) => [primaryKey({ columns: [table.ownerId, table.path] })]
 );
+
+/**
+ * Grown things (ADR-0025 rule 8): views now, surfaces and apps later, one
+ * row per thing with its owner and published revision. Keep in step with
+ * `GROWN_SCHEMA_SQL` in `grown/store.ts`.
+ */
+export const grownThings = sqliteTable(
+	'grown_things',
+	{
+		id: text('id').primaryKey(),
+		kind: text('kind').notNull(),
+		slug: text('slug').notNull().unique(),
+		ownerId: text('owner_id').notNull(),
+		publishedRevisionId: text('published_revision_id'),
+		createdAt: text('created_at').notNull(),
+		updatedAt: text('updated_at').notNull()
+	},
+	(table) => [index('grown_things_owner').on(table.ownerId, table.kind)]
+);
+
+/**
+ * Append-only revisions of a grown thing: name, description and the spec as
+ * JSON, with who wrote it. Keep in step with `GROWN_SCHEMA_SQL`.
+ */
+export const grownRevisions = sqliteTable(
+	'grown_revisions',
+	{
+		id: text('id').primaryKey(),
+		thingId: text('thing_id')
+			.notNull()
+			.references(() => grownThings.id, { onDelete: 'cascade' }),
+		number: integer('number').notNull(),
+		name: text('name').notNull(),
+		description: text('description').notNull(),
+		specJson: text('spec_json').notNull(),
+		authorKind: text('author_kind').notNull(),
+		authorAccountId: text('author_account_id').notNull(),
+		authorChatId: text('author_chat_id'),
+		revertedFrom: integer('reverted_from'),
+		createdAt: text('created_at').notNull()
+	},
+	(table) => [unique('grown_revisions_thing_number').on(table.thingId, table.number)]
+);

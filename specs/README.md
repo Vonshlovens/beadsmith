@@ -129,7 +129,7 @@ reality**. Search `src/` before treating a spec as implemented.
   each chat's context with an agent-written carry-over note instead of
   resuming an ever-growing transcript. Work stays in Beads
   ([ADR-0024](decisions/0024-first-mate-memory-and-context.md)).
-- Accepted, not yet implemented: **grown capabilities**. The owner and
+- Accepted, being implemented: **grown capabilities**. The owner and
   First Mate add views (declarative `BrowseFilters` specs), catalog surfaces
   (JSON trees over Beadsmith's own component catalog) and sandboxed apps
   (model-written HTML/JS) as revisioned rows in `state.db`. These are never
@@ -213,7 +213,7 @@ Follow the `architecture` skill at
 | [0021-hc-terminal-runtime.md](decisions/0021-hc-terminal-runtime.md) | Partly: the hc client is in [`src/lib/hc/`](../src/lib/hc/), the session core in [`src/lib/agent-session/`](../src/lib/agent-session/), and Sand missions ([`src/lib/server/dispatch/e2b-provider.ts`](../src/lib/server/dispatch/e2b-provider.ts)) and First Mate chats ([`src/lib/mate-runner/`](../src/lib/mate-runner/)) run on it; the admin relay for Sand is in [`src/lib/server/terminal-relay/`](../src/lib/server/terminal-relay/); the forge guest's hc core is a user service in [`fleet/hosts/forge/guests/mate.nix`](../fleet/hosts/forge/guests/mate.nix); forge chats relay through the mate runner's terminal attach ([`src/lib/mate-runner/server.ts`](../src/lib/mate-runner/server.ts)) | hc terminal runtime for every agent: `hc connect` over the sandbox's own channel, transcript-derived MissionEvents, admin relay with audited attach and take-over |
 | [0022-underclass-model-gateway.md](decisions/0022-underclass-model-gateway.md) | [`fleet/hosts/forge/runtime.nix`](../fleet/hosts/forge/runtime.nix), [`fleet/hosts/forge/model-proxy.mjs`](../fleet/hosts/forge/model-proxy.mjs), [`src/lib/server/underclass/client.ts`](../src/lib/server/underclass/client.ts), [`src/routes/console/model-pool/`](../src/routes/console/model-pool/) | Underclass pool on forge behind the guest filter; admin console reads its API and runs four account actions server-side |
 | [0024-first-mate-memory-and-context.md](decisions/0024-first-mate-memory-and-context.md) | Partly: [`src/lib/server/mate/memory-store.ts`](../src/lib/server/mate/memory-store.ts), [`src/lib/server/crew/memory-tools.ts`](../src/lib/server/crew/memory-tools.ts), [`src/lib/server/mate/meta-store.ts`](../src/lib/server/mate/meta-store.ts), [`src/lib/server/crew/meta-tools.ts`](../src/lib/server/crew/meta-tools.ts) | First Mate memory, meta folder and sliding context, runner-agnostic |
-| [0025-grown-capabilities.md](decisions/0025-grown-capabilities.md) | Not yet; expected beside [`src/lib/server/mate/meta-store.ts`](../src/lib/server/mate/meta-store.ts), under `src/routes/views/` and [`src/lib/server/crew/`](../src/lib/server/crew/) | Views, catalog surfaces and sandboxed apps as revisioned data, run as the viewer |
+| [0025-grown-capabilities.md](decisions/0025-grown-capabilities.md) | Partly: the store and view spec in [`src/lib/server/grown/`](../src/lib/server/grown/); routes under `src/routes/views/`, crew tools, surfaces and apps not yet | Views, catalog surfaces and sandboxed apps as revisioned data, run as the viewer |
 
 ## UI map
 

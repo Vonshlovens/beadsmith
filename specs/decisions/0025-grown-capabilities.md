@@ -206,8 +206,9 @@ The frame route needs its own CSP and `frame-ancestors 'self'`, the one
 place the app's global `frame-ancestors 'none'` is relaxed, and only for a
 document that is itself sandboxed.
 
-Shipped versus target: nothing in this decision is implemented yet. Views
-come first, then the catalogue, crew tools, surfaces and apps.
+Shipped versus target: the store and the view spec are implemented; the
+catalogue, crew tools, surfaces and apps are not yet (see Implementation
+notes).
 
 ## Alternatives considered
 
@@ -248,12 +249,26 @@ use the least power that expresses it.
 
 ## Implementation notes
 
-Not yet implemented. Expected places: the store and spec schemas in a
-module beside the mate stores
-([`src/lib/server/mate/meta-store.ts`](../../src/lib/server/mate/meta-store.ts)
-is the pattern), tables in
-[`src/lib/server/state/schema.ts`](../../src/lib/server/state/schema.ts);
-routes under `src/routes/api/views/` and pages under `src/routes/views/`
+Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
+
+- `store.ts` is the one revisioned store (rule 8): tables `grown_things`
+  (slug, kind, owner, published revision) and `grown_revisions` (name,
+  description, spec JSON, author kind, account and chat). Kinds are
+  registered in `GROWN_KINDS` with their spec schema, byte limit and
+  per-owner limit; only `view` is registered until surfaces and apps add
+  theirs. Visibility and roles (rules 5 and 7) are enforced in the store,
+  not the routes, so the browser API and crew tools share one rule set.
+  Writes are single `batch` calls rather than interactive transactions; the
+  per-owner limit and the next revision number are computed inside the
+  insert, so concurrent writers cannot exceed or share them.
+- `view-spec.ts` is the strict view spec and `runView`, which compiles the
+  filters onto `listProjectIssues`. The read plane orders by last update
+  and applies the row limit, so `sort` orders the rows the limit selected;
+  `limit_reached` tells the reader when that cut applied. An all-projects
+  view skips a project it cannot read and says so, as Ready does.
+- `errors.ts` holds `GrownError`, which `safeError` maps to a response.
+
+Still expected: routes under `src/routes/api/views/` and pages under `src/routes/views/`
 with role rules in
 [`src/lib/server/auth/roles.ts`](../../src/lib/server/auth/roles.ts) and
 role tests for each route; crew tools as a new module registered in
