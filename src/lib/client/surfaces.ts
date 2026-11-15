@@ -6,6 +6,7 @@
  * rather than trusted: a component given data it cannot read shows an error,
  * never a guess. Nothing here interprets text as markup.
  */
+import type { BridgeActionName } from '#lib/grown.js';
 import type { SurfaceBindingResult, SurfaceSpecShape } from '#lib/surfaces.js';
 import type { ViewGroup, ViewIssue } from '#lib/views.js';
 import { groupViewIssues } from '#lib/client/views.js';
@@ -179,6 +180,16 @@ export function describeSurfaceSpec(spec: SurfaceSpecShape): string {
 
 export type SurfaceActionShape = SurfaceSpecShape['actions'][string];
 
+/**
+ * A bridge action as the host confirms it: a surface's stored action, or the
+ * name and arguments an app's `tools/call` brought, not yet checked against
+ * the tool's schema (the server does that before it runs).
+ */
+export interface BridgeActionCall {
+	tool: BridgeActionName;
+	input: Record<string, unknown>;
+}
+
 /** What a surface's buttons need from the page that draws it. */
 export interface SurfaceHost {
 	slug: string;
@@ -189,8 +200,8 @@ export interface SurfaceHost {
 	can_act: boolean;
 }
 
-/** What the host confirmation says before a surface button runs (ADR-0025 rule 6). */
-export interface SurfaceActionConfirm {
+/** What the host confirmation says before a bridge action runs (ADR-0025 rule 6). */
+export interface BridgeActionConfirm {
 	title: string;
 	/** Names the operation, project and issue, and that it runs as the viewer. */
 	description: string;
@@ -206,6 +217,16 @@ function quoted(value: unknown, max = 160): string | undefined {
 	return `“${one_line.length > max ? `${one_line.slice(0, max - 1)}…` : one_line}”`;
 }
 
+/**
+ * An identifier (project, issue, todo) in a confirmation. An app's arguments
+ * are unchecked until the server parses them, so a long one is clipped too.
+ */
+function ident(value: unknown, max = 80): string | undefined {
+	const raw = text(value);
+	if (raw === undefined) return undefined;
+	return raw.length > max ? `${raw.slice(0, max - 1)}…` : raw;
+}
+
 const DISCUSS_WORDS: Record<string, [string, string]> = {
 	discuss: ['discuss mission', 'answers or asks about'],
 	elaborate: ['elaborate mission', 'fleshes out the description and acceptance criteria of'],
@@ -213,22 +234,25 @@ const DISCUSS_WORDS: Record<string, [string, string]> = {
 };
 
 /**
- * The host confirmation for one surface action, built from the stored action
- * itself, never from anything the surface draws: the button's label is not
+ * The host confirmation for one bridge action (ADR-0025 rule 6), built from
+ * the action itself, never from anything the grown thing draws. For a
+ * surface it is the stored action a button names: the button's label is not
  * in it, so a button labelled "Refresh" that files an issue says it files an
- * issue. Every text the action carries is quoted and clipped.
- * @param action The action the button names, from the revision on screen.
- * @param surface_name The surface's name, said as where the action came from.
+ * issue. For an app it is the action name and arguments of its `tools/call`,
+ * which are exactly what the host then sends to run. Every text the action
+ * carries is quoted and clipped.
+ * @param action The action: a surface's stored one, or an app's call.
+ * @param from Which surface or app asked, said as where the action came from.
  */
-export function describeSurfaceAction(
-	action: SurfaceActionShape,
-	surface_name: string
-): SurfaceActionConfirm {
-	const input = action.input as Record<string, unknown>;
-	const project = text(input.project) ?? 'its project';
-	const issue = text(input.issue_id) ?? 'the issue';
-	const as_you = `It runs as you, from the surface “${surface_name}”.`;
-	const todo = text(input.todo_id) ?? 'the todo';
+export function describeBridgeAction(
+	action: BridgeActionCall,
+	from: { kind: 'surface' | 'app'; name: string }
+): BridgeActionConfirm {
+	const input = action.input;
+	const project = ident(input.project) ?? 'its project';
+	const issue = ident(input.issue_id) ?? 'the issue';
+	const as_you = `It runs as you, from the ${from.kind} ${quoted(from.name) ?? ''}.`;
+	const todo = ident(input.todo_id) ?? 'the todo';
 	switch (action.tool) {
 		case 'create_todo':
 			return {
@@ -306,7 +330,7 @@ export function describeSurfaceAction(
  * it is read field by field.
  * @param result The `result` of `POST /api/surfaces/:slug/actions/:name`.
  */
-export function surfaceActionOutcome(result: unknown): { message: string; mission: boolean } {
+export function bridgeActionOutcome(result: unknown): { message: string; mission: boolean } {
 	if (!isRecord(result)) return { message: 'Done.', mission: false };
 	if (isRecord(result.todo)) {
 		const title = quoted(result.todo.title);

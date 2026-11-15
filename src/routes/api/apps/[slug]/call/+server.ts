@@ -6,7 +6,8 @@
  *
  * Only reads are answered here: the bridge's read allowlist plus `run_view`,
  * each crew tool keeping its own `permission` (`list_todos` is refused to a
- * member). Actions go through their own route behind the host confirmation.
+ * member). Actions go through their own route, `POST /api/apps/:slug/actions`,
+ * behind the host confirmation.
  * The request gate lets any signed-in role make this POST
  * (`requiredPermission` in `roles.ts`), since it is a read with a body.
  *
@@ -17,11 +18,10 @@
  */
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
-import { BRIDGE_FRAME_MAX_BYTES, type AppToolCallResponse } from '#lib/apps.js';
+import type { AppToolCallResponse } from '#lib/apps.js';
 import { getGrownStore } from '#lib/server/state/db.js';
 import { errorFromException, errorResponse, jsonResponse } from '#lib/server/security.js';
-import { parseValue } from '#lib/server/validation.js';
-import { requireGrown, viewerFromLocals } from '#lib/server/grown/grown-api.js';
+import { parseBridgeBody, requireGrown, viewerFromLocals } from '#lib/server/grown/grown-api.js';
 import {
 	getBridgeLimiter,
 	isBridgeRead,
@@ -35,20 +35,7 @@ const call_schema = z.strictObject({
 });
 
 export const POST: RequestHandler = async ({ params, request, locals }) => {
-	const text = await request.text();
-	if (new TextEncoder().encode(text).length > BRIDGE_FRAME_MAX_BYTES) {
-		return errorResponse(
-			'bad_request',
-			`A bridge call is at most ${BRIDGE_FRAME_MAX_BYTES} bytes.`
-		);
-	}
-	let payload: unknown;
-	try {
-		payload = JSON.parse(text);
-	} catch {
-		return errorResponse('bad_request', 'invalid JSON body');
-	}
-	const body = parseValue(call_schema, payload);
+	const body = await parseBridgeBody(request, call_schema);
 	if (!body.ok) return body.response;
 	const viewer = { ...viewerFromLocals(locals), actor: locals.user?.email ?? '' };
 	try {

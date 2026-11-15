@@ -5,7 +5,7 @@
  * no server code reaches the browser. The document itself is never run by
  * the page: it runs in the sandboxed frame `/api/apps/:slug/frame` serves.
  */
-import type { GrownRevisionView, GrownSummary } from '#lib/grown.js';
+import type { BridgeActionName, GrownRevisionView, GrownSummary } from '#lib/grown.js';
 import type { AppSpec } from '#lib/server/grown/app-spec.js';
 import type { SurfaceBindingResult } from '#lib/surfaces.js';
 
@@ -46,4 +46,16 @@ export interface AppToolCallResponse {
 	revision: number;
 	name: string;
 	result: SurfaceBindingResult;
+}
+
+/**
+ * `POST /api/apps/:slug/actions`: one bridge action an app asked for, run as
+ * the viewer after the host confirmation. `result` is the action crew tool's
+ * result (the todo, or the launched mission); a refusal is an HTTP error.
+ */
+export interface AppActionResponse {
+	slug: string;
+	revision: number;
+	name: BridgeActionName;
+	result: unknown;
 }

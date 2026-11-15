@@ -29,12 +29,8 @@ import {
 	SURFACE_SPEC_MAX_BYTES,
 	surface_component_schema
 } from '../grown/surface-spec.js';
-import {
-	BRIDGE_ACTION_NAMES,
-	BRIDGE_ACTIONS,
-	BRIDGE_READ_NAMES,
-	BRIDGE_READS
-} from '../grown/bridge.js';
+import { BRIDGE_ACTIONS, BRIDGE_READ_NAMES, BRIDGE_READS } from '../grown/bridge.js';
+import { BRIDGE_ACTION_NAMES } from '#lib/grown.js';
 import type { SurfaceSpecShape } from '#lib/surfaces.js';
 import { defineTool, type CrewTool } from './registry.js';
 import {

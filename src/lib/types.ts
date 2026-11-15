@@ -560,14 +560,14 @@ export interface Mission extends DispatchRequest {
 	project_name: string;
 	title?: string;
 	/**
-	 * The catalog surface whose button launched it, only when this viewer may
-	 * see that surface: an owner-private surface's slug never reaches anyone
-	 * else (ADR-0025 rule 5).
+	 * The catalog surface or sandboxed app that launched it, only when this
+	 * viewer may see it: an owner-private slug never reaches anyone else
+	 * (ADR-0025 rule 5).
 	 */
 	surface?: MissionSurface;
 }
 
-/** A launching surface as a mission row links it: `/views/<slug>`. */
+/** A launching surface or app as a mission row links it: `/views/<slug>`. */
 export interface MissionSurface {
 	slug: string;
 	name: string;

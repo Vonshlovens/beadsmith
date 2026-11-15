@@ -12,7 +12,14 @@ import type { DoltClient } from '../dolt/client.js';
 import type { IssueDetail, Project } from '#lib/types.js';
 import { createGrownStore, type GrownStore, type GrownThing } from './store.js';
 import type { BridgeViewer } from './bindings.js';
-import { runSurfaceAction, surface_action_request_schema, type ActionDeps } from './actions.js';
+import {
+	app_action_request_schema,
+	runAppAction,
+	runSurfaceAction,
+	surface_action_request_schema,
+	type ActionDeps,
+	type AppActionRequest
+} from './actions.js';
 
 const OWNER: BridgeViewer = { account_id: 'acct_owner', role: 'admin', actor: 'o@example.test' };
 const ADMIN2: BridgeViewer = { account_id: 'acct_admin2', role: 'admin', actor: 'a2@example.test' };
@@ -249,6 +256,129 @@ describe('surface_action_request_schema', () => {
 			expect(surface_action_request_schema.safeParse(body).success, JSON.stringify(body)).toBe(
 				false
 			);
+		}
+	});
+});
+
+describe('runAppAction', () => {
+	const TACKLE_CALL: AppActionRequest = {
+		name: 'tackle_issue',
+		arguments: { project: 'd_alpha', issue_id: 'alpha-1' },
+		revision: 1,
+		key: 'confirm-1'
+	};
+
+	async function app(publish = false): Promise<void> {
+		await store.create(OWNER, {
+			kind: 'app',
+			slug: 'launcher',
+			name: 'Launcher',
+			spec: { html: '<button>Go</button>' },
+			author: AUTHOR
+		});
+		if (publish) await store.publish(OWNER, 'launcher');
+	}
+
+	async function seen(viewer: BridgeViewer): Promise<GrownThing> {
+		const thing = await store.read(viewer, 'launcher');
+		if (thing === undefined) throw new Error(`${viewer.account_id} cannot see launcher`);
+		return thing;
+	}
+
+	it('launches the confirmed call as the viewer and records the app on the mission', async () => {
+		await app();
+		const result = (await runAppAction(
+			store,
+			OWNER,
+			await seen(OWNER),
+			TACKLE_CALL,
+			deps
+		)) as Record<string, unknown>;
+		expect(result).toMatchObject({ launched: true, operation: 'tackle', issue_id: 'alpha-1' });
+		const [mission] = await dispatch_store.list({ limit: 10 });
+		expect(mission.grown_slug).toBe('launcher');
+		expect(mission.chat_id).toBeUndefined();
+		expect(mission.actor).toBe(OWNER.actor);
+	});
+
+	it('replays a retried confirmation and starts a new mission for a new one', async () => {
+		await app();
+		const thing = await seen(OWNER);
+		await runAppAction(store, OWNER, thing, TACKLE_CALL, deps);
+		const replay = (await runAppAction(store, OWNER, thing, TACKLE_CALL, deps)) as Record<
+			string,
+			unknown
+		>;
+		expect(replay.launched).toBe(false);
+		expect(launches).toHaveBeenCalledTimes(1);
+		await runAppAction(store, OWNER, thing, { ...TACKLE_CALL, key: 'confirm-2' }, deps);
+		expect(launches).toHaveBeenCalledTimes(2);
+	});
+
+	it("refuses a member: an admin's app does not lend its role", async () => {
+		await app(true);
+		const thing = await seen(MEMBER);
+		for (const call of [
+			TACKLE_CALL,
+			{ ...TACKLE_CALL, name: 'create_todo' as const, arguments: { title: 'x' } }
+		]) {
+			await expect(runAppAction(store, MEMBER, thing, call, deps)).rejects.toMatchObject({
+				code: 'forbidden',
+				message: expect.stringContaining('this app acts as you')
+			});
+		}
+		expect(launches).not.toHaveBeenCalled();
+		expect(await todo_store.list({ limit: 10 })).toHaveLength(0);
+	});
+
+	it('refuses a stale revision, a call missing its project and bad arguments', async () => {
+		await app();
+		const thing = await seen(OWNER);
+		await expect(
+			runAppAction(store, OWNER, thing, { ...TACKLE_CALL, revision: 2 }, deps)
+		).rejects.toMatchObject({ code: 'conflict' });
+		await expect(
+			runAppAction(
+				store,
+				OWNER,
+				thing,
+				{ ...TACKLE_CALL, arguments: { issue_id: 'alpha-1' } },
+				deps
+			)
+		).rejects.toMatchObject({ code: 'bad_request', message: expect.stringContaining('project') });
+		await expect(
+			runAppAction(
+				store,
+				OWNER,
+				thing,
+				{ ...TACKLE_CALL, arguments: { ...TACKLE_CALL.arguments, extra: true } },
+				deps
+			)
+		).rejects.toMatchObject({ code: 'bad_request' });
+		expect(launches).not.toHaveBeenCalled();
+	});
+
+	it('keeps dispatch policy: a disarmed service refuses the launch', async () => {
+		await app();
+		dispatch.policy = { armed: false, allow: { file: true, tackle: true } };
+		await expect(runAppAction(store, OWNER, await seen(OWNER), TACKLE_CALL, deps)).rejects.toThrow(
+			DISARMED_DISPATCH_MESSAGE
+		);
+	});
+});
+
+describe('app_action_request_schema', () => {
+	it('takes only a bridge action, its arguments, a revision and a key', () => {
+		const ok = { name: 'create_todo', arguments: { title: 'x' }, revision: 1, key: 'confirm-1' };
+		expect(app_action_request_schema.safeParse(ok).success).toBe(true);
+		for (const body of [
+			{ ...ok, name: 'list_todos' },
+			{ ...ok, name: 'define_app' },
+			{ ...ok, revision: 0 },
+			{ ...ok, key: 'short' },
+			{ ...ok, as: 'admin' }
+		]) {
+			expect(app_action_request_schema.safeParse(body).success, JSON.stringify(body)).toBe(false);
 		}
 	});
 });

@@ -10,6 +10,7 @@
  * thing tools themselves, so a surface can never write or publish another.
  */
 import type { CrewTool } from '../crew/registry.js';
+import type { BridgeActionName } from '#lib/grown.js';
 
 /** What a read returns, so a surface can check a component can show it. */
 export type BridgeYield = 'issues' | 'issue' | 'projects' | 'missions' | 'mission' | 'todos';
@@ -40,7 +41,8 @@ export const BRIDGE_READS = {
 /**
  * Actions: only ones that reuse existing authority (todo changes, and mission
  * launches through dispatch under the arm, per-project allow and repository
- * map). Every one needs a host-rendered confirmation before it runs.
+ * map). Every one needs a host-rendered confirmation before it runs. The
+ * names live in `#lib/grown.ts`, which the browser can import.
  */
 export const BRIDGE_ACTIONS = {
 	create_todo: { needs_project: false },
@@ -50,7 +52,7 @@ export const BRIDGE_ACTIONS = {
 	comment_issue: { needs_project: true },
 	tackle_issue: { needs_project: true },
 	discuss_issue: { needs_project: true }
-} satisfies Record<string, BridgeEntry>;
+} satisfies Record<BridgeActionName, BridgeEntry>;
 
 export type BridgeReadName = keyof typeof BRIDGE_READS;
 /**
@@ -60,13 +62,8 @@ export type BridgeReadName = keyof typeof BRIDGE_READS;
  * a surface.
  */
 export const BRIDGE_VIEW_TOOL = 'run_view';
-export type BridgeActionName = keyof typeof BRIDGE_ACTIONS;
 
 export const BRIDGE_READ_NAMES = Object.keys(BRIDGE_READS) as [BridgeReadName, ...BridgeReadName[]];
-export const BRIDGE_ACTION_NAMES = Object.keys(BRIDGE_ACTIONS) as [
-	BridgeActionName,
-	...BridgeActionName[]
-];
 
 /**
  * The crew tool behind an allowlisted name. Loaded on first use, not

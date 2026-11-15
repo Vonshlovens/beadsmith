@@ -7,7 +7,10 @@
  * translate.
  */
 import { z } from 'zod';
+import { BRIDGE_FRAME_MAX_BYTES } from '#lib/apps.js';
 import type { GrownRevisionView, GrownSummary } from '#lib/grown.js';
+import { errorResponse } from '../security.js';
+import { parseValue, type ParseResult } from '../validation.js';
 import { GrownError } from './errors.js';
 import type {
 	GrownAuthor,
@@ -26,6 +29,36 @@ import type {
  */
 export function viewerFromLocals(locals: App.Locals): GrownViewer {
 	return { account_id: locals.user?.id ?? '', role: locals.role ?? 'member' };
+}
+
+/**
+ * Read a request an app's host forwarded from the bridge, bounded by the
+ * bridge frame limit (ADR-0025 limits) before it is parsed, so an oversized
+ * call is refused whole rather than read.
+ * @param request The request.
+ * @param schema The body's schema.
+ */
+export async function parseBridgeBody<T>(
+	request: Request,
+	schema: z.ZodType<T>
+): Promise<ParseResult<T>> {
+	const text = await request.text();
+	if (new TextEncoder().encode(text).length > BRIDGE_FRAME_MAX_BYTES) {
+		return {
+			ok: false,
+			response: errorResponse(
+				'bad_request',
+				`A bridge call is at most ${BRIDGE_FRAME_MAX_BYTES} bytes.`
+			)
+		};
+	}
+	let payload: unknown;
+	try {
+		payload = JSON.parse(text);
+	} catch {
+		return { ok: false, response: errorResponse('bad_request', 'invalid JSON body') };
+	}
+	return parseValue(schema, payload);
 }
 
 /**

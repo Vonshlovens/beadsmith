@@ -40,7 +40,13 @@ import {
 } from '../grown/store.js';
 import { APP_DOCUMENT_MAX_BYTES } from '../grown/app-spec.js';
 import { APP_LIBRARIES, APP_LIBRARY_NAMES } from '../grown/app-libraries.js';
-import { BRIDGE_READ_NAMES, BRIDGE_READS, BRIDGE_VIEW_TOOL } from '../grown/bridge.js';
+import {
+	BRIDGE_ACTIONS,
+	BRIDGE_READ_NAMES,
+	BRIDGE_READS,
+	BRIDGE_VIEW_TOOL
+} from '../grown/bridge.js';
+import { BRIDGE_ACTION_NAMES } from '#lib/grown.js';
 import { grownRevisionView, requireGrown } from '../grown/grown-api.js';
 import {
 	CrewText,
@@ -92,6 +98,9 @@ function revisionSummary(revision: GrownRevision, published_revision_id: string 
 }
 
 const NEEDS_PROJECT = BRIDGE_READ_NAMES.filter((name) => BRIDGE_READS[name].needs_project);
+const ACTION_NEEDS_PROJECT = BRIDGE_ACTION_NAMES.filter(
+	(name) => BRIDGE_ACTIONS[name].needs_project
+);
 
 const LIBRARY_GUIDE = APP_LIBRARY_NAMES.map(
 	(name) => `- ${name} (${APP_LIBRARIES[name].type}): ${APP_LIBRARIES[name].summary}`
@@ -158,7 +167,14 @@ const DEFINE_DESCRIPTION = [
 	`  (${APP_FRAME_MIN_HEIGHT} to ${APP_FRAME_MAX_HEIGHT} px).`,
 	'- request ping: answers {}.',
 	'Calls run as whoever opens the app, so a member sees what a member may read and',
-	'list_todos is refused to a member. Apps read only: they cannot change anything.',
+	'list_todos is refused to a member.',
+	`- tools/call may also name an action: ${BRIDGE_ACTION_NAMES.join(', ')}, with that crew`,
+	`  tool's own input (${ACTION_NEEDS_PROJECT.join(', ')} must name \`project\`). Beadsmith then`,
+	'  asks the viewer to confirm in its own dialog, outside the app, which names the operation,',
+	'  project and issue from the arguments; only a confirmed call runs, as the viewer, and a',
+	'  launch records the app on its mission. A declined or refused action is isError with the',
+	'  reason. Members cannot run actions (check hostContext.viewer.role), and one confirmation',
+	'  is open at a time. Ask for an action only when the user clicks something for it.',
 	`At most ${APP_CALLS_PER_WINDOW} calls per ${APP_CALL_WINDOW_MS / 1000} s and ${APP_CALLS_IN_FLIGHT} in flight; a message is at most`,
 	`${BRIDGE_FRAME_MAX_BYTES / 1024} KB. Load data once and on a user's request, not in a loop.`,
 	'',

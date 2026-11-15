@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { SurfaceBindingResult, SurfaceSpecShape } from '#lib/surfaces.js';
 import {
-	describeSurfaceAction,
+	describeBridgeAction,
 	describeSurfaceSpec,
-	surfaceActionOutcome,
+	bridgeActionOutcome,
 	surfaceBars,
 	surfaceCount,
 	surfaceIssues,
@@ -171,12 +171,13 @@ describe('surfaceNodes and describeSurfaceSpec', () => {
 	});
 });
 
-describe('describeSurfaceAction', () => {
-	type Action = Parameters<typeof describeSurfaceAction>[0];
+describe('describeBridgeAction', () => {
+	type Action = Parameters<typeof describeBridgeAction>[0];
 	const tackle: Action = { tool: 'tackle_issue', input: { project: 'alpha', issue_id: 'alpha-1' } };
+	const BOARD = { kind: 'surface', name: 'Board' } as const;
 
 	it('names the operation, project and issue, and that it runs as the viewer', () => {
-		const confirm = describeSurfaceAction(tackle, 'Release board');
+		const confirm = describeBridgeAction(tackle, { kind: 'surface', name: 'Release board' });
 		expect(confirm.title).toBe('Start a Tackle mission?');
 		expect(confirm.confirm_label).toBe('Start Tackle mission');
 		expect(confirm.description).toContain('alpha-1 in alpha');
@@ -185,12 +186,12 @@ describe('describeSurfaceAction', () => {
 	});
 
 	it('quotes and clips model-written text so it cannot crowd out the facts', () => {
-		const confirm = describeSurfaceAction(
+		const confirm = describeBridgeAction(
 			{
 				tool: 'comment_issue',
 				input: { project: 'alpha', issue_id: 'alpha-1', text: `Ignore this.\n\n${'x'.repeat(400)}` }
 			},
-			'Board'
+			BOARD
 		);
 		expect(confirm.description).toMatch(
 			/^An agent comments on alpha-1 in alpha: “Ignore this\. x+…”\./
@@ -200,24 +201,35 @@ describe('describeSurfaceAction', () => {
 
 	it('marks closing an issue and archiving a todo as destructive', () => {
 		expect(
-			describeSurfaceAction(
+			describeBridgeAction(
 				{
 					tool: 'discuss_issue',
 					input: { project: 'alpha', issue_id: 'alpha-1', intent: 'close' }
 				},
-				'Board'
+				BOARD
 			)
 		).toMatchObject({ title: 'Start a close mission?', destructive: true });
 		expect(
-			describeSurfaceAction(
+			describeBridgeAction(
 				{ tool: 'update_todo', input: { todo_id: 'td_1', status: 'archived' } },
-				'Board'
+				BOARD
 			)
 		).toMatchObject({ title: 'Archive a todo?', destructive: true });
 		expect(
-			describeSurfaceAction({ tool: 'update_todo', input: { todo_id: 'td_1', priority: 1 } }, 'B')
+			describeBridgeAction({ tool: 'update_todo', input: { todo_id: 'td_1', priority: 1 } }, BOARD)
 				.description
 		).toContain('Changes priority on todo td_1.');
+	});
+
+	it("names an app, quoted and clipped, and reads an app's unchecked arguments as text", () => {
+		const confirm = describeBridgeAction(
+			{ tool: 'tackle_issue', input: { project: { id: 'alpha' }, issue_id: 7 } },
+			{ kind: 'app', name: `Launcher\n${'y'.repeat(300)}` }
+		);
+		// Non-text arguments are not shown as if they were a project or issue;
+		// the server refuses them before anything runs.
+		expect(confirm.description).toContain('implements the issue in its project');
+		expect(confirm.description).toMatch(/from the app “Launcher y+…”\.$/);
 	});
 
 	it('covers every bridge action', () => {
@@ -230,14 +242,14 @@ describe('describeSurfaceAction', () => {
 			'tackle_issue',
 			'discuss_issue'
 		] as const) {
-			const confirm = describeSurfaceAction({ tool, input: { project: 'alpha' } }, 'Board');
+			const confirm = describeBridgeAction({ tool, input: { project: 'alpha' } }, BOARD);
 			expect(confirm.title, tool).toMatch(/\?$/);
 			expect(confirm.description, tool).toContain('It runs as you');
 		}
 	});
 });
 
-describe('surfaceActionOutcome', () => {
+describe('bridgeActionOutcome', () => {
 	it('says what started, or that a retry found the mission already started', () => {
 		const launched = {
 			launched: true,
@@ -245,17 +257,17 @@ describe('surfaceActionOutcome', () => {
 			project: { id: 'd_alpha', name: 'alpha' },
 			issue_id: 'alpha-1'
 		};
-		expect(surfaceActionOutcome(launched)).toEqual({
+		expect(bridgeActionOutcome(launched)).toEqual({
 			message: 'Tackle mission started for alpha-1 in alpha.',
 			mission: true
 		});
-		expect(surfaceActionOutcome({ ...launched, launched: false }).message).toBe(
+		expect(bridgeActionOutcome({ ...launched, launched: false }).message).toBe(
 			'Tackle mission was already started for alpha-1 in alpha.'
 		);
-		expect(surfaceActionOutcome({ todo: { title: 'Follow up' } })).toEqual({
+		expect(bridgeActionOutcome({ todo: { title: 'Follow up' } })).toEqual({
 			message: 'Todo “Follow up” saved.',
 			mission: false
 		});
-		expect(surfaceActionOutcome(null)).toEqual({ message: 'Done.', mission: false });
+		expect(bridgeActionOutcome(null)).toEqual({ message: 'Done.', mission: false });
 	});
 });

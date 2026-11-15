@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { APP_FRAME_CSP } from '#lib/server/grown/app-spec.js';
 import type { SurfaceBindingResult } from '#lib/surfaces.js';
+import type { BridgeActionCall } from '#lib/client/surfaces.js';
+import type { AppHostContext } from './app-bridge.js';
 import {
 	APP_CALLS_IN_FLIGHT,
 	APP_CALLS_PER_WINDOW,
@@ -10,6 +12,7 @@ import {
 	APP_FRAME_MIN_HEIGHT,
 	APP_FRAME_SANDBOX,
 	MCP_APPS_PROTOCOL_VERSION,
+	MEMBER_ACTION_REFUSAL,
 	appFrameSrc,
 	createAppBridge,
 	type AppBridgeDeps,
@@ -29,10 +32,16 @@ function setup(overrides: Partial<AppBridgeDeps> = {}) {
 		yields: 'issues',
 		data: { issues: [{ id: 'p-1' }] }
 	}));
+	const confirmAction = vi.fn(async (_call: BridgeActionCall) => true);
+	const runAction = vi.fn(async (_call: BridgeActionCall): Promise<unknown> => ({
+		todo: { id: 'td_1', title: 'Follow up' }
+	}));
 	const bridge = createAppBridge({
 		frame: () => FRAME,
 		post: (message) => posted.push(message),
 		callTool,
+		confirmAction,
+		runAction,
 		hostContext: () => ({
 			theme: 'dark',
 			displayMode: 'inline',
@@ -53,6 +62,8 @@ function setup(overrides: Partial<AppBridgeDeps> = {}) {
 		warnings,
 		heights,
 		callTool,
+		confirmAction,
+		runAction,
 		tick: (ms: number) => (clock += ms)
 	};
 }
@@ -175,13 +186,13 @@ describe('app bridge methods', () => {
 
 		const failing = setup({
 			callTool: async () => {
-				throw new Error('create_todo is not a read an app may call.');
+				throw new Error('define_app is not a read an app may call.');
 			}
 		});
-		await failing.send(request(2, 'tools/call', { name: 'create_todo' }));
+		await failing.send(request(2, 'tools/call', { name: 'define_app' }));
 		expect(failing.posted[0]).toMatchObject({
 			id: 2,
-			result: { isError: true, content: [{ text: 'create_todo is not a read an app may call.' }] }
+			result: { isError: true, content: [{ text: 'define_app is not a read an app may call.' }] }
 		});
 	});
 
@@ -274,5 +285,111 @@ describe('app bridge call limits', () => {
 		for (const resolve of pending) resolve();
 		await Promise.all(waiting);
 		expect(posted).toHaveLength(APP_CALLS_IN_FLIGHT + 1);
+	});
+});
+
+describe('app bridge actions', () => {
+	const ADMIN: AppHostContext = {
+		theme: 'light',
+		displayMode: 'inline',
+		platform: 'web',
+		viewer: { role: 'admin' }
+	};
+	const TACKLE = { name: 'tackle_issue', arguments: { project: 'd_alpha', issue_id: 'alpha-1' } };
+
+	it('refuses a member with the reason, before any dialog or request', async () => {
+		const { send, posted, confirmAction, runAction, callTool } = setup();
+		await send(request(1, 'tools/call', TACKLE));
+		expect(confirmAction).not.toHaveBeenCalled();
+		expect(runAction).not.toHaveBeenCalled();
+		expect(callTool).not.toHaveBeenCalled();
+		expect(posted).toEqual([
+			{
+				jsonrpc: '2.0',
+				id: 1,
+				result: { content: [{ type: 'text', text: MEMBER_ACTION_REFUSAL }], isError: true }
+			}
+		]);
+	});
+
+	it('asks the host to confirm the exact call, then runs that call', async () => {
+		const { send, posted, confirmAction, runAction, callTool } = setup({
+			hostContext: () => ADMIN
+		});
+		await send(request(1, 'tools/call', TACKLE));
+		const call = { tool: 'tackle_issue', input: TACKLE.arguments };
+		expect(confirmAction).toHaveBeenCalledWith(call);
+		expect(runAction).toHaveBeenCalledWith(call);
+		// An action never goes to the read route.
+		expect(callTool).not.toHaveBeenCalled();
+		expect(posted).toEqual([
+			{
+				jsonrpc: '2.0',
+				id: 1,
+				result: {
+					content: [
+						{ type: 'text', text: JSON.stringify({ todo: { id: 'td_1', title: 'Follow up' } }) }
+					],
+					structuredContent: { todo: { id: 'td_1', title: 'Follow up' } },
+					isError: false
+				}
+			}
+		]);
+	});
+
+	it('runs nothing when the person declines, and tells the app so', async () => {
+		const { send, posted, runAction } = setup({
+			hostContext: () => ADMIN,
+			confirmAction: vi.fn(async () => false)
+		});
+		await send(request(1, 'tools/call', TACKLE));
+		expect(runAction).not.toHaveBeenCalled();
+		expect(posted[0]).toMatchObject({
+			id: 1,
+			result: { isError: true, content: [{ text: expect.stringContaining('declined') }] }
+		});
+	});
+
+	it('keeps one confirmation open at a time, so an app cannot stack dialogs', async () => {
+		let answer: (ok: boolean) => void = () => {};
+		const confirmAction = vi.fn(() => new Promise<boolean>((resolve) => (answer = resolve)));
+		const { send, posted, runAction } = setup({ hostContext: () => ADMIN, confirmAction });
+		const first = send(request(1, 'tools/call', TACKLE));
+		await send(request(2, 'tools/call', TACKLE));
+		expect(confirmAction).toHaveBeenCalledTimes(1);
+		expect(posted).toEqual([
+			expect.objectContaining({
+				id: 2,
+				result: expect.objectContaining({ isError: true })
+			})
+		]);
+		answer(true);
+		await first;
+		expect(runAction).toHaveBeenCalledTimes(1);
+		expect(posted.at(-1)).toMatchObject({ id: 1, result: { isError: false } });
+	});
+
+	it("passes the server's refusal to the app as a tool error", async () => {
+		const { send, posted } = setup({
+			hostContext: () => ADMIN,
+			runAction: vi.fn(async () => {
+				throw new Error('Dispatch is not armed.');
+			})
+		});
+		await send(request(1, 'tools/call', TACKLE));
+		expect(posted[0]).toMatchObject({
+			id: 1,
+			result: { isError: true, content: [{ text: 'Dispatch is not armed.' }] }
+		});
+	});
+
+	it('counts an action against the call limit', async () => {
+		const { send, posted, confirmAction } = setup({ hostContext: () => ADMIN });
+		for (let index = 0; index < APP_CALLS_PER_WINDOW; index += 1) {
+			await send(request(index, 'tools/call', { name: 'ready_work' }));
+		}
+		await send(request(99, 'tools/call', TACKLE));
+		expect(confirmAction).not.toHaveBeenCalled();
+		expect(posted.at(-1)).toMatchObject({ id: 99, result: { isError: true } });
 	});
 });

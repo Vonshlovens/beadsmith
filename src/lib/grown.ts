@@ -14,6 +14,30 @@ export const GROWN_DESCRIPTION_MAX = 500;
 export type GrownAuthorKind = 'person' | 'first_mate';
 
 /**
+ * The bridge's actions (ADR-0025 rule 6): only ones that reuse existing
+ * authority, todo changes and mission launches through dispatch. The server's
+ * allowlist (`src/lib/server/grown/bridge.ts`) is keyed by these names, and
+ * the browser reads them too: an app's host must tell an action, which waits
+ * for the host confirmation, from a read, which does not.
+ */
+export const BRIDGE_ACTION_NAMES = [
+	'create_todo',
+	'update_todo',
+	'complete_todo',
+	'file_issue',
+	'comment_issue',
+	'tackle_issue',
+	'discuss_issue'
+] as const;
+
+export type BridgeActionName = (typeof BRIDGE_ACTION_NAMES)[number];
+
+/** True when `name` is one of the bridge's actions. */
+export function isBridgeAction(name: string): name is BridgeActionName {
+	return (BRIDGE_ACTION_NAMES as readonly string[]).includes(name);
+}
+
+/**
  * A grown thing as this viewer sees it, whatever its kind: the owner sees
  * the latest revision, anyone else the published one. Owner-only facts (the
  * latest number, whether the published revision is behind) are present only

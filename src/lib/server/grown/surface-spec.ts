@@ -24,13 +24,12 @@
  */
 import { z } from 'zod';
 import {
-	BRIDGE_ACTION_NAMES,
 	BRIDGE_READ_NAMES,
 	BRIDGE_READS,
 	bridgeInputProblems,
 	type BridgeYield
 } from './bridge.js';
-import { GROWN_SLUG_MAX, GROWN_SLUG_PATTERN } from '#lib/grown.js';
+import { BRIDGE_ACTION_NAMES, GROWN_SLUG_MAX, GROWN_SLUG_PATTERN } from '#lib/grown.js';
 
 /** Most JSON bytes in a surface spec (ADR-0025 limits). */
 export const SURFACE_SPEC_MAX_BYTES = 32 * 1024;

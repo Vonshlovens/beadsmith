@@ -212,9 +212,10 @@ stored, served by `/api/surfaces`, written by First Mate's surface crew
 tools, their bindings resolved as the viewer, rendered at `/views/<slug>`,
 and their buttons run allowlisted actions as the viewer behind the host
 confirmation; apps are stored, served from their sandboxed frame route,
-framed at `/views/<slug>`, read through the bridge as the viewer and
-written by First Mate's app crew tools, while app actions are not yet (see
-Implementation notes).
+framed at `/views/<slug>`, read through the bridge as the viewer, run
+allowlisted actions as the viewer behind the host confirmation, and are
+written by First Mate's app crew tools; the first vendored chart library is
+not yet in the allowlist (see Implementation notes).
 
 ## Alternatives considered
 
@@ -410,7 +411,7 @@ Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
   `POST /api/surfaces/:slug/actions/:name` (rule 6). A button opens the
   host's `confirm-dialog`, drawn by
   [`surface-button.svelte`](../../src/lib/components/surface/surface-button.svelte)
-  from the stored action (`describeSurfaceAction` in
+  from the stored action (`describeBridgeAction` in
   [`src/lib/client/surfaces.ts`](../../src/lib/client/surfaces.ts)), never
   from the button's label, so a button labelled "Refresh" that files an
   issue says it files one; model-written text in the action is quoted and
@@ -425,8 +426,10 @@ Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
   surface on the mission (`dispatch_requests.grown_slug`) instead of a chat,
   so no chat notice is owed. The request gate keeps the route admin-only
   (the default for writes); a member sees the button disabled with the
-  reason. The surface's slug is recorded but not yet shown on the missions
-  page.
+  reason. A mission row links the surface or app that launched it, when the
+  viewer may see that thing (`missionSurfaceNames` in
+  [`mission-names.ts`](../../src/lib/server/mission-names.ts) lists both
+  kinds through the store's visibility).
 
 - Apps, first slice: [`app-spec.ts`](../../src/lib/server/grown/app-spec.ts)
   registers the `app` kind (spec `{ html, libraries }`; the 256 KB limit is
@@ -499,7 +502,29 @@ Implemented so far, in [`src/lib/server/grown/`](../../src/lib/server/grown/):
   `next_offset`, which is how First Mate reads an app back before revising
   it. No publish tool (rule 7).
 
-Still expected for apps: actions behind the host confirmation and the first
-vendored chart library. Exporting apps as
+- App actions: an app's `tools/call` naming a bridge action (the names are
+  in [`src/lib/grown.ts`](../../src/lib/grown.ts), so the browser can tell
+  an action from a read) is held by the host bridge. A member's is refused
+  there with the reason, before any dialog. Otherwise
+  [`app-frame.svelte`](../../src/lib/components/app/app-frame.svelte) draws
+  `confirm-dialog` from the call's name and arguments with the same
+  `describeBridgeAction` a surface button uses, outside the frame; one
+  confirmation is open at a time, so an app cannot stack dialogs, and a
+  declined one answers the app with `isError` and runs nothing. A confirmed
+  call goes to `POST /api/apps/:slug/actions` with exactly the arguments
+  shown, the revision on screen and a fresh key, and the host also tells the
+  person the outcome in a toast, whatever the app shows. Unlike a surface's
+  stored input, an app's arguments are unchecked until the server parses
+  them, so the dialog reads them as text only and clips identifiers as well
+  as quoted text. On the server, `runAppAction` and `runSurfaceAction` in
+  `actions.ts` share one runner (revision check, the viewer's `roleCan`, the
+  project rule, the tool's own schema, `bridgeContext` with `grown_slug`),
+  and the crew call's id carries the key, so a retried request replays
+  through dispatch's idempotency. The route's request body is bounded by the
+  bridge frame limit like `/call` (`parseBridgeBody` in `grown-api.ts`), and
+  the request gate keeps it admin-only. `define_app`'s description teaches
+  the action names and the confirmation.
+
+Still expected for apps: the first vendored chart library. Exporting apps as
 `ui://` resources to outside MCP clients is a later follow-on, not v1. See
 the matching row in [`specs/README.md`](../README.md).

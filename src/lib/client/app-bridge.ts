@@ -11,7 +11,14 @@
  *   (theme, viewer role), so an app can adapt without reading the page.
  * - `tools/call` (request): forwarded for allowlisted reads to
  *   `POST /api/apps/:slug/call`; the answer is an MCP `CallToolResult`, and a
- *   tool's refusal is a result with `isError`, as MCP has it.
+ *   tool's refusal is a result with `isError`, as MCP has it. An allowlisted
+ *   action (a todo change or a mission launch) first waits for the host
+ *   confirmation, which the page draws outside the frame from the action's
+ *   name and arguments (`describeBridgeAction`); the app cannot draw, skip or
+ *   pre-answer it, and only a confirmed call goes to
+ *   `POST /api/apps/:slug/actions` with exactly those arguments. A member's
+ *   action is refused here with the reason, before any dialog, and one
+ *   confirmation is open at a time, so an app cannot stack dialogs.
  * - `ping` (request), `ui/notifications/initialized` and
  *   `ui/notifications/size-changed` (notifications; the last sizes the frame).
  *
@@ -29,6 +36,8 @@
  * `tools/call` spends no requests once it is over the limit.
  */
 import { BRIDGE_FRAME_MAX_BYTES } from '#lib/apps.js';
+import { isBridgeAction } from '#lib/grown.js';
+import type { BridgeActionCall } from '#lib/client/surfaces.js';
 import { PRODUCT_NAME } from '#lib/product.js';
 import type { SurfaceBindingResult } from '#lib/surfaces.js';
 import type { AccountRole, ResolvedTheme } from '#lib/types.js';
@@ -90,6 +99,16 @@ export interface AppBridgeDeps {
 	post(message: HostMessage): void;
 	/** Run an allowlisted read as the viewer. Throws on a transport or HTTP failure. */
 	callTool(name: string, args: Record<string, unknown>): Promise<SurfaceBindingResult>;
+	/**
+	 * Show the host confirmation for an action, outside the frame; true when
+	 * the person confirmed it.
+	 */
+	confirmAction(call: BridgeActionCall): Promise<boolean>;
+	/**
+	 * Run a confirmed action as the viewer with exactly the confirmed call.
+	 * Resolves with the crew tool's result; throws with the reason on a refusal.
+	 */
+	runAction(call: BridgeActionCall): Promise<unknown>;
 	hostContext(): AppHostContext;
 	/** The app asked for a height (already clamped). */
 	onHeight?(height: number): void;
@@ -161,8 +180,13 @@ export function toolResult(result: SurfaceBindingResult): AppToolResult {
 	if (!result.ok) {
 		return { content: [{ type: 'text', text: result.message }], isError: true };
 	}
-	const data =
-		result.truncated && isRecord(result.data) ? { ...result.data, truncated: true } : result.data;
+	return dataResult(
+		result.truncated && isRecord(result.data) ? { ...result.data, truncated: true } : result.data
+	);
+}
+
+/** A successful result: the data as JSON text, and as `structuredContent` when it is an object. */
+function dataResult(data: unknown): AppToolResult {
 	return {
 		content: [{ type: 'text', text: JSON.stringify(data) }],
 		...(isRecord(data) ? { structuredContent: data } : {}),
@@ -174,6 +198,10 @@ function errorResult(message: string): AppToolResult {
 	return { content: [{ type: 'text', text: message }], isError: true };
 }
 
+/** Why an action was not run, for a viewer who may not run any. */
+export const MEMBER_ACTION_REFUSAL =
+	'App actions need an admin account. This app acts as you, and you are signed in as a member.';
+
 /**
  * The bridge for one framed app.
  * @param deps Where frames come from and go, and how a read runs.
@@ -183,6 +211,8 @@ export function createAppBridge(deps: AppBridgeDeps): AppBridge {
 	const warn = deps.warn ?? (() => {});
 	const calls: number[] = [];
 	let in_flight = 0;
+	/** True while a host confirmation is open; a second action is refused. */
+	let confirming = false;
 
 	function send(message: HostMessage) {
 		const bytes = frameBytes(message);
@@ -234,6 +264,12 @@ export function createAppBridge(deps: AppBridgeDeps): AppBridge {
 			});
 			return;
 		}
+		const name = params.name;
+		const args = (params.arguments as Record<string, unknown> | undefined) ?? {};
+		if (isBridgeAction(name)) {
+			send({ jsonrpc: '2.0', id, result: await action({ tool: name, input: args }) });
+			return;
+		}
 		const refused = admit();
 		if (refused !== undefined) {
 			send({ jsonrpc: '2.0', id, result: errorResult(refused) });
@@ -242,15 +278,46 @@ export function createAppBridge(deps: AppBridgeDeps): AppBridge {
 		in_flight += 1;
 		let result: AppToolResult;
 		try {
-			result = toolResult(
-				await deps.callTool(params.name, (params.arguments as Record<string, unknown>) ?? {})
-			);
+			result = toolResult(await deps.callTool(name, args));
 		} catch (error) {
 			result = errorResult(error instanceof Error ? error.message : 'The call failed.');
 		} finally {
 			in_flight -= 1;
 		}
 		send({ jsonrpc: '2.0', id, result });
+	}
+
+	/**
+	 * An action: refused for a member, then the host confirmation, then the
+	 * run with the confirmed call, as the viewer.
+	 */
+	async function action(call: BridgeActionCall): Promise<AppToolResult> {
+		if (deps.hostContext().viewer.role !== 'admin') return errorResult(MEMBER_ACTION_REFUSAL);
+		if (confirming) {
+			return errorResult(
+				'A confirmation is already open. Wait for the person to answer it before asking again.'
+			);
+		}
+		const refused = admit();
+		if (refused !== undefined) return errorResult(refused);
+		confirming = true;
+		let confirmed: boolean;
+		try {
+			confirmed = await deps.confirmAction(call);
+		} catch {
+			confirmed = false;
+		} finally {
+			confirming = false;
+		}
+		if (!confirmed) return errorResult(`The person declined ${call.tool}; nothing ran.`);
+		in_flight += 1;
+		try {
+			return dataResult(await deps.runAction(call));
+		} catch (error) {
+			return errorResult(error instanceof Error ? error.message : 'The action failed.');
+		} finally {
+			in_flight -= 1;
+		}
 	}
 
 	async function receive(event: BridgeEvent): Promise<void> {

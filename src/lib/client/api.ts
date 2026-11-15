@@ -24,12 +24,14 @@ import type {
 	ViewSummary
 } from '#lib/views.js';
 import type {
+	AppActionResponse,
 	AppHistoryResponse,
 	AppResponse,
 	AppsResponse,
 	AppSummary,
 	AppToolCallResponse
 } from '#lib/apps.js';
+import type { BridgeActionName } from '#lib/grown.js';
 import type {
 	SurfaceActionResponse,
 	SurfaceDataResponse,
@@ -844,6 +846,27 @@ export const api = {
 		init?: RequestInitLike
 	) {
 		return request<AppToolCallResponse>('POST', `/apps/${encodeURIComponent(slug)}/call`, {
+			...init,
+			body
+		});
+	},
+
+	/**
+	 * Run an action an app asked for, after the host confirmation, as the
+	 * viewer. `body` is what the confirmation showed, with the revision on
+	 * screen and one key per confirmation. Admin only.
+	 */
+	runAppAction(
+		slug: string,
+		body: {
+			name: BridgeActionName;
+			arguments: Record<string, unknown>;
+			revision: number;
+			key: string;
+		},
+		init?: RequestInitLike
+	) {
+		return request<AppActionResponse>('POST', `/apps/${encodeURIComponent(slug)}/actions`, {
 			...init,
 			body
 		});

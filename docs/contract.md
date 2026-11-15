@@ -452,6 +452,22 @@ viewer, each crew tool keeping its own `permission`, and answers
 as for a surface binding. Calls count against the same 60-a-minute limit
 per viewer and app (`rate_limited` with `Retry-After`).
 
+A `tools/call` naming a bridge action (todo changes, File, comment, Tackle
+and discuss launches) never goes there. The page refuses it to a member with
+the reason, and otherwise shows its own `confirm-dialog`, outside the frame,
+drawn from the action's name and arguments (operation, project, issue), one
+at a time. Only a confirmed call is sent, to
+`POST /api/apps/:slug/actions` with
+`{ name, arguments, revision, key }` (at most 64 KB): the arguments the
+dialog showed, the revision on screen (`conflict` when the app changed
+since) and a key made for that confirmation, so a retry replays the first
+mission. Like a surface action, the request gate holds it to an admin; it
+runs as the viewer through the action's crew tool, its own `permission` and
+dispatch's arm, allow list and repository map, records the app's slug on a
+launched mission, counts against the same limit, and answers
+`{ slug, revision, name, result }`. A refusal is an HTTP error, which the
+page hands the app as a tool error.
+
 `GET /api/ready` is the cross-project Ready deck: open issues with no open
 `blocks` dependencies, merged across catalog projects the session can see,
 sorted by priority then recency. Parent-child, related, and discovered-from
@@ -558,7 +574,7 @@ written before its first byte; one that cannot be recorded is refused (503).
    repository keys stay outside it, added by a proxy.
 9. Grown capabilities (views, catalog surfaces and sandboxed apps,
    [ADR-0025](../specs/decisions/0025-grown-capabilities.md); views and
-   surfaces are implemented; apps render and read, their actions not yet) are stored data, never SQL, and the web process never
+   surfaces are implemented; apps render, read and run actions behind the host confirmation) are stored data, never SQL, and the web process never
    evaluates, imports or templates them. App code runs only in the viewer's
    browser, in a sandboxed iframe with an opaque origin, no network access and
    only vendored, hash-pinned libraries. Every read or action a grown thing

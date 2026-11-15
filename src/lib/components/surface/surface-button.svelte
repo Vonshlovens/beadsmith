@@ -2,7 +2,7 @@
 	/**
 	 * The catalog's Button (ADR-0025 rule 6). Pressing it opens the host's
 	 * confirmation, drawn by the page outside the surface tree from the stored
-	 * action itself (`describeSurfaceAction`): it names the operation, project
+	 * action itself (`describeBridgeAction`): it names the operation, project
 	 * and issue, not the button's label, so a surface cannot dress one action
 	 * up as another, and nothing in the tree can draw, skip or pre-answer it.
 	 * Only a confirmed press calls the bridge, as the viewer, naming the
@@ -18,8 +18,8 @@
 	import ConfirmDialog from '#lib/components/confirm-dialog.svelte';
 	import { api, errorMessage } from '#lib/client/api.js';
 	import {
-		describeSurfaceAction,
-		surfaceActionOutcome,
+		describeBridgeAction,
+		bridgeActionOutcome,
 		type SurfaceActionShape,
 		type SurfaceHost
 	} from '#lib/client/surfaces.js';
@@ -44,7 +44,9 @@
 	let key = $state('');
 
 	const confirm = $derived(
-		action === undefined ? undefined : describeSurfaceAction(action, surface_name)
+		action === undefined
+			? undefined
+			: describeBridgeAction(action, { kind: 'surface', name: surface_name })
 	);
 	const reason = $derived(
 		!host.can_act
@@ -68,7 +70,7 @@
 				revision: host.revision,
 				key
 			});
-			const outcome = surfaceActionOutcome(response.result);
+			const outcome = bridgeActionOutcome(response.result);
 			toast.success(
 				outcome.message,
 				outcome.mission

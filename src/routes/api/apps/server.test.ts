@@ -3,11 +3,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { requiredPermission, roleCan } from '#lib/server/auth/roles.js';
 import { createGrownStore } from '#lib/server/grown/store.js';
 import { APP_FRAME_CSP } from '#lib/server/grown/app-spec.js';
-import { initStateSchema, setGrownStore } from '#lib/server/state/db.js';
+import { initStateSchema, setGrownStore, setTodoStore } from '#lib/server/state/db.js';
+import { createTodoStore, type TodoStore } from '#lib/server/todos/store.js';
 import type {
 	AppHistoryResponse,
 	AppResponse,
 	AppsResponse,
+	AppActionResponse,
 	AppSummary,
 	AppToolCallResponse
 } from '#lib/apps.js';
@@ -18,6 +20,7 @@ import { DELETE as UNPUBLISH, PUT as PUBLISH } from './[slug]/publish/+server.js
 import { POST as REVERT } from './[slug]/revert/+server.js';
 import { GET as FRAME } from './[slug]/frame/+server.js';
 import { POST as CALL } from './[slug]/call/+server.js';
+import { POST as ACTION } from './[slug]/actions/+server.js';
 import { GET as SURFACE_GET } from '../surfaces/[slug]/+server.js';
 import { POST as VIEW_CREATE } from '../views/+server.js';
 
@@ -26,14 +29,19 @@ const OWNER: User = { id: 'acct_owner', email: 'owner@example.test', name: 'Owne
 const ADMIN2: User = { id: 'acct_admin2', email: 'a2@example.test', name: 'Other', role: 'admin' };
 const MEMBER: User = { id: 'acct_member', email: 'm@example.test', name: 'Member', role: 'member' };
 
+let todos: TodoStore;
+
 beforeEach(async () => {
 	const client = createClient({ url: ':memory:' });
 	await initStateSchema(client);
 	setGrownStore(createGrownStore(client));
+	todos = createTodoStore(client);
+	setTodoStore(todos);
 });
 
 afterEach(() => {
 	setGrownStore(undefined);
+	setTodoStore(undefined);
 });
 
 type Handler = (event: never) => Promise<Response> | Response;
@@ -333,5 +341,89 @@ describe('/api/apps/:slug/call', () => {
 		const refused = await tool('list_todos', {}, OWNER, 'rate-app');
 		expect(refused.status).toBe(429);
 		expect(Number(refused.headers.get('retry-after'))).toBeGreaterThan(0);
+	});
+});
+
+describe('/api/apps/:slug/actions', () => {
+	const KEY = '9b2f8c1e-7a4d-4e1b-9c3a-2f6d8e0b1a5c';
+	const ADD = { name: 'create_todo', arguments: { title: 'Follow up' }, revision: 1, key: KEY };
+
+	function act(user: User | null, body: unknown = ADD, slug = 'burndown') {
+		return call(ACTION, 'POST', `/api/apps/${slug}/actions`, { slug, user, body });
+	}
+
+	async function publish() {
+		expect((await at(PUBLISH, 'PUT', '/publish', {})).status).toBe(200);
+	}
+
+	it('needs an admin at the gate; only the read route is open to members', () => {
+		const permission = requiredPermission('POST', '/api/apps/x/actions');
+		expect(permission).toEqual({ console: ['manage'] });
+		expect(roleCan('member', permission!)).toBe(false);
+		expect(roleCan('admin', permission!)).toBe(true);
+	});
+
+	it('runs the confirmed call as the viewer', async () => {
+		await create();
+		const response = await act(OWNER);
+		expect(response.status).toBe(200);
+		expect(await json<AppActionResponse>(response)).toMatchObject({
+			slug: 'burndown',
+			revision: 1,
+			name: 'create_todo',
+			result: { todo: { title: 'Follow up' } }
+		});
+		const [todo] = await todos.list({ limit: 10 });
+		expect(todo.created_by).toBe(OWNER.id);
+	});
+
+	it("runs an admin's published app as the admin who confirmed it", async () => {
+		await create();
+		expect((await act(ADMIN2)).status).toBe(404); // owner-private until published
+		await publish();
+		expect((await act(ADMIN2, { ...ADD, key: 'second-key-0001' })).status).toBe(200);
+		const [todo] = await todos.list({ limit: 10 });
+		expect(todo.created_by).toBe(ADMIN2.id);
+	});
+
+	it('refuses a member past the gate, and a caller with no account', async () => {
+		await create();
+		await publish();
+		const member = await act(MEMBER);
+		expect(member.status).toBe(403);
+		expect(await member.text()).toContain('needs an admin account; this app acts as you');
+		expect((await act(null)).status).toBe(403);
+		expect(await todos.list({ limit: 10 })).toHaveLength(0);
+	});
+
+	it('refuses a stale revision, a read or unknown tool, bad arguments and a malformed body', async () => {
+		await create();
+		expect((await act(OWNER, { ...ADD, revision: 2 })).status).toBe(409);
+		for (const name of ['list_todos', 'define_app', 'run_sql']) {
+			expect((await act(OWNER, { ...ADD, name })).status, name).toBe(400);
+		}
+		const bad = await act(OWNER, { ...ADD, arguments: { title: 'x', as: 'admin' } });
+		expect(bad.status).toBe(400);
+		expect(await bad.text()).toContain('The arguments for create_todo are not valid');
+		const no_project = await act(OWNER, {
+			...ADD,
+			name: 'tackle_issue',
+			arguments: { issue_id: 'alpha-1' }
+		});
+		expect(no_project.status).toBe(400);
+		expect(await no_project.text()).toContain('an app has no chat project');
+		expect((await act(OWNER, { ...ADD, key: 'short' })).status).toBe(400);
+		expect((await act(OWNER, { name: 'create_todo', revision: 1 })).status).toBe(400);
+		expect((await act(OWNER, { ...ADD, arguments: { title: 'x'.repeat(70 * 1024) } })).status).toBe(
+			400
+		);
+		expect(await todos.list({ limit: 10 })).toHaveLength(0);
+	});
+
+	it('never runs a surface or view action under the slug', async () => {
+		await call(VIEW_CREATE, 'POST', '/api/views', {
+			body: { slug: 'a-view', name: 'A view', spec: { scope: 'all', filters: {} } }
+		});
+		expect((await act(OWNER, ADD, 'a-view')).status).toBe(404);
 	});
 });
