@@ -8,7 +8,7 @@ minimumReleaseAge: 4320
 # Provenance for each override: docs/dependency-audit.md.
 overrides:
   esbuild: 0.28.1
-  vite: npm:@voidzero-dev/vite-plus-core@1.4.0
+  vite: npm:@voidzero-dev/vite-plus-core@1.5.1
 
 # Dependency install scripts run only when listed here. esbuild's checks that
 # its platform binary matches (drizzle-kit and tsx use it at dev time).
