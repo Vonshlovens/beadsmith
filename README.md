@@ -1,21 +1,38 @@
 # Beadsmith
 
-A web dashboard for [Beads](https://github.com/gastownhall/beads) projects.
-Beadsmith reads your Beads issue databases from a Dolt SQL server and shows
-every project, issue, dependency, and recent change in one place, for you and
-the people you work with. Agents keep doing the work with `bd`; Beadsmith only
-reads.
+A self-hosted web dashboard and agent launcher for
+[Beads](https://github.com/gastownhall/beads) projects. Beadsmith reads your
+Beads issue databases from a Dolt SQL server and shows every project, issue,
+dependency and recent change in one place, for you and the people you work
+with. When you want work done, it hands it to an agent: a mission for one
+issue, a loop, a schedule, or a chat with First Mate, an orchestrator that
+runs a crew for you. Beadsmith itself never writes Beads rows; agents do,
+with `bd`, like any other contributor.
 
 ![The lighthouse sample project in Beadsmith: issues grouped by state, with one open in the reading pane](docs/images/quickstart-parade.png)
 
-- **Every project at once.** Parade, list, and board views per project, a
+Out of the box, with only Beadsmith and your Dolt server:
+
+- **Every project at once.** Parade, list and board views per project, a
   cross-project Ready deck of unblocked work, and an activity log.
-- **Accounts.** Email and password sign-in with admin and member roles.
-- **Backups.** Scheduled dumps of every project to any S3-compatible bucket,
-  optionally encrypted with your passphrase.
-- **Agents, optionally.** Send an issue to an agent to discuss, elaborate,
-  close, or tackle it, through any runner that speaks a signed webhook.
+- **Todos.** A private agenda for each admin, with quick capture and
+  due-date columns.
+- **Saved views.** Save a project page's filters as a view, and publish it
+  to share it with members ([docs/views.md](docs/views.md)).
+- **Accounts and backups.** Email and password sign-in with admin and member
+  roles; scheduled dumps of every project to any S3-compatible bucket.
 - **Keyboard first** (`?` lists the keys) and usable at phone width.
+
+With an agent runtime as well ([Agents](#agents) says what each needs):
+
+- **Missions.** Send an issue to an agent to discuss, elaborate, close or
+  tackle it, or file a new one, on a webhook runner of your own or on Sand,
+  one hosted E2B sandbox per mission.
+- **First Mate.** One long-lived agent you chat with. On Sand it reads your
+  projects, routes todos, starts missions, remembers across chats, and
+  builds dashboards and small apps for you.
+- **Loops and automations.** ralph loop missions, and saved launches on a
+  cron schedule.
 
 > **Early and changing.** Beadsmith runs its author's own Beads server every
 > day, but there are no versioned releases yet: `main` is what ships, and
@@ -110,8 +127,9 @@ operator and must stay on loopback (optionally behind Cloudflare Access).
   where it is. Open `/auth`, paste it, and the account you create is the admin.
   The file is deleted afterwards.
 - **Roles.** `admin` uses the console (dispatch policy, checkout maps,
-  accounts, backups) and launches agents. `member` reads every project and
-  issue. Both can change their own password under Account.
+  accounts, backups), launches agents, and has todos and First Mate.
+  `member` reads every project and issue, and the views an admin publishes.
+  Both can change their own password under Account.
 - **More people.** In Console → Accounts an admin adds accounts with an initial
   password, changes roles, resets passwords, and removes accounts. Self sign-up
   is closed unless an admin opens it (new accounts are then members).
@@ -151,12 +169,33 @@ passphrase; `pnpm run restore` loads a run back into Dolt. See
 
 ## Agents
 
-Beadsmith never runs `bd` or writes issue rows. When an admin sends an issue
-to an agent (the Agent action, `a`, or File/Tackle), Beadsmith records the
-request and hands it to the configured provider, today your own runner over a
-signed webhook (`BDX_DISPATCH_PROVIDER`). The agent then
-changes Beads with `bd` like any other contributor. See
-[docs/file-tackle-dispatch.md](docs/file-tackle-dispatch.md).
+Beadsmith never runs `bd` or writes issue rows, and never runs an agent in
+its own process. When an admin sends work to an agent, Beadsmith records the
+request, checks the global arm switch and the project's allow-list, and
+hands it to a configured provider. The agent then changes Beads with `bd`
+in its own sandbox. What Beadsmith does write is its own state: accounts,
+todos, mission records, chats, saved views and the like, in a local SQLite
+database.
+
+The quickstart turns dispatch off (`BDX_DISPATCH_PROVIDER=none`), so
+missions are hidden and First Mate answers with a placeholder. Each piece
+below needs the infrastructure in its row.
+
+| Feature                                                     | What it does                                                                                                                                                                                                                                                                                       | Needs                                                                                                                 |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| **Missions** ([docs](docs/file-tackle-dispatch.md))         | File, Tackle, comment and discuss from an issue, the board or a todo (`a` on an issue). Each mission has a live thread on the Missions page.                                                                                                                                                       | A dispatch provider: your own runner over a signed webhook, or Sand                                                   |
+| **Sand** ([docs](docs/sand-e2b.md))                         | Runs each mission and First Mate chat in its own hosted E2B sandbox. Model and GitHub keys are added by E2B's egress and never enter the sandbox.                                                                                                                                                  | An E2B account and a model credential; for missions also a tailnet, per-project Dolt accounts and a GitHub App        |
+| **Agent terminals** ([docs](docs/sand-e2b.md#terminals-hc)) | Agents run as the interactive Claude Code CLI in an hc terminal. Members see a sanitized event thread; admins can watch the raw terminal or take it over, with every attach audited.                                                                                                               | Sand, or a self-hosted mate runner for chats                                                                          |
+| **First Mate** ([docs](docs/first-mate.md))                 | An admin-only chat with one orchestrator agent. On Sand its crew tools read projects, change todos and start missions as you, with the same checks as a click, and keep a memory and a folder of notes across chats. On either runner a chat slides its own context window with a carry-over note. | A chat runner: Sand, or a mate runner of your own                                                                     |
+| **Views, surfaces and apps** ([docs](docs/views.md))        | Saved views, dashboards over Beadsmith's own components, and sandboxed no-network apps First Mate writes. Everything runs as the viewer; members see only what an admin publishes. Admins press `\` (**Change this**) to turn a request about any page into a code change.                         | Saved views need nothing. First Mate writes surfaces and apps from a Sand chat; buttons and Change this need dispatch |
+| **Loops and automations**                                   | ralph loop missions (plan and build loops you can steer and stop from the thread), and saved launches on a cron schedule on the Automations page.                                                                                                                                                  | Sand for loops; any dispatch provider for automations                                                                 |
+| **Model pool** ([docs](docs/model-pool.md))                 | A console page for the Underclass subscription pool that serves the maintainer's self-hosted agents.                                                                                                                                                                                               | The maintainer's forge host and Underclass; most installs leave it off                                                |
+
+Still being built: First Mate's memory is reached through its tools, but
+relevant memories are not yet added to each turn automatically, and there
+is no page yet for the owner to review and edit memories and notes. Chats on
+a self-hosted mate runner have no crew tools yet, and loops run on Sand
+only. The design for each is in [`specs/`](specs/README.md).
 
 ## Security model
 
@@ -166,6 +205,8 @@ databases, logs, URLs, browser storage, and API responses. SQL reads are
 parameterized and single-statement; direct lifecycle writes are refused.
 Host-header, same-origin, CSRF, session, CSP, rate-limit, and
 response-secret-scrubbing controls are part of the service boundary.
+Nothing an agent writes runs in the Node process: a First Mate app runs only
+in the viewer's browser, in a sandboxed frame with no network access.
 
 ## Development
 

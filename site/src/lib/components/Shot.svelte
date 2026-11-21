@@ -30,6 +30,7 @@
 		<img
 			src={shot.src}
 			alt={shot.alt}
+			class:phone={shot.frame === 'phone'}
 			width={shot.width}
 			height={shot.height}
 			loading={eager ? 'eager' : 'lazy'}
@@ -55,6 +56,13 @@
 		display: block;
 		width: 100%;
 		border: var(--border) solid var(--rule);
+	}
+
+	img.phone {
+		width: auto;
+		max-width: 100%;
+		max-height: 32rem;
+		margin-inline: auto;
 	}
 
 	figcaption {

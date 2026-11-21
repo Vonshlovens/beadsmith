@@ -14,24 +14,44 @@
 			href: doc('overview')
 		},
 		{
-			title: 'Read-only by design',
-			body: 'Beadsmith never runs bd or writes issue rows. It needs SELECT on your Dolt server and nothing else.',
+			title: 'Agents write, Beadsmith reads',
+			body: 'Beadsmith never runs bd or writes issue rows. It reads with SELECT; agents it launches change Beads with bd, like any contributor.',
 			href: doc('contract')
 		},
 		{
-			title: 'Accounts',
-			body: 'Email and password sign-in with admin and member roles. Sign-up stays closed unless an admin opens it.',
-			href: doc('overview') + '#accounts'
+			title: 'Todos and saved views',
+			body: 'A private agenda for each admin, and project filters saved as views you can publish to members.',
+			href: doc('views')
 		},
 		{
-			title: 'Backups',
-			body: 'Scheduled dumps of every project to any S3-compatible bucket, optionally encrypted with your passphrase.',
-			href: doc('backups')
-		},
-		{
-			title: 'Agents, optionally',
-			body: 'Send an issue to an agent to discuss, elaborate, close or tackle it, through any runner that accepts a signed webhook.',
+			title: 'Missions',
+			body: 'Send an issue to an agent to discuss, elaborate, close or tackle it, on your own webhook runner or on Sand. Needs a runtime.',
 			href: doc('agents')
+		},
+		{
+			title: 'First Mate',
+			body: 'One orchestrator agent you chat with. On Sand it reads projects, routes todos, starts missions and remembers across chats. Needs a runtime.',
+			href: doc('first-mate')
+		},
+		{
+			title: 'Sand and agent terminals',
+			body: 'Each mission or chat in its own E2B sandbox, keys kept outside it. Agents run in an hc terminal admins can watch or take over.',
+			href: doc('sand')
+		},
+		{
+			title: 'Grown views, surfaces and apps',
+			body: 'Dashboards and sandboxed no-network apps First Mate builds, run as the viewer and private until an admin publishes. \\ asks for a code change instead.',
+			href: doc('views')
+		},
+		{
+			title: 'Loops and automations',
+			body: 'ralph loop missions you steer and stop from the thread, and saved launches on a cron schedule.',
+			href: doc('overview') + '#agents'
+		},
+		{
+			title: 'Accounts and backups',
+			body: 'Email and password sign-in with admin and member roles; scheduled, optionally encrypted dumps to any S3-compatible bucket.',
+			href: doc('backups')
 		},
 		{
 			title: 'Keyboard first',
@@ -45,27 +65,32 @@
       ▼                                        ▼
 ┌───────────┐     read-only SQL      ┌──────────────────┐
 │ Beadsmith │ ─────────────────────▶ │ Dolt sql-server  │
-└─────┬─────┘                        │ one database per │
-      │                              │ Beads project    │
-      │ signed webhook               └──────────────────┘
-      │ (optional)                             ▲
-      ▼                                        │ bd
-┌─────────────┐                                │
-│ your runner │ ──── starts an agent ──────────┘
-└─────────────┘`;
+│ state.db: │                        │ one database per │
+│ todos,    │                        │ Beads project    │
+│ chats,    │                        └──────────────────┘
+│ views     │                                  ▲
+└─────┬─────┘                                  │ bd
+      │ missions, First Mate chats             │
+      │ (optional)                             │
+      ▼                                        │
+┌──────────────────────────────┐               │
+│ agent runtime: Sand (E2B) or │ ──────────────┘
+│ your own webhook/mate runner │
+└──────────────────────────────┘`;
 </script>
 
 <Head
-	title="Beadsmith: a web UI for Beads"
-	description="Beadsmith reads your Beads issue databases from a Dolt SQL server and shows every project, issue, dependency and recent change in one place. Open source, self-hosted."
+	title="Beadsmith: a web UI and agent launcher for Beads"
+	description="Beadsmith reads your Beads issue databases from a Dolt SQL server and shows every project, issue, dependency and recent change in one place, and hands work to agents that change Beads with bd. Open source, self-hosted."
 />
 
-<h1>A web dashboard for Beads</h1>
+<h1>A web dashboard and agent launcher for Beads</h1>
 
 <p class="lede">
 	Beadsmith reads your <a href={BEADS_URL}>Beads</a> issue databases from a Dolt SQL server and
 	shows every project, issue, dependency and recent change in one place, for you and the people you
-	work with. Agents keep doing the work with <code>bd</code>; Beadsmith only reads.
+	work with, and hands work to agents: missions, loops, schedules, and First Mate, an orchestrator
+	you chat with. Agents change Beads with <code>bd</code>; Beadsmith itself only reads.
 </p>
 
 <table class="facts">
@@ -115,7 +140,8 @@
 <h2>Views<span class="count">{view_shots.length}</span></h2>
 
 <p class="muted">
-	The UI is still moving, so these are sketches until it settles. Figure 1 is a real capture.
+	Captured from the quickstart's sample projects. The quickstart has no agent runtime, so First Mate
+	says no model is connected.
 </p>
 
 <div class="shot-grid wide">
@@ -129,7 +155,7 @@
 <pre
 	class="diagram"
 	role="img"
-	aria-label="People use Beadsmith in a browser. Beadsmith reads the Dolt sql-server with a read-only account. People and agents write to Dolt with bd. Optionally, Beadsmith sends a signed webhook to your runner, which starts an agent that uses bd.">{diagram}</pre>
+	aria-label="People use Beadsmith in a browser. Beadsmith reads the Dolt sql-server with a read-only account and keeps its own state (todos, chats, views) in a local database. People and agents write to Dolt with bd. Optionally, Beadsmith sends missions and First Mate chats to an agent runtime, Sand or your own runner, whose agents use bd.">{diagram}</pre>
 
 <p>
 	Beads keeps each project's issues in a Dolt database. People and agents change them with
@@ -137,9 +163,17 @@
 	can only read, and shows every database on it.
 </p>
 <p>
-	When an admin sends an issue to an agent, Beadsmith records the request and hands it to your
-	runner over a signed webhook. The agent then changes Beads with <code>bd</code> like any other contributor.
-	Beadsmith itself has no Beads CLI, no project checkout and no way to write to Beads.
+	When an admin sends work to an agent, Beadsmith records the request, checks the arm switch and the
+	project's allow-list, and hands it to an agent runtime: Sand, one hosted E2B sandbox per mission
+	or chat, or a runner of your own. The agent changes Beads with <code>bd</code> like any other contributor.
+	Beadsmith itself has no Beads CLI, no project checkout and no way to write to Beads; what it writes
+	is its own state, such as todos, chats and saved views.
+</p>
+<p>
+	Without a runtime you still get every read view, todos, saved views, accounts and backups.
+	Missions, First Mate, loops and automations each need the pieces listed in the
+	<a href="{doc('overview')}#agents">overview</a>. Still being built: First Mate's per-turn memory
+	recall and a page for reviewing its memory.
 </p>
 
 <h2 id="try-it">Try it</h2>

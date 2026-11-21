@@ -85,6 +85,14 @@ export const DOCS: DocEntry[] = [
 			'Running missions and First Mate chats in hosted E2B sandboxes, with keys kept outside them.'
 	},
 	{
+		slug: 'views',
+		path: 'docs/views.md',
+		group: 'Use it',
+		title: 'Views, surfaces and apps',
+		summary:
+			'Saved views, dashboards and sandboxed apps that admins and First Mate add without a release, and Change this.'
+	},
+	{
 		slug: 'model-pool',
 		path: 'docs/model-pool.md',
 		group: 'Use it',

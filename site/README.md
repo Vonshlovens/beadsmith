@@ -39,16 +39,19 @@ edit breaks the site build, that is usually why.
 
 ## Screenshots
 
-[`src/lib/shots.ts`](src/lib/shots.ts) lists every screenshot. Only the
-parade view is a real capture so far; the others are text sketches labelled
-"screenshot pending", because the UI is still changing. To replace one:
+[`src/lib/shots.ts`](src/lib/shots.ts) lists every screenshot. Each is a real
+capture from the quickstart; a shot without `src` renders as a text sketch
+labelled "screenshot pending". The todos and the Release desk surface in the
+captures were added through the app's own API (`/api/todos`, `/api/views`,
+`/api/surfaces`) after signing in. To add or retake one:
 
 1. Start the quickstart (`docker compose -f quickstart/compose.yaml up -d --build --wait`)
    and open the view with the sample projects, in the dark theme.
 2. Capture it at 2560×1600 (a 1280×800 window at 2×), like
    [`quickstart-parade.png`](../docs/images/quickstart-parade.png).
 3. Save it as `docs/images/<id>.png`, import it in `shots.ts`, and set `src`,
-   `width` and `height` on that shot. The sketch can go.
+   `width` and `height` on that shot. The phone shot is a 390×844 viewport,
+   scaled to 780 pixels wide.
 
 ## Style
 

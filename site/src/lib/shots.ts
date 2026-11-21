@@ -2,14 +2,20 @@
  * Every screenshot on the site, in one place.
  *
  * Real screenshots live in ../docs/images so the README and the docs can use
- * them too. A shot without `src` renders as a placeholder: a rough text sketch
- * of the view, labelled as pending, so the page has its final shape before the
- * UI settles. To replace one, capture the view from the quickstart sample
- * projects (2560×1600, dark theme, like quickstart-parade.png), save it under
- * docs/images, then import it here and set `src`, `width` and `height`.
+ * them too. Each is captured from the quickstart sample projects at
+ * 2560×1600 in the dark theme (site/README.md says how). A shot without
+ * `src` renders as a placeholder: a rough text sketch labelled as pending,
+ * for a view that has no capture yet.
  */
 
 import parade from '../../../docs/images/quickstart-parade.png';
+import first_mate from '../../../docs/images/first-mate.png';
+import surface from '../../../docs/images/surface.png';
+import todos from '../../../docs/images/todos.png';
+import board from '../../../docs/images/board.png';
+import ready from '../../../docs/images/ready.png';
+import activity from '../../../docs/images/activity.png';
+import phone from '../../../docs/images/phone.png';
 
 export interface Shot {
 	/** Stable name; also the file name to use under docs/images. */
@@ -41,89 +47,67 @@ export const parade_shot: Shot = {
 	height: 1600
 };
 
+const desktop = { width: 2560, height: 1600 };
+
 export const view_shots: Shot[] = [
+	{
+		id: 'first-mate',
+		title: 'First Mate',
+		caption:
+			'First Mate, where every account lands: the chat composer over your todos and ready work. The quickstart has no model connected, so it says so.',
+		alt: 'The First Mate start screen: a list of chats on the left, a composer asking "What do you want to know?" with suggested questions, a note that no model is connected yet, and panels of open todos and ready issues below.',
+		src: first_mate,
+		...desktop
+	},
+	{
+		id: 'surface',
+		title: 'Catalog surface',
+		caption:
+			'A catalog surface: stat tiles, charts and a ready list over a saved view, read as whoever opens it. Private until an admin publishes it.',
+		alt: 'A dashboard called Release desk: three stat tiles (7 in flight, 14 ready, 3 projects), bar charts of issues by project and by priority, and a list of the next ready issues, with Private and Publish controls at the top.',
+		src: surface,
+		...desktop
+	},
+	{
+		id: 'todos',
+		title: 'Todos',
+		caption: 'Todos: an admin agenda in due-date columns, each ready to route to a mission.',
+		alt: 'The Todos agenda: a capture field, then columns for Today and overdue, Next 7 days and Upcoming, each with todo cards showing priority, due date and a project tag.',
+		src: todos,
+		...desktop
+	},
 	{
 		id: 'board',
 		title: 'Board',
 		caption: 'Board: one column per status, cards sorted by priority.',
-		alt: 'Placeholder sketch of the board view.',
-		sketch: `
-lighthouse 12        parade  list  [board]
-
-OPEN 8          IN PROGRESS 3   BLOCKED 1
-┌────────────┐  ┌────────────┐  ┌────────────┐
-│{g} 1     P1  │  │{y} 2.3   P0  │  │{r} 4     P1  │
-│Status page │  │Alerts flap │  │Checks time │
-│v1          │  │during roll…│  │out on IPv6…│
-└────────────┘  └────────────┘  └────────────┘
-┌────────────┐  ┌────────────┐
-│{g} 2     P1  │  │{y} 3     P1  │
-│Alerting    │  │Warn before │
-└────────────┘  └────────────┘
-┌────────────┐  ┌────────────┐
-│{g} 5     P2  │  │{y} 1.3   P2  │
-│Upgrade the…│  │Cache the s…│
-└────────────┘  └────────────┘`
+		alt: 'The lighthouse board with Open, In progress, Blocked and Deferred columns of issue cards, each with its ID, title, priority, type and labels.',
+		src: board,
+		...desktop
 	},
 	{
 		id: 'ready',
 		title: 'Ready',
 		caption: 'Ready: every unblocked issue across all projects, one deck.',
-		alt: 'Placeholder sketch of the Ready deck.',
-		sketch: `
-READY  unblocked issues across all projects
-
-{g} lh-1    P1  Status page v1        lighthouse
-{g} pan-4   P1  Weekly meal plan      pantry
-{g} th-3    P1  Redirect the old URLs trailhead
-{g} lh-2.4  P2  Choose an email pro…  lighthouse
-{g} pan-6   P2  Convert between cup…  pantry
-{g} lh-5    P2  Upgrade the HTTP cl…  lighthouse
-{g} th-4    P2  Search with a keybo…  trailhead
-{g} lh-6    P3  Write the self-host…  lighthouse
-{g} pan-8   P3  Accessibility pass …  pantry
-{g} lh-7    P4  Probe from several …  lighthouse`
+		alt: 'The Ready deck: fourteen unblocked issues from lighthouse, pantry and trailhead in one list, sorted by priority, with project, type and age.',
+		src: ready,
+		...desktop
 	},
 	{
 		id: 'activity',
 		title: 'Activity log',
 		caption: 'Activity log: recent changes from people and agents, newest first.',
-		alt: 'Placeholder sketch of the activity log.',
-		sketch: `
-ACTIVITY LOG
-
-{y} 9m   claude-agent  status changed  pan-2
-{g} 41m  alex          commented       pan-5
-{y} 2h   maya          updated         lh-2.3
-{g} 14h  sam           commented       lh-2.3
-{r} 1d   priya         status changed  lh-4
-{g} 1d   maya          commented       lh-2.3
-{g} 2d   rae           created         th-3
-{g} 3d   sam           created         lh-2.3
-{g} 4d   lee           closed          th-1.1
-{g} 6d   coding-agent  closed          lh-1.1`
+		alt: 'The activity log: a timeline of comments, claims, label changes and new issues by people and agents across the sample projects, newest first.',
+		src: activity,
+		...desktop
 	},
 	{
 		id: 'phone',
 		title: 'Phone width',
 		caption: 'At phone width the same parade, one column.',
-		alt: 'Placeholder sketch of Beadsmith on a phone.',
+		alt: 'Beadsmith on a phone: the lighthouse parade in one column, with Rolling, Lined up and Stalled groups.',
 		frame: 'phone',
-		sketch: `
-≡ lighthouse      /
-
-ROLLING 3
-{y} 2.3 P0 Alerts flap…
-{y} 3   P1 Warn before…
-{y} 1.3 P2 Cache the s…
-
-LINED UP 8
-{g} 2   P1 Alerting
-{g} 1   P1 Status page…
-{g} 5   P2 Upgrade the…
-{g} 2.4 P2 Choose an e…
-
-STALLED 1
-{r} 4   P1 Checks time…`
+		src: phone,
+		width: 780,
+		height: 1688
 	}
 ];
